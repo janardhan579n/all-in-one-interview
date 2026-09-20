@@ -1,0 +1,178 @@
+{
+  "id": "accounts-merge",
+  "title": "Accounts Merge",
+  "patternId": "union-find",
+  "difficulty": "advanced",
+  "tags": [
+    "graph",
+    "union-find",
+    "hashing",
+    "sorting",
+    "string"
+  ],
+  "statement": "You are given a list of accounts, where `accounts[i]` is `[name, email1, email2, ...]`. Two accounts belong to the same person if they share at least one email, and the relation is transitive. Merge the accounts: return a list where each entry is the person's name followed by all of their emails, sorted in ascending order. A person can have any number of accounts, but every account of one person carries the same name — and different people may share a name.",
+  "realWorld": "This is identity resolution as it actually runs in production: a customer signs up three times over five years, and a shared email address is the signal that collapses those records into one profile. The same code shape merges devices by fingerprint, contacts by phone number, and fraud rings by shared payment instruments.",
+  "examples": [
+    {
+      "input": "accounts = [[\"John\",\"a@x.com\",\"b@x.com\"],[\"John\",\"c@x.com\"],[\"John\",\"a@x.com\",\"d@x.com\"],[\"Mary\",\"m@x.com\"]]",
+      "output": "[[\"John\",\"a@x.com\",\"b@x.com\",\"d@x.com\"],[\"John\",\"c@x.com\"],[\"Mary\",\"m@x.com\"]]",
+      "explanation": "Accounts 0 and 2 share a@x.com, so they merge. The second John shares no email with them and stays separate — identical names mean nothing on their own."
+    },
+    {
+      "input": "accounts = [[\"A\",\"p@x.com\"],[\"B\",\"q@x.com\"],[\"A\",\"p@x.com\",\"q@x.com\"]]",
+      "output": "[[\"A\",\"p@x.com\",\"q@x.com\"]]",
+      "explanation": "The third account bridges the first two transitively, even though accounts 0 and 1 share nothing directly and carry different names. The name comes from whichever account is in the group."
+    }
+  ],
+  "constraints": [
+    "1 <= accounts.length <= 1000",
+    "2 <= accounts[i].length <= 10",
+    "1 <= accounts[i][j].length <= 30",
+    "accounts[i][0] is a name made of English letters",
+    "accounts[i][j] for j > 0 is a valid email"
+  ],
+  "bruteForce": {
+    "idea": "Repeatedly scan every pair of accounts. When two share any email, replace them with the union of their email sets and restart the scan, because the merged set may now share an email with an account that matched neither original.",
+    "code": [
+      "List<Set<String>> groups = new ArrayList<>();",
+      "for (List<String> account : accounts) groups.add(new HashSet<>(account.subList(1, account.size())));",
+      "boolean changed = true;",
+      "while (changed) {",
+      "    changed = false;",
+      "    outer:",
+      "    for (int i = 0; i < groups.size(); i++) {",
+      "        for (int j = i + 1; j < groups.size(); j++) {",
+      "            if (!Collections.disjoint(groups.get(i), groups.get(j))) {   // shares an email",
+      "                groups.get(i).addAll(groups.get(j));",
+      "                groups.remove(j);",
+      "                changed = true;",
+      "                break outer;                                             // rescan everything",
+      "            }",
+      "        }",
+      "    }",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n^3 · k) where k is the emails per account",
+      "space": "O(n · k) for the sets"
+    },
+    "whySlow": "Each scan compares O(n^2) pairs with a set intersection inside, and every successful merge forces the scan to start over — up to n-1 times. The restart exists because merging mutates the very collection being iterated, which is the same structural problem as the brute force for interval merging."
+  },
+  "patternIdentification": "Transitive grouping over links that arrive one at a time, where the answer is only 'which things end up together' and never 'how they are linked'. That is union-find. The subtlety is what the elements are: union the *accounts* (or, equivalently, the emails), using a `HashMap<String, Integer>` that assigns each email the index of the first account it was seen in. Every later sighting of that email is an edge between that first account and the current one.",
+  "optimized": {
+    "idea": "Give each account an index and a disjoint set over those indices. Walk every email: the first time you see it, record `email -> accountIndex`; every later time, union the current account with the one recorded. Then group the emails by the root of their owning account, sort each group, and prefix the name from any account in the group.",
+    "code": [
+      "public static List<List<String>> accountsMerge(List<List<String>> accounts) {",
+      "    int n = accounts.size();",
+      "    int[] parent = new int[n];",
+      "    int[] rank = new int[n];",
+      "    for (int i = 0; i < n; i++) parent[i] = i;",
+      "",
+      "    // First sighting of an email owns it; every later sighting is an edge.",
+      "    Map<String, Integer> owner = new HashMap<>();",
+      "    for (int i = 0; i < n; i++) {",
+      "        List<String> account = accounts.get(i);",
+      "        for (int j = 1; j < account.size(); j++) {",
+      "            Integer first = owner.putIfAbsent(account.get(j), i);",
+      "            if (first != null) {",
+      "                union(parent, rank, first, i);",
+      "            }",
+      "        }",
+      "    }",
+      "",
+      "    // Collect the emails of each component under its root. TreeSet sorts as we go.",
+      "    Map<Integer, TreeSet<String>> byRoot = new HashMap<>();",
+      "    for (Map.Entry<String, Integer> entry : owner.entrySet()) {",
+      "        int root = find(parent, entry.getValue());",
+      "        byRoot.computeIfAbsent(root, key -> new TreeSet<>()).add(entry.getKey());",
+      "    }",
+      "",
+      "    List<List<String>> merged = new ArrayList<>();",
+      "    for (Map.Entry<Integer, TreeSet<String>> entry : byRoot.entrySet()) {",
+      "        List<String> row = new ArrayList<>();",
+      "        row.add(accounts.get(entry.getKey()).get(0));   // the name of any account in the group",
+      "        row.addAll(entry.getValue());",
+      "        merged.add(row);",
+      "    }",
+      "    return merged;",
+      "}",
+      "",
+      "private static int find(int[] parent, int x) {",
+      "    while (parent[x] != x) {",
+      "        parent[x] = parent[parent[x]];",
+      "        x = parent[x];",
+      "    }",
+      "    return x;",
+      "}",
+      "",
+      "private static void union(int[] parent, int[] rank, int a, int b) {",
+      "    int rootA = find(parent, a);",
+      "    int rootB = find(parent, b);",
+      "    if (rootA == rootB) return;",
+      "    if (rank[rootA] < rank[rootB]) { int t = rootA; rootA = rootB; rootB = t; }",
+      "    parent[rootB] = rootA;",
+      "    if (rank[rootA] == rank[rootB]) rank[rootA]++;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(E log E) where E is the total number of emails — the unions are effectively linear at O(E · α(n)), and sorting each group dominates",
+      "space": "O(E) for the email-to-owner map and the grouped output"
+    }
+  },
+  "visualization": {
+    "engine": "unionFind",
+    "input": {
+      "size": 4,
+      "operations": [
+        {
+          "op": "union",
+          "a": 0,
+          "b": 2
+        },
+        {
+          "op": "find",
+          "a": 2
+        },
+        {
+          "op": "find",
+          "a": 1
+        }
+      ]
+    },
+    "code": [
+      "int[] parent = new int[n];   // one slot per account, each its own person",
+      "int[] rank   = new int[n];   // an upper bound on each tree's height",
+      "",
+      "int root = x; while (parent[root] != root) root = parent[root];          // climb to the root",
+      "while (parent[x] != root) { int next = parent[x]; parent[x] = root; x = next; }  // path compression",
+      "return root;                                                             // find(account)",
+      "",
+      "if (find(a) == find(b)) return;   // this email already links the two accounts",
+      "int ra = find(a), rb = find(b); if (rank[ra] < rank[rb]) { int t = ra; ra = rb; rb = t; }",
+      "parent[rb] = ra; if (rank[ra] == rank[rb]) rank[ra]++;   // a shared email merges two people"
+    ]
+  },
+  "commonMistakes": [
+    "Grouping by name. Different people share names, and the name is output only — it never decides a merge.",
+    "Unioning emails with a map from email to a fresh index, then forgetting that an account's own emails must also be unioned to each other; if you union accounts instead, the emails of one account are linked implicitly and that whole class of bug disappears.",
+    "Overwriting the owner map on every sighting (`owner.put(...)` unconditionally) instead of keeping the first owner. Use `putIfAbsent` and union with the value it returns.",
+    "Grouping by `parent[i]` rather than `find(i)`. After the unions, only the root identifies a component, and a stale parent entry points at an interior node.",
+    "Forgetting that the emails must come out sorted while the name stays first — sort the emails, then prepend the name. A `TreeSet` does both the dedup and the ordering.",
+    "Deduplicating too late: an account may list the same email twice, so a set per component is safer than a list."
+  ],
+  "similar": [
+    "number-of-provinces",
+    "redundant-connection",
+    "group-anagrams",
+    "number-of-islands"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 721,
+      "slug": "accounts-merge",
+      "title": "Accounts Merge",
+      "url": "https://leetcode.com/problems/accounts-merge/",
+      "premium": false
+    }
+  }
+}

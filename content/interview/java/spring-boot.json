@@ -1,0 +1,251 @@
+{
+  "id": "java-spring-boot",
+  "trackId": "java",
+  "topic": "spring-boot",
+  "title": "Spring Boot",
+  "summary": "Auto-configuration, properties and actuator — and why the same jar starts on your laptop and dies in the container.",
+  "questions": [
+    {
+      "id": "jsb-01",
+      "level": "junior",
+      "type": "concept",
+      "question": "What is auto-configuration, and how can you override something Spring Boot configured for you?",
+      "answer": "Auto-configuration is a set of ordinary `@Configuration` classes, shipped inside the starter jars, that register sensible default beans **only when it makes sense to**. `@SpringBootApplication` includes `@EnableAutoConfiguration`, which reads the file `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports` from every jar on the classpath and evaluates the classes listed there. (In Spring Boot 3 that file replaced the old `spring.factories` key entirely.)\n\nEach class is guarded by conditions. `@ConditionalOnClass(DataSource.class)` means \"only if a JDBC driver is actually on the classpath\". `@ConditionalOnProperty` gates on configuration. And `@ConditionalOnMissingBean` is the one that makes the whole thing overridable:\n\n```java\n@Bean\n@ConditionalOnMissingBean\npublic ObjectMapper objectMapper(Jackson2ObjectMapperBuilder builder) {\n    return builder.build();\n}\n```\n\nThat bean is registered only if you have not defined an `ObjectMapper` yourself. The ordering is what makes this reliable: auto-configuration is processed **after** all user configuration, so by the time the condition is evaluated your own beans are already registered and the default quietly backs off. There is no precedence rule to remember and no `@Primary` needed — you just define the bean and Boot steps aside.\n\nSo the mental model is: Boot is not magic and it is not a framework layer above Spring. It is a pile of conditional `@Bean` methods with good defaults, every one of which you can replace by declaring your own. When you need to remove one entirely rather than replace a bean, `@SpringBootApplication(exclude = DataSourceAutoConfiguration.class)` or `spring.autoconfigure.exclude` does it.",
+      "keyPoints": [
+        "Auto-configuration classes are listed in `AutoConfiguration.imports`, not `spring.factories`, in Boot 3",
+        "`@ConditionalOnClass` keys off what is on the classpath",
+        "`@ConditionalOnMissingBean` lets your bean win by simply existing",
+        "User configuration is processed before auto-configuration, which is what makes the back-off work",
+        "`exclude` removes an auto-configuration outright"
+      ],
+      "followUps": [
+        {
+          "q": "Why does adding a starter to the pom change application behaviour with no code change?",
+          "a": "Because the starter puts classes on the classpath and `@ConditionalOnClass` conditions that were previously false become true. Adding `spring-boot-starter-security` is the famous one: every endpoint is suddenly authenticated and a generated password appears in the log. It is a reasonable default, but it catches people who think a dependency is inert until used."
+        },
+        {
+          "q": "Is `@ConditionalOnMissingBean` safe to use in your own configuration?",
+          "a": "Only with care. Its guarantee rests on auto-configuration running last; between two of your own configuration classes, evaluation order is not something you should rely on, so the condition may see an incomplete picture. Use it in code you are publishing as a library — with `@AutoConfiguration` and the imports file — and prefer `@ConditionalOnProperty` or explicit wiring inside an application."
+        }
+      ],
+      "redFlags": [
+        "\"Spring Boot does it automatically\" with no idea what mechanism means",
+        "Thinking you must disable an auto-configuration to change one of its beans",
+        "Not knowing the classpath drives the conditions"
+      ]
+    },
+    {
+      "id": "jsb-02",
+      "level": "mid",
+      "type": "scenario",
+      "question": "A bean you expected is not there — or one you did not expect is. How do you find out why?",
+      "answer": "Do not guess and do not start deleting dependencies. Boot records the outcome of every condition it evaluated and will print the whole thing.\n\nStart the application with `--debug` (or set `debug=true` in properties) and you get the **condition evaluation report**, in four sections. *Positive matches* lists each auto-configuration that applied and the condition that let it through. *Negative matches* is the useful one: it names every auto-configuration that backed off **and why** — `did not find class org.h2.Driver`, `found bean of type ObjectMapper`, `@ConditionalOnProperty (app.feature.enabled) did not find property`. Ninety per cent of \"why is this bean missing\" questions are answered by reading the one line about it. *Exclusions* and *Unconditional classes* round it out.\n\nIn a running application the same data is available as JSON at `/actuator/conditions`, which is handy when the container is the only place the problem reproduces and you cannot easily restart with a different flag.\n\nFor a bean that exists but is not the one you expected, the report will not help because it is about auto-configuration, not your own classes. There the tools are `ConditionEvaluationReport` plus a simple loop over `ApplicationContext.getBeanDefinitionNames()`, or `getBeanDefinition(name).getResourceDescription()` which tells you the class or file that declared it. Turning on `logging.level.org.springframework.context.annotation=DEBUG` shows component scanning and configuration-class processing in order.\n\nFor slow start-up rather than wrong start-up, the `startup` actuator endpoint backed by `BufferingApplicationStartup` gives timings per step, which is how you find the one auto-configuration costing you four seconds.",
+      "keyPoints": [
+        "`--debug` prints the condition evaluation report with reasons, not just outcomes",
+        "Negative matches names the exact condition that failed",
+        "`/actuator/conditions` gives the same report from a running container",
+        "`getBeanDefinition(name).getResourceDescription()` names what declared a bean",
+        "The `startup` endpoint attributes start-up time per step"
+      ],
+      "followUps": [
+        {
+          "q": "`--debug` is not the same as `logging.level.root=DEBUG`, is it?",
+          "a": "No. `--debug` enables debug logging for a curated set of core loggers and triggers the condition report. Setting the root logger to DEBUG floods you with framework noise and does not produce the report at all. People conflate them and conclude Boot has no diagnostics."
+        },
+        {
+          "q": "Two beans of the same type and the wrong one is injected. What now?",
+          "a": "Check for a stray `@Primary`, then check whether the field name matches a bean name — Spring falls back to by-name matching when there are several candidates of a type, so renaming a field can silently change which bean you get. Make it explicit with `@Qualifier` rather than depending on that fallback."
+        }
+      ],
+      "redFlags": [
+        "Bisecting the pom instead of reading the condition report",
+        "Never having seen the negative matches section",
+        "Adding `@Primary` until the error goes away"
+      ]
+    },
+    {
+      "id": "jsb-03",
+      "level": "mid",
+      "type": "concept",
+      "question": "Explain configuration property binding, profiles, and the precedence order between property sources.",
+      "answer": "Binding turns external configuration into a typed object. `@ConfigurationProperties(prefix = \"app.mail\")` on a record or a single-constructor class gives you constructor binding, so the object is immutable and fully validated before anything uses it:\n\n```java\n@ConfigurationProperties(prefix = \"app.mail\")\n@Validated\npublic record MailProperties(@NotBlank String host, int port, Duration timeout) {}\n```\n\nBoot applies **relaxed binding**, so `app.mail.host`, `app.mail-host` and the environment variable `APP_MAIL_HOST` all reach the same property — which is what makes twelve-factor configuration via environment variables practical. Adding `@Validated` with Jakarta Bean Validation means a missing or malformed value fails at start-up with a readable message instead of producing a `NullPointerException` on the first request. Prefer this over scattering `@Value(\"${...}\")` across the codebase: one typed object, validated once, and discoverable.\n\nProfiles select which configuration applies. `application-prod.yml` is loaded when `prod` is active, on top of the plain `application.yml`; `@Profile(\"prod\")` gates beans; and `spring.profiles.group` lets one profile name activate several.\n\nPrecedence runs from most to least specific, and the ones that matter in practice, highest first, are: command-line arguments, `SPRING_APPLICATION_JSON`, JVM system properties, OS environment variables, then **profile-specific** files, then plain `application.properties`/`.yml`, and for each of those a file **outside** the jar beats the one packaged inside it. The two rules worth internalising are that environment variables beat every packaged file — which is exactly how a container overrides a default — and that a profile-specific file always beats a non-profile-specific one at the same level. `/actuator/env` shows the resolved value and which source won, which settles arguments faster than reasoning about the list.",
+      "keyPoints": [
+        "`@ConfigurationProperties` with constructor binding plus `@Validated` fails fast at start-up",
+        "Relaxed binding maps `APP_MAIL_HOST` to `app.mail.host`",
+        "Profile-specific files layer on top of the plain file, they do not replace it",
+        "Command line > system properties > environment > profile files > plain files; outside the jar beats inside",
+        "`/actuator/env` shows which source actually won"
+      ],
+      "followUps": [
+        {
+          "q": "`@Value` or `@ConfigurationProperties`?",
+          "a": "`@ConfigurationProperties` for anything with more than one property or any structure: it is typed, validatable, supports relaxed binding and generates IDE metadata with the configuration processor. `@Value` is fine for a single standalone value and supports SpEL, but it spreads configuration knowledge across the codebase and gives you no validation."
+        },
+        {
+          "q": "How do you load configuration from outside the application entirely?",
+          "a": "`spring.config.import`, which in Boot 2.4+ handles extra files, `configtree:` directories for mounted secrets, and — with Spring Cloud — `vault:` or `configserver:` locations. Prefixing with `optional:` stops a missing source failing start-up, which you want for a source that exists in production but not locally."
+        }
+      ],
+      "redFlags": [
+        "Not knowing environment variables override packaged properties",
+        "`@Value` everywhere with no validation",
+        "Believing a profile-specific file replaces the base file rather than layering on it"
+      ]
+    },
+    {
+      "id": "jsb-04",
+      "level": "junior",
+      "type": "concept",
+      "question": "What is a starter, and how does Spring Boot manage dependency versions?",
+      "answer": "A starter is a dependency that contains almost no code — it is a curated list of other dependencies that work together. `spring-boot-starter-web` pulls in Spring MVC, Jackson, validation and embedded Tomcat; `spring-boot-starter-data-jpa` pulls in Hibernate, Spring Data JPA and the transaction machinery. The point is that you add one coordinate instead of fifteen, and you do not have to work out which Jackson version is compatible with which Spring version.\n\nVersions come from the `spring-boot-dependencies` **BOM** — a bill of materials that pins consistent versions for several hundred libraries that the Boot team have actually tested together. You consume it either by using `spring-boot-starter-parent` as your Maven parent, which imports the BOM and also configures the common plugins, or, when you already have a corporate parent pom, by importing the BOM directly:\n\n```xml\n<dependencyManagement>\n  <dependencies>\n    <dependency>\n      <groupId>org.springframework.boot</groupId>\n      <artifactId>spring-boot-dependencies</artifactId>\n      <version>3.3.0</version>\n      <type>pom</type>\n      <scope>import</scope>\n    </dependency>\n  </dependencies>\n</dependencyManagement>\n```\n\nBecause versions are managed, your own `<dependency>` entries for managed artifacts carry no `<version>` at all — which is the visible sign it is working.\n\nWhen you genuinely need to move one library, override the **version property** the BOM defines (`<jackson-bom.version>`) rather than pinning a single artifact. Pinning one artifact of a multi-module family leaves the rest at the old version and produces `NoSuchMethodError` at runtime, which is a miserable afternoon. Starters also set the naming convention: `spring-boot-starter-*` is official, and third parties are asked to use `something-spring-boot-starter`.",
+      "keyPoints": [
+        "A starter is a curated dependency aggregate, not a library",
+        "`spring-boot-dependencies` is a BOM pinning tested-together versions",
+        "Use the starter parent, or import the BOM when you have your own parent",
+        "Managed dependencies need no `<version>` of their own",
+        "Override the version property, not a single artifact, or you split a library family"
+      ],
+      "followUps": [
+        {
+          "q": "How do you swap Tomcat for Undertow?",
+          "a": "Exclude `spring-boot-starter-tomcat` from `spring-boot-starter-web` and add `spring-boot-starter-undertow`. Auto-configuration picks the server from what is on the classpath, so no code or configuration changes. It is a neat demonstration that `@ConditionalOnClass` is doing real work."
+        },
+        {
+          "q": "A security scanner flags a transitive library. What do you do?",
+          "a": "Check whether a newer Boot patch release already moves it — upgrading Boot is almost always the right first move, because the BOM keeps the whole set consistent. If you must move ahead of the BOM, override the version property, then run the full test suite: you have stepped outside the combination Boot tested."
+        }
+      ],
+      "redFlags": [
+        "Specifying explicit versions for managed dependencies out of habit",
+        "Not knowing what a BOM is",
+        "Mixing Spring module versions by hand"
+      ]
+    },
+    {
+      "id": "jsb-05",
+      "level": "mid",
+      "type": "tradeoff",
+      "question": "What is Actuator, and which endpoints would you expose in production?",
+      "answer": "Actuator adds operational endpoints over HTTP or JMX — health, metrics, environment, thread dumps, log levels and more. Since Boot 2 only `health` is exposed over HTTP by default, and everything else must be opted in with `management.endpoints.web.exposure.include`. That default is correct, and the instinct to set it to `*` because it is convenient in development is how sensitive endpoints reach the internet.\n\nWhat I expose in production, and why:\n\n- **`health`** — required by the orchestrator. Enable the probe groups with `management.endpoint.health.probes.enabled=true` and you get `/actuator/health/liveness` and `/actuator/health/readiness`. The distinction matters: a failing liveness probe restarts the pod, a failing readiness probe merely removes it from the load balancer. Wiring a flaky downstream into liveness means a slow dependency triggers a restart storm.\n- **`prometheus`** or `metrics` — scraped by monitoring. This is where your real observability comes from.\n- **`info`** — build version and git commit, so you can tell what is actually deployed.\n\nWhat I never expose publicly: **`env`** and **`configprops`** (configuration values, including anything that looks like a secret — Boot 3 masks values by default, but the key names alone are a map of your infrastructure), **`heapdump`** (a file containing every object in memory, tokens included), **`threaddump`**, **`beans`** and **`mappings`** (a complete inventory of your attack surface), **`loggers`** (writable — an attacker can turn on debug logging and fill your disk), and **`shutdown`**, which is disabled by default and should stay that way.\n\nThe structural answer is better than any include-list: put actuator on a separate port with `management.server.port`, do not route that port through the public ingress, and still require authentication on it. Endpoint-by-endpoint allow-listing is one missed review away from an incident; a port that is not publicly routable is not.",
+      "keyPoints": [
+        "Only `health` is web-exposed by default; `*` is a production mistake",
+        "Liveness restarts the pod, readiness only removes it from routing",
+        "`heapdump`, `env`, `configprops`, `loggers`, `shutdown` are the dangerous ones",
+        "Details leak infrastructure even when values are masked",
+        "Separate management port plus authentication beats allow-listing endpoints"
+      ],
+      "followUps": [
+        {
+          "q": "What should a readiness health check actually check?",
+          "a": "Only what the instance needs in order to serve traffic — typically the database it cannot work without. Including every downstream makes the check correlated: one shared dependency hiccups and every instance in the fleet reports unready at once, so the load balancer has nowhere to send traffic and a partial failure becomes a total outage. Non-critical dependencies belong in metrics and alerts, not in readiness."
+        },
+        {
+          "q": "How do you add your own health indicator?",
+          "a": "Implement `HealthIndicator` (or `ReactiveHealthIndicator`) and return `Health.up()` or `Health.down().withDetail(...)`. Give it a timeout — a health check that blocks on a slow dependency turns the health endpoint itself into the outage, and health endpoints are polled constantly."
+        }
+      ],
+      "redFlags": [
+        "`management.endpoints.web.exposure.include=*` in production",
+        "Not distinguishing liveness from readiness",
+        "Putting every downstream dependency in the readiness check"
+      ],
+      "related": [
+        "load-balancer"
+      ]
+    },
+    {
+      "id": "jsb-06",
+      "level": "mid",
+      "type": "concept",
+      "question": "How does the embedded server work, and what does graceful shutdown actually require?",
+      "answer": "There is no deployment to a servlet container: Tomcat is a library, and `SpringApplication.run` starts it as a bean inside your context. That inverts the old model — the application owns the server rather than the server owning the application — and it is what makes a fat jar and `java -jar` viable. Swapping Tomcat for Jetty or Undertow is a dependency change, because the auto-configuration picks whichever is on the classpath.\n\nGraceful shutdown is off by default. Turn it on with:\n\n```properties\nserver.shutdown=graceful\nspring.lifecycle.timeout-per-shutdown-phase=30s\n```\n\nOn `SIGTERM`, the web server stops accepting new connections and the context waits up to the timeout for in-flight requests to finish before destroying beans. Without it, the server closes immediately and every request in progress dies mid-response — which your users see as sporadic 502s on every single deploy.\n\nThe part people miss is that graceful shutdown alone is not enough, because there is a window where the load balancer is **still sending you traffic** it has not yet learned you are going away. Requests arriving in that window hit a server that is no longer accepting connections. You need three things to line up. Boot publishes an `AvailabilityChangeEvent` that takes the readiness probe out of service at the start of shutdown, so the orchestrator stops routing — but probe propagation is not instant, so a `preStop` sleep of a few seconds covers the gap. And the platform's own grace period (`terminationGracePeriodSeconds` in Kubernetes) must be **longer** than your Spring timeout, or the platform sends `SIGKILL` while you are still politely draining and you lose the requests anyway.\n\nThe complementary point is bounding request duration: a graceful shutdown waits for in-flight work, so a request with no timeout can hold the whole deployment hostage until the hard kill.",
+      "keyPoints": [
+        "The application owns the server, not the other way round",
+        "`server.shutdown=graceful` plus a per-phase timeout is opt-in",
+        "Readiness must go out of service before draining, or the balancer keeps sending traffic",
+        "A preStop delay covers probe-propagation lag",
+        "The platform grace period must exceed the application's shutdown timeout"
+      ],
+      "followUps": [
+        {
+          "q": "What about background work — a scheduled job or a queue consumer — during shutdown?",
+          "a": "Graceful shutdown covers the web server's in-flight requests, not your own executors. A `@Scheduled` job or a message listener needs its own handling: shut the executor down in an orderly way and, more importantly, make the work idempotent and re-deliverable so that being killed mid-task is recoverable rather than corrupting."
+        },
+        {
+          "q": "Does this remove the need for zero-downtime deployment strategy?",
+          "a": "No. Graceful shutdown makes each individual instance stop cleanly; rolling or blue-green deployment ensures there is always another instance serving. You need both, plus backward-compatible database migrations, because during a rolling deploy the old and new versions run against the same schema at the same time."
+        }
+      ],
+      "redFlags": [
+        "Assuming graceful shutdown is on by default",
+        "Ignoring the load-balancer drain window",
+        "Setting a Spring shutdown timeout longer than the platform's grace period"
+      ],
+      "related": [
+        "load-balancer",
+        "scaling"
+      ]
+    },
+    {
+      "id": "jsb-07",
+      "level": "senior",
+      "type": "tradeoff",
+      "question": "How do you handle secrets — database passwords, API keys — properly in a Spring Boot service?",
+      "answer": "The rule is that a secret must never be in the artefact. Not in `application.yml` in the repository, not in a profile-specific file packaged into the jar, and not baked into the image — an image layer is readable by anyone who can pull it, and once a secret is in git history it is compromised whether or not the file was later deleted. The service should be given its secrets at run time by something that owns them.\n\nThe mechanisms, from adequate to good:\n\n**Environment variables.** Relaxed binding makes `SPRING_DATASOURCE_PASSWORD` bind straight to `spring.datasource.password`, and every platform can inject them. They are a real improvement over files in the repo, but they have sharp edges: environment variables are inherited by child processes, they appear in crash dumps and in some process listings, and they are trivially dumped by any code that can call `System.getenv()`.\n\n**Files mounted from a secret store**, read with `spring.config.import=optional:configtree:/etc/secrets/`. A config tree maps each file to a property name, so a Kubernetes secret mounted as a volume binds directly. This is better than environment variables: file permissions apply, the value is not inherited by subprocesses, and — the real advantage — a rotated secret changes on disk without recreating the pod.\n\n**A secret manager** — Vault, AWS Secrets Manager, GCP Secret Manager — fetched at start-up via `spring.config.import` with Spring Cloud. This is what you actually want at scale, because it gives you the two things the others cannot: an audit trail of who read what, and short-lived dynamic credentials issued per instance, so a leaked credential expires by itself.\n\nWhat I would push back on is encrypting properties in the repository with something like Jasypt. It feels secure and mostly is not: the decryption key has to reach the application somehow, so you have not removed the secret-distribution problem, only moved it — while adding the illusion that the encrypted file is safe to share. Whatever you choose, assume rotation will happen and never log a resolved configuration object.",
+      "keyPoints": [
+        "A secret in git or in an image layer is already compromised",
+        "Environment variables are inheritable and dumpable — acceptable, not ideal",
+        "`configtree:` binds mounted secret files and supports rotation without a restart",
+        "A secret manager adds audit trails and short-lived dynamic credentials",
+        "Encrypting properties in the repo just relocates the key-distribution problem"
+      ],
+      "followUps": [
+        {
+          "q": "A secret was committed last year. What is the remediation?",
+          "a": "Rotate it first — that is the only step that actually stops the exposure. Rewriting history or purging the repository is cleanup, and it cannot help you because clones, forks, CI caches and backups already have the old value. Then add a pre-commit or CI secret scanner so the next one is caught before it lands."
+        },
+        {
+          "q": "How do you keep local development workable when secrets are external?",
+          "a": "Local should not use production secrets at all. Run dependencies in Testcontainers or Docker Compose with throwaway credentials in a committed dev profile, and make the production source `optional:` so its absence locally is not a start-up failure. If a developer needs a real secret to work, the environment split is wrong."
+        }
+      ],
+      "redFlags": [
+        "Secrets in `application.yml` with 'it is a private repo' as the defence",
+        "Believing an encrypted properties file solves the problem",
+        "No answer for rotation"
+      ]
+    },
+    {
+      "id": "jsb-08",
+      "level": "senior",
+      "type": "scenario",
+      "question": "The application runs fine locally and fails at start-up in the container. Walk me through it.",
+      "answer": "Same jar, different environment — so the difference is in the environment, and the first move is to read the actual failure rather than theorise. Boot's failure analysers exist for exactly this: `docker logs` (or `kubectl logs`) shows an `APPLICATION FAILED TO START` block with a **Description** and an **Action**, and it is usually the literal answer. People skip it because the stack trace above looks more authoritative. It is not.\n\nWhat that block typically says, and what each means:\n\n**`Could not resolve placeholder 'DB_PASSWORD'`** — a property the configuration requires was not injected. The container's environment does not have it, or the name is misspelt, or the deployment references a secret key that does not exist. Confirm directly with `kubectl exec -- env | sort` and compare against what the configuration needs; do not infer it from the manifest.\n\n**A connection refused to `localhost:5432`** — a profile mismatch. `SPRING_PROFILES_ACTIVE` was not set, so the application fell back to the default profile and its developer-friendly datasource URL. `localhost` inside a container is the container, not your machine or another pod. Check the log line listing active profiles, which Boot prints at start-up: if it says `No active profile set, falling back to 1 default profile: \"default\"` in production, that is your bug.\n\n**A `DataSource` bean that cannot be configured** — the driver was not on the runtime classpath, or the URL is genuinely absent.\n\nOther container-specific causes worth knowing: a file or directory path that exists on the developer machine and not in the image; a JVM heap sized from the container's cgroup limit — the JVM takes a fraction of the *container* memory, so a container limit much smaller than the host makes it fail where it previously ran; a different JDK version in the base image; and a port or user permission issue when the image runs as non-root.\n\nThe method that generalises: read the failure analyser, dump the actual environment, then **reproduce locally with the container's exact environment** — run the same image with the same variables. If it fails on your machine too, you have removed the mystery, and if it does not, the difference is something you can now enumerate: networking, secrets, file system, resource limits. The prevention is to make the application refuse to start when required configuration is missing — `@ConfigurationProperties` with `@Validated` and no default — so the error names the property instead of surfacing as a null pointer on the first request.",
+      "keyPoints": [
+        "Read the failure analyser's Description and Action before anything else",
+        "Unresolved placeholder means a missing environment variable or secret key",
+        "`localhost` in a container is the container; a wrong datasource URL usually means the profile is not active",
+        "Boot logs the active profiles at start-up — check that line",
+        "Reproduce locally with the container's exact environment to remove the mystery"
+      ],
+      "followUps": [
+        {
+          "q": "It starts but behaves as though it is in dev mode. Where do you look?",
+          "a": "`/actuator/env` on the running instance, which shows every property source in precedence order and which one supplied each value. That usually reveals a packaged `application-dev.yml` still on the classpath, or a `spring.profiles.active` set in two places where the lower-precedence one is the one you edited."
+        },
+        {
+          "q": "Why would the same image be killed for memory in one environment and not another?",
+          "a": "The JVM sizes the heap from the container's memory limit, so the same image gets a different heap in each environment. Halve the limit and you halve the heap, and workloads that previously fit now hit OOM — or the container is killed by the platform because heap plus metaspace, thread stacks and native buffers exceed the limit. Set the heap explicitly relative to the limit rather than relying on the default fraction."
+        }
+      ],
+      "redFlags": [
+        "Guessing at causes without reading the start-up failure output",
+        "Not knowing Boot logs its active profiles",
+        "Changing the Dockerfile before checking the environment variables"
+      ],
+      "related": [
+        "database"
+      ]
+    }
+  ]
+}

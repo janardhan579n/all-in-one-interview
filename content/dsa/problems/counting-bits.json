@@ -1,0 +1,131 @@
+{
+  "id": "counting-bits",
+  "title": "Counting Bits",
+  "patternId": "bit-manipulation",
+  "difficulty": "intermediate",
+  "tags": [
+    "bits",
+    "dynamic-programming",
+    "kernighan",
+    "popcount"
+  ],
+  "statement": "Given an integer `n`, return an array `result` of length n + 1 where `result[i]` is the number of 1s in the binary representation of `i`, for every i from 0 to n. Follow-up: can you compute it in a single pass, in O(n) total time, without using any built-in population-count function?",
+  "realWorld": "Population count is a primitive in real systems. Bitmap indexes in databases and search engines answer 'how many rows match?' by popcounting the result bitmap. Error-correcting codes and similarity search use the Hamming distance between two values, which is `bitCount(a ^ b)`. Bitmask dynamic programming often iterates states in order of popcount, because a subset's answer depends on subsets with one fewer element — which is precisely the recurrence this problem builds.",
+  "examples": [
+    {
+      "input": "n = 2",
+      "output": "[0,1,1]",
+      "explanation": "0 is 00 (zero 1s), 1 is 01 (one), 2 is 10 (one)."
+    },
+    {
+      "input": "n = 5",
+      "output": "[0,1,1,2,1,2]",
+      "explanation": "3 is 11 (two 1s), 4 is 100 (one), 5 is 101 (two). Note result[5] = result[4] + 1, because 5 = 101 is 4 = 100 with the lowest bit added."
+    },
+    {
+      "input": "n = 0",
+      "output": "[0]",
+      "explanation": "The array still has one entry. Zero has no set bits, and a solution that starts its loop at 1 must not skip allocating index 0."
+    }
+  ],
+  "constraints": [
+    "0 <= n <= 10^5",
+    "The returned array has length n + 1",
+    "Follow-up: O(n) time in a single pass, with no call to Integer.bitCount or similar"
+  ],
+  "bruteForce": {
+    "idea": "Count each number's bits independently with Brian Kernighan's trick: `value & (value - 1)` clears the lowest set bit, so the loop runs once per 1 rather than once per bit position.",
+    "code": [
+      "public static int[] countBits(int n) {",
+      "    int[] result = new int[n + 1];",
+      "    for (int i = 0; i <= n; i++) {",
+      "        int value = i;",
+      "        int count = 0;",
+      "        while (value != 0) {",
+      "            value &= (value - 1);   // clears the LOWEST SET bit",
+      "            count++;",
+      "        }",
+      "        result[i] = count;",
+      "    }",
+      "    return result;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n log n)",
+      "space": "O(1) auxiliary, excluding the output array"
+    },
+    "whySlow": "Each inner loop runs once per set bit, which is at most log₂(i) + 1 — so the total is O(n log n), roughly 1.7 million operations at n = 10⁵. That is perfectly fast enough to pass, and it is genuinely the right answer if you need one number's popcount. What it wastes is context: it computes the answer for 13 from scratch even though the answer for 12 is sitting one slot to the left in the array it is filling. It solves n independent problems instead of one problem n times."
+  },
+  "patternIdentification": "The giveaway is that the output is an array of answers for every value up to n, not a single answer — so the answers can feed each other. That is dynamic programming, and the only question left is which bit operation relates i to a smaller index. Two work. Dropping the lowest set bit gives `i & (i - 1)`, which is strictly smaller and differs by exactly one 1. Dropping the lowest *bit position* gives `i >> 1`, also strictly smaller, losing only whatever `i & 1` was. Either yields an O(1) transition and therefore an O(n) total. Recognising that a bit operation produces a strictly smaller index is what turns a bit problem into a DP problem.",
+  "optimized": {
+    "idea": "Build the answers left to right, reusing what you already computed.\n\nThe cleanest recurrence: `result[i] = result[i & (i - 1)] + 1`. Since `i & (i - 1)` is `i` with its lowest set bit cleared, it has exactly one fewer 1 — and it is strictly less than `i`, so its answer is already filled in.\n\nThe shift form is equally good and often easier to explain out loud: `result[i] = result[i >> 1] + (i & 1)`. Shifting right discards the lowest bit, so `i` has however many bits `i >> 1` has, plus 1 if that discarded bit was a 1. Both are one array read and one addition per element.",
+    "code": [
+      "/**",
+      " * result[i] = number of set bits in i, for i in 0..n.",
+      " * O(n) time, O(1) auxiliary space beyond the output.",
+      " */",
+      "public static int[] countBits(int n) {",
+      "    int[] result = new int[n + 1];   // result[0] = 0 already",
+      "",
+      "    for (int i = 1; i <= n; i++) {",
+      "        // i & (i - 1) clears i's lowest set bit, so it has exactly one fewer 1,",
+      "        // and it is strictly smaller than i — already computed.",
+      "        result[i] = result[i & (i - 1)] + 1;",
+      "    }",
+      "    return result;",
+      "}",
+      "",
+      "/** The same thing via the shift recurrence. Identical complexity. */",
+      "public static int[] countBitsByShift(int n) {",
+      "    int[] result = new int[n + 1];",
+      "",
+      "    for (int i = 1; i <= n; i++) {",
+      "        // i >> 1 drops the lowest bit; add it back if it was a 1.",
+      "        result[i] = result[i >> 1] + (i & 1);",
+      "    }",
+      "    return result;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(1)"
+    }
+  },
+  "visualization": {
+    "engine": "bitOps",
+    "input": {
+      "value": 13
+    },
+    "code": [
+      "int i = 13;                  // 0000 1101 — three set bits",
+      "int doubled = i << 1;        // shift left  -> multiply by 2",
+      "int halved  = i >> 1;        // 0000 0110 = 6  <-- the shift recurrence's smaller index",
+      "int lowBit  = i & 1;         // 1 — the bit the shift discarded, added back",
+      "int cleared = i & (i - 1);   // 0000 1100 = 12 <-- one fewer 1: result[13] = result[12] + 1",
+      "int lowest  = i & -i;        // isolate the lowest set bit",
+      "int zero    = i ^ i;         // XOR is its own inverse"
+    ]
+  },
+  "commonMistakes": [
+    "Allocating `new int[n]` instead of `new int[n + 1]`. The answer covers 0 through n inclusive, so the array has n + 1 slots — and the n = 0 case must still return `[0]`, not an empty array.",
+    "Starting the DP loop at i = 0. `0 & -1` is 0, so `result[0] = result[0] + 1` sets it to 1 and every later answer inherits the error. Leave `result[0]` at its default 0 and start at 1.",
+    "Using `result[i / 2]` with a signed value elsewhere in similar code. Here `i` is non-negative so `i >> 1` and `i / 2` agree, but on negative values `>>` rounds towards negative infinity while `/` rounds towards zero — a difference that silently corrupts bit-counting loops on negatives.",
+    "Recomputing with Kernighan's loop inside the DP loop, which reintroduces the log factor you just removed. The whole point is that the transition is O(1).",
+    "Calling `Integer.bitCount` and stopping there. It is the correct production answer and worth naming — but it is also explicitly what the follow-up forbids, because the exercise is the recurrence, not the result."
+  ],
+  "similar": [
+    "single-number",
+    "subsets-bitmask",
+    "climbing-stairs",
+    "house-robber"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 338,
+      "slug": "counting-bits",
+      "title": "Counting Bits",
+      "url": "https://leetcode.com/problems/counting-bits/",
+      "premium": false
+    }
+  }
+}

@@ -1,0 +1,337 @@
+{
+  "id": "scenarios-production-incidents",
+  "trackId": "scenarios",
+  "topic": "production-incidents",
+  "title": "Production Incidents",
+  "summary": "Real failures to debug out loud — what the symptom rules out, what evidence you gather, and what you change so it cannot recur silently.",
+  "questions": [
+    {
+      "id": "spi-01",
+      "level": "mid",
+      "type": "scenario",
+      "question": "Memory climbs steadily after every deploy until the pod is OOM-killed, roughly 20 hours in. Walk me through it.",
+      "answer": "The clock resetting on deploy tells you it is accumulation in the process, not a data or traffic problem. Twenty hours means a slow leak rather than a burst.\n\n**Evidence, in this order.** Is it heap or the container? A JVM heap exhaustion produces `OutOfMemoryError` in the logs; a container OOM-kill produces exit code 137 with nothing in the application log at all — different diagnoses entirely. If the JVM looks healthy but the container dies, the memory is off-heap: metaspace, direct byte buffers, thread stacks or a native library, and `-XX:NativeMemoryTracking=summary` with `jcmd VM.native_memory` separates those.\n\nFor a heap leak, graph **heap after full GC** across the twenty hours. Healthy load returns to a flat baseline after each collection; a leak has a baseline climbing monotonically. Peak usage on its own tells you nothing. Then take a heap dump near the top with `jmap -dump:live`, open it in Eclipse MAT, and read the dominator tree — it names the object retaining the most memory and the reference chain holding it.\n\n**The usual culprits**, roughly by frequency: an unbounded cache in a static field or singleton bean; listeners registered and never removed; `ThreadLocal` values never cleared on a pooled thread; a collection growing on a long-lived object.\n\n**Mitigation versus fix.** A scheduled restart buys a night's sleep and is a legitimate stopgap — say that out loud, and say it is not the fix. The fix comes from the dominator tree.\n\n**So it cannot recur silently**: alert on the heap-after-GC trend rather than instantaneous usage, keep `-XX:+HeapDumpOnOutOfMemoryError` pointed at a writable volume, and export cache sizes as metrics so an unbounded one is visible before it is fatal.",
+      "keyPoints": [
+        "Resets on deploy means in-process accumulation, not data or traffic",
+        "Separate JVM heap exhaustion from container OOM-kill (exit 137) first",
+        "Heap after GC is the leak signal; peak usage is noise",
+        "Heap dump plus dominator tree names the retaining object",
+        "A scheduled restart is a stopgap — say so rather than calling it fixed"
+      ],
+      "followUps": [
+        {
+          "q": "The heap is flat but the container still gets killed. Where is the memory?",
+          "a": "Off-heap. Metaspace from generated classes, direct ByteBuffers from Netty or NIO, thread stacks from an unbounded pool, or a native library. Those regions are effectively unbounded by default, so the JVM will grow past the container limit without ever reporting heap trouble. Native Memory Tracking is the tool that shows the split."
+        },
+        {
+          "q": "How do ThreadLocals leak on a thread pool?",
+          "a": "Pooled threads are never destroyed, so anything put in a ThreadLocal and not removed stays reachable for the life of the process — and worse, is visible to the next request that lands on that thread. That makes it a correctness bug about data leaking between users as much as a memory one. Clearing in a finally block is mandatory, not hygiene."
+        }
+      ],
+      "redFlags": [
+        "Raising -Xmx or the container limit as the diagnosis",
+        "Guessing at the cause without a heap dump",
+        "Not distinguishing heap from container memory"
+      ],
+      "related": [
+        "cache"
+      ]
+    },
+    {
+      "id": "spi-02",
+      "level": "senior",
+      "type": "scenario",
+      "question": "Every hour, on the hour, database CPU spikes to 100% for about 30 seconds and latency goes with it. What is happening?",
+      "answer": "A perfectly regular spike is a scheduler, not a user. Two candidates: a cron job, or **a cache stampede** — and the second is the more interesting because it is self-inflicted by a design choice.\n\n**The stampede mechanism.** A popular key was cached with a one-hour TTL. It expires. Every concurrent request now misses, and each one independently runs the expensive query to repopulate it. A thousand requests per second become a thousand identical queries in the same instant. The cache was doing its job right up until it stopped doing it, all at once.\n\n**Confirming it**: cache hit-rate metrics show a cliff at the top of the hour; `pg_stat_statements` or the slow-query log shows one query executing hundreds of times in a few seconds. If it is a batch job instead, the query shape is different and the job's own logs line up.\n\n**Fixes, in the order I would apply them:**\n\n1. **Jitter the TTL** — `ttl + random(0, ttl * 0.1)`. One line, and it converts a synchronised expiry into a spread. This alone usually removes the spike.\n2. **Single-flight** — one thread, or one node under a short distributed lock, recomputes while the rest wait for that result. Caffeine's `LoadingCache` does this per node for free.\n3. **Refresh ahead** — recompute in the background before expiry, so the entry is never cold.\n4. **Serve stale while revalidating** — return the expired value immediately, refresh asynchronously. Correct whenever slightly stale beats slow.\n\n**Prevention**: never give a hot key a fixed TTL, and alert on hit-rate drops rather than only on latency — the hit rate moves first.",
+      "keyPoints": [
+        "Clockwork regularity means a scheduler or synchronised expiry, not user behaviour",
+        "Simultaneous expiry turns every request into the same expensive query",
+        "Confirm with cache hit rate and repeated identical queries",
+        "Jittered TTL is the cheapest fix; single-flight is the robust one",
+        "Alert on hit rate — it moves before latency does"
+      ],
+      "followUps": [
+        {
+          "q": "What if the key is so hot that even one recompute is too expensive?",
+          "a": "Then it should not be computed on demand at all. Precompute on write or maintain it with a background job, treating the cache as a materialised view rather than a lazy memo. The real question is how stale the value is allowed to be, and that answer dictates the design."
+        },
+        {
+          "q": "How is this different from a thundering herd?",
+          "a": "Same shape, different trigger. A herd is many clients waking at once for any reason — a reconnect after a network blip, a fleet restart, retries that all fire on the same schedule. The cures come from the same family: jitter, coalescing and backoff."
+        }
+      ],
+      "redFlags": [
+        "Increasing the TTL — that makes the spike less frequent and no smaller",
+        "Scaling the database to absorb a self-inflicted burst",
+        "Not knowing jitter is the standard mitigation"
+      ],
+      "related": [
+        "cache",
+        "rate-limiting"
+      ]
+    },
+    {
+      "id": "spi-03",
+      "level": "mid",
+      "type": "scenario",
+      "question": "A Kafka consumer group's lag grows steadily all day and only catches up overnight. What do you check?",
+      "answer": "Lag growing under load and shrinking when traffic drops means **consumption is slower than production on average**. There is no single broken thing to find — it is a throughput deficit, and that framing matters because the instinct to hunt for an error is misdirected.\n\n**Measure before changing anything.** Per-partition lag, not just group lag: if one partition carries most of it, the problem is key skew, not capacity. Then consumer throughput, processing time per record, and whether rebalances are happening — frequent rebalances stop consumption entirely for their duration and are easy to miss.\n\n**Causes, distinguished by evidence:**\n\n- **Not enough consumers** — all partitions lag evenly, consumer CPU is high. Add instances, but only up to the partition count: a partition is consumed by exactly one member of the group. At that ceiling you need more partitions, which is a repartition rather than a config change.\n- **Skew** — one partition lags. The partition key has low cardinality, or one tenant dominates. Fix the key or route that tenant separately.\n- **Slow processing** — consumer CPU is low and it is waiting. Almost always a synchronous call per record. Batch the writes or bound the concurrency and parallelise.\n- **Rebalance churn** — processing a batch exceeds `max.poll.interval.ms`, the broker evicts the member, that triggers a rebalance, which pauses everyone. A vicious cycle that presents as slowness. Reduce `max.poll.records` and use cooperative-sticky assignment.\n\n**Prevention**: alert on the lag *derivative* — lag that is growing — not an absolute threshold, which is meaningless without the trend.",
+      "keyPoints": [
+        "Steady growth is a throughput deficit, not a discrete failure",
+        "Per-partition lag distinguishes skew from capacity",
+        "Consumers cannot exceed partition count — that is the scaling ceiling",
+        "Low consumer CPU means blocked on I/O per record; batch it",
+        "Rebalance churn looks like slowness and compounds itself",
+        "Alert on lag growth rate, not an absolute number"
+      ],
+      "followUps": [
+        {
+          "q": "Why can't you just add more consumers than partitions?",
+          "a": "Kafka assigns each partition to exactly one consumer in a group, so extras sit idle. Partition count is fixed at topic creation and raising it is disruptive: it changes the key-to-partition mapping, so per-key ordering is broken for in-flight data. That is why partition count is a capacity decision made early and regretted late."
+        },
+        {
+          "q": "The consumer writes each record to a database. How do you speed that up safely?",
+          "a": "Batch within a poll — accumulate, write once, then commit the offset after the write succeeds. That preserves at-least-once semantics: a crash before commit replays the batch, which is why the write must be idempotent, typically an upsert on a natural key. Committing before the write gives you at-most-once and silent data loss."
+        }
+      ],
+      "redFlags": [
+        "Adding consumers without checking partition count",
+        "Raising max.poll.interval.ms without asking why processing is slow",
+        "Committing offsets before the work is done"
+      ],
+      "related": [
+        "message-queue",
+        "sharding"
+      ]
+    },
+    {
+      "id": "spi-04",
+      "level": "mid",
+      "type": "scenario",
+      "question": "Roughly 1% of requests return 500, seemingly at random. Every dashboard looks healthy. How do you find it?",
+      "answer": "One percent is hard precisely because averages hide it. So the first move is to **stop looking at aggregates**.\n\n**Get one real failure.** Find the actual exception and stack trace for a failed request — not a count, an instance. With tracing, filter by error and open one trace end to end. Without it, correlation ids in logs are the substitute; if you have neither, that is the first gap to close.\n\n**Then find what is different about the 1%.** This is the whole technique, because the failures almost always cluster on a dimension nobody is grouping by:\n\n- **One instance.** A single bad pod — stale deployment, corrupt local cache, failing disk, clock skew. Break error rate down by instance and it becomes 100% of one pod rather than 1% of everything.\n- **One shard or replica.** A lagging replica, or a shard missing an index.\n- **One input class.** A particular tenant, a locale, an unusually large payload, a null in a field nobody had sent before.\n- **The cold path.** Failures concentrated in the seconds after a deploy or scale-up — pool warming, empty cache, JIT cold start.\n- **A timeout at the edge of its distribution.** If a downstream's p99 sits near your timeout, a perfectly normal tail produces exactly this: a small, random-seeming failure rate that moves with load.\n\n**The lesson worth stating**: a low, steady error rate is almost never random. It is deterministic failure for a subset of traffic, and the work is finding the dimension that subset shares.\n\n**Prevention**: error rate broken down by instance, tenant and endpoint as a standing dashboard, and errors sampled at 100% for tracing even when normal sampling is 1%.",
+      "keyPoints": [
+        "Averages hide it — start from one real trace, not a count",
+        "\"Random\" almost always means deterministic for an unmeasured subset",
+        "Break down by instance, shard, tenant, payload size, time since deploy",
+        "A timeout near a downstream's p99 produces exactly this pattern",
+        "Sample errors at 100% even when normal sampling is low"
+      ],
+      "followUps": [
+        {
+          "q": "It turns out to be one pod. Do you just restart it?",
+          "a": "Restart to stop the bleeding, but capture state first — logs, heap dump, thread dump, disk usage — or you have destroyed the only evidence. Then ask why the platform did not remove it: the readiness probe reported healthy while the pod was failing requests, which means the probe is not testing anything real."
+        },
+        {
+          "q": "How would tracing have shortened this?",
+          "a": "It turns 'somewhere in the system' into a specific failing span with its parent chain and attributes. Breaking errors down by dimension works because traces carry those dimensions; without them you are grepping logs and hoping."
+        }
+      ],
+      "redFlags": [
+        "Calling it random and adding a retry",
+        "Looking only at averages",
+        "Restarting the bad instance before capturing evidence"
+      ]
+    },
+    {
+      "id": "spi-05",
+      "level": "senior",
+      "type": "scenario",
+      "question": "The database failed over to its standby cleanly in 30 seconds, but the application threw connection errors for 15 minutes until someone restarted it. Why?",
+      "answer": "The database recovered; the application's **connection pool** did not. It is holding TCP connections to a host that is no longer the primary, and nothing has told it otherwise.\n\n**The mechanism.** Pooled connections are long-lived by design. After a failover the old sockets are either dead or — worse — still open to a host that is now a read-only standby, so writes fail with a driver error rather than a connection error. Without validation, the pool keeps handing those out for as long as they stay under the idle timeout. Fifteen minutes is about what you would expect from a pool cycling slowly under modest load.\n\n**What should have happened.** HikariCP validates a connection before handing it out and evicts failures, and `maxLifetime` retires connections routinely so the pool never holds very old sockets. Set `maxLifetime` *below* any infrastructure-level idle timeout — if they race, you get intermittent errors exactly at the boundary, because the pool hands out a connection the network has already killed.\n\n**The other half is DNS.** If failover works by repointing a DNS name, the JVM's DNS cache matters: it can cache a resolution far longer than the failover takes, so a JVM that resolved the old address may never look again. Setting `networkaddress.cache.ttl` explicitly to something small is standard practice anywhere DNS-based failover exists.\n\n**Fixes**: validation and `maxLifetime` configured deliberately, an explicit JVM DNS TTL, and ideally a failover-aware connection URL or a proxy such as PgBouncer or RDS Proxy that owns this problem for you.\n\n**And test it.** A failover that has never been exercised is a plan, not a capability. This exact failure takes fifteen minutes to find in staging and is otherwise found by your users.",
+      "keyPoints": [
+        "The database recovered; the pool kept stale connections",
+        "Connections to a demoted primary fail as driver errors, not connect errors",
+        "maxLifetime must sit below any infrastructure idle timeout",
+        "JVM DNS caching can pin the old address through the failover",
+        "A failover-aware URL or a connection proxy is the robust fix",
+        "Untested failover is not a capability"
+      ],
+      "followUps": [
+        {
+          "q": "What does this cost in normal operation?",
+          "a": "Very little. Validation is a cheap round trip or a driver-local check, and retiring connections periodically costs a handful of handshakes per minute. It is insurance priced in microseconds against an outage measured in minutes."
+        },
+        {
+          "q": "How would you verify the fix without waiting for a real failover?",
+          "a": "Trigger one in staging — most managed databases expose a failover button precisely for this. Failing that, drop the connections at the network level (a firewall rule, or killing sessions server-side) and watch whether the pool recovers on its own within seconds."
+        }
+      ],
+      "redFlags": [
+        "\"Just restart the app\" as the permanent answer",
+        "Not knowing the pool holds connections across a failover",
+        "Never having tested a failover"
+      ],
+      "related": [
+        "replication",
+        "database"
+      ]
+    },
+    {
+      "id": "spi-06",
+      "level": "mid",
+      "type": "scenario",
+      "question": "Disk on a production node hits 100% and the service starts failing. What do you do, in what order?",
+      "answer": "**Stop the bleeding, but do not destroy evidence.** The reflex is to delete the largest thing; resist it long enough to find out what is growing, because a full disk is a symptom and the cause will refill it.\n\n**Find it fast**: `df -h` for which filesystem, then `du -xh --max-depth=1` walking down, or `ncdu`. And critically `lsof +L1` — files deleted but still held open by a process. That is the classic trap: someone deleted a 40 GB log, `du` shows space free, `df` still shows the disk full, because the inode is not released until the holder closes it. You restart the holder, or truncate through `/proc/<pid>/fd/`.\n\n**The usual causes**: application logs with no rotation, or rotation configured and never applied to the current file; a debug log level left on after an investigation; core dumps from repeated crashes; an unbounded temp or upload directory; dead container images and layers; and database WAL accumulating because a replica is gone and its replication slot still claims it — that last one fills a disk remarkably fast and takes the database down with it.\n\n**Immediate relief**: truncate an open log rather than deleting it (`: > file` or `truncate -s 0`), which releases the space without breaking the file handle.\n\n**Then the real fix** matches the cause: rotation with a size cap and retention count, log level back to INFO, a cleanup policy on temp directories, image pruning on a schedule, monitoring on replication slots.\n\n**So it cannot recur silently**: alert at 75% *with a projection of time-to-full*, not at 90%. A disk filling linearly gives days of warning to anyone watching the slope.",
+      "keyPoints": [
+        "Find the cause before deleting — it will refill otherwise",
+        "lsof +L1 for deleted-but-open files, the case where df and du disagree",
+        "Truncate an open log rather than deleting it",
+        "Unrotated logs, debug level, core dumps and stale replication slots are the usual causes",
+        "Alert on trend and time-to-full, not a percentage"
+      ],
+      "followUps": [
+        {
+          "q": "Why does an inactive replication slot fill the disk?",
+          "a": "PostgreSQL retains every WAL segment a slot has not confirmed, indefinitely and by design — the slot exists to guarantee the replica can catch up. A replica that dies and is never removed leaves its slot claiming WAL forever. Bounding it with `max_slot_wal_keep_size` and monitoring `pg_replication_slots` catches it long before the disk does."
+        },
+        {
+          "q": "The disk is full and you cannot even log in cleanly. What then?",
+          "a": "Most filesystems reserve a percentage for root precisely for this, so a root login usually still works. Failing that, truncating a known large log through a running process's file descriptor, or attaching a temporary volume, buys the room to work in."
+        }
+      ],
+      "redFlags": [
+        "Deleting files before identifying what is growing",
+        "Not knowing why df and du can disagree",
+        "Alerting at 90% and calling that monitoring"
+      ]
+    },
+    {
+      "id": "spi-07",
+      "level": "senior",
+      "type": "scenario",
+      "question": "A nightly job ran twice and double-processed 10,000 payments. How did that happen, and how do you prevent it?",
+      "answer": "Two questions: why did it run twice, and why did running twice cause damage. **The second matters more**, because a job running twice is normal in any distributed system — the scheduler retried, two instances both fired, a deploy overlapped, a partition made a lease look expired. You cannot engineer that to zero. You can engineer the damage to zero.\n\n**Why it ran twice**, roughly by likelihood: multiple instances each running their own `@Scheduled` with no leader election; a CronJob with `concurrencyPolicy: Allow` and a slow run overlapping the next; a scheduler retrying on a timeout where the first run actually succeeded; or a distributed lock whose lease expired mid-run.\n\n**Why it caused damage** is the design flaw: the work was not idempotent. Processing a payment twice must be impossible by construction, not by hoping it only happens once.\n\n**The fixes, layered — you want all of them:**\n\n1. **Idempotency at the unit of work.** Each payment carries a natural idempotency key, the processing table has a unique constraint on it, and a second attempt fails the insert and is skipped. This makes duplication harmless, which is the only real protection.\n2. **Claim, do not check.** `UPDATE payments SET status='processing', run_id=? WHERE id=? AND status='pending'` and proceed only if one row changed. Check-then-act loses races; a conditional update wins them.\n3. **Single execution** via ShedLock, an advisory lock, or platform leader election — with a lease longer than the worst-case run, and renewed.\n4. **`concurrencyPolicy: Forbid`** if it is a CronJob.\n\n**Recovery matters too**: writing the run id onto every processed row is what turns finding the duplicates into a query rather than a forensic exercise.\n\n**The principle**: assume every job, message and request can arrive twice. Exactly-once delivery does not exist; exactly-once *effect* is achievable and is what you actually want.",
+      "keyPoints": [
+        "Running twice is expected; damage from running twice is the real bug",
+        "Idempotency key plus a unique constraint makes duplication harmless",
+        "Conditional UPDATE to claim work — never check-then-act",
+        "Lock lease must exceed worst-case runtime and be renewed",
+        "Record the run id on each row so duplicates are findable afterwards",
+        "Exactly-once delivery is a myth; exactly-once effect is the goal"
+      ],
+      "followUps": [
+        {
+          "q": "Why isn't a distributed lock enough on its own?",
+          "a": "Because a lease can expire while the holder is still working — a long GC pause or a network partition is enough — and then two holders both believe they own it. That is the fencing-token problem: distributed locks are advisory unless the resource itself validates a monotonically increasing token. Idempotency at the data layer is what makes the lock's failure survivable."
+        },
+        {
+          "q": "How do you find the 10,000 duplicates after the fact?",
+          "a": "If each processed row recorded a run id and timestamp, it is one query grouping by the natural key and keeping groups with more than one processing row. If it recorded nothing, you are reconstructing from logs and external statements — which is the argument for writing the run id down before you need it."
+        }
+      ],
+      "redFlags": [
+        "Focusing entirely on preventing the double run",
+        "\"We'll use exactly-once delivery\"",
+        "A lock with no lease renewal and no idempotency underneath"
+      ],
+      "related": [
+        "message-queue",
+        "database",
+        "api"
+      ]
+    },
+    {
+      "id": "spi-08",
+      "level": "senior",
+      "type": "scenario",
+      "question": "Latency degrades gradually over a week and a restart fixes it completely. What kinds of bugs does that point to?",
+      "answer": "\"Degrades with uptime, resets on restart\" is a strong signal: something inside the process accumulates. That rules out data growth, traffic changes and infrastructure, all of which would survive a restart.\n\n**The candidates, and how to tell them apart:**\n\n- **Memory pressure short of an OOM.** The heap fills with retained objects, GC runs more often and longer, and every request pays. GC time as a percentage of wall clock creeps up and heap-after-GC climbs. This is the most common answer — a leak that never got large enough to kill the process.\n- **An unbounded structure being scanned.** A subscriber list, a session map, a metrics registry with unbounded label cardinality. Each request walks it, so cost grows with age. CPU rises with latency and the profiler shows time in iteration rather than GC.\n- **Connection or file-descriptor leakage.** Acquisition slows and eventually fails; an `lsof` count climbing over days is the evidence.\n- **Thread accumulation.** A pool that creates and never reaps. Thread count in JMX is either flat or a ramp, and a ramp is your answer.\n\n**The method**: instead of guessing, plot the four counters that discriminate — heap after GC, GC time percentage, thread count, open file descriptors — across the full week. One will have the same shape as the latency curve. If none does, take two profiles, one from a fresh instance and one from a week-old instance, and diff them.\n\n**Mitigation**: rolling restarts on a schedule are an honest stopgap. **The fix** comes from whichever counter matched. **Prevention**: those four counters belong on a permanent dashboard, because this class of bug is invisible in any window shorter than the accumulation period — which is exactly why it reached production.",
+      "keyPoints": [
+        "Resets on restart means in-process accumulation",
+        "GC pressure short of OOM is the most common cause",
+        "Discriminate with heap after GC, GC time %, thread count, open FDs",
+        "Whichever counter matches the latency curve is the answer",
+        "Diff a profile from a fresh instance against a week-old one",
+        "Rolling restarts are an honest stopgap, not a fix"
+      ],
+      "followUps": [
+        {
+          "q": "Why would unbounded metric label cardinality cause this?",
+          "a": "A registry keyed on something unbounded — a user id, a URL containing ids, a trace id — grows a new time series per distinct value. The registry is walked on every scrape and often on every record, memory grows without limit, and the monitoring meant to help you becomes the thing degrading the service. A common and very avoidable own goal."
+        },
+        {
+          "q": "How would you catch this before production next time?",
+          "a": "A soak test: the same load for several hours with those counters graphed. Most load tests run for ten minutes, which is by construction too short to see anything that accumulates. A long soak is the only test that finds this class of bug."
+        }
+      ],
+      "redFlags": [
+        "Scheduling restarts and closing the ticket",
+        "Blaming infrastructure when reset-on-restart says otherwise",
+        "Profiling only a freshly started instance"
+      ],
+      "related": [
+        "cache"
+      ]
+    },
+    {
+      "id": "spi-09",
+      "level": "mid",
+      "type": "scenario",
+      "question": "A third-party API you depend on starts returning 429s during your peak hour. What is your response?",
+      "answer": "**First, do no harm.** The instinct is to retry, and naive retries are exactly what turns rate limiting into an outage: you are being told you are sending too much, and retrying immediately sends more. If there is a retry loop without backoff anywhere in this path, that is the emergency.\n\n**Read what they told you.** A well-behaved 429 carries `Retry-After`, and many APIs add remaining-quota and reset headers. Honour `Retry-After` exactly — it is the provider telling you when to come back. Guessing when the answer was in the response is a self-inflicted wound.\n\n**Then decide what each request is worth**, because not all traffic deserves the same treatment:\n\n- **Can it wait?** Push it to a queue and drain below the limit. Right for anything asynchronous, and it converts a hard failure into a delay.\n- **Can it be avoided?** Cache aggressively, deduplicate identical in-flight calls, batch where the API supports it. Often a large share of calls are repeats within seconds.\n- **Must it happen now?** Then you need a client-side limiter that keeps you under quota by construction, plus a degradation path for what does not fit — stale data or a reduced response rather than an error.\n\n**Protect yourself structurally**: exponential backoff **with jitter**, bounded retries, and a circuit breaker so that when the provider is genuinely unhappy you fail fast — which also recovers faster, because their limiter stops being continuously re-triggered.\n\n**Then the commercial conversation**, which engineers forget: check the actual quota, whether it is per-key or per-account, and whether the peak is genuine business growth that warrants a higher tier. Sometimes the fix is a purchase order.\n\n**Prevention**: track your own call rate against the documented quota and alert at 80%, so you find out before they tell you.",
+      "keyPoints": [
+        "Naive retries make rate limiting worse — check for unjittered loops first",
+        "Honour Retry-After and read the quota headers rather than guessing",
+        "Classify traffic: defer to a queue, avoid via cache and dedupe, or limit client-side",
+        "Backoff with jitter, bounded retries, and a circuit breaker",
+        "Check the contractual quota — the fix is sometimes commercial",
+        "Alert on your own call rate against quota at 80%"
+      ],
+      "followUps": [
+        {
+          "q": "How would you implement the client-side limiter?",
+          "a": "A token bucket sized just under the provider's quota — and shared across instances if the quota is per-account, which means it lives in Redis rather than in each process. Per-instance limiters silently multiply by the number of instances, which is how teams stay over quota while believing they are limited."
+        },
+        {
+          "q": "Why does a circuit breaker help when the provider is only rate limiting, not down?",
+          "a": "Because sending requests you know will be rejected consumes your own threads and connections for nothing, and keeps their limiter tripped. Failing fast frees your resources for traffic that can succeed and lets their window reset cleanly."
+        }
+      ],
+      "redFlags": [
+        "Adding retries as the first response",
+        "Ignoring Retry-After",
+        "A per-instance rate limiter for a per-account quota"
+      ],
+      "related": [
+        "rate-limiting",
+        "cache",
+        "message-queue"
+      ]
+    },
+    {
+      "id": "spi-10",
+      "level": "senior",
+      "type": "scenario",
+      "question": "After a deploy, p50 latency improved by 15% but p99 got twice as bad. Would you roll back? How do you explain it?",
+      "answer": "**Yes — roll back or halt the rollout**, then investigate. A p99 regression is a real user-facing regression: at a thousand requests per second that is ten users a second having a bad time, and the tail is what people remember. An improved median does not compensate, because it is a different population of requests.\n\nThen the interesting part: **this divergence is a signature, not a coincidence**. Something made the common path faster and the uncommon path slower. The usual mechanisms:\n\n- **A cache was added.** Hits got faster, so p50 fell; misses now pay the lookup *plus* the original work, and cold or evicted keys land in the tail. By far the most common cause.\n- **Batching or buffering.** Aggregation improves throughput and median while adding wait time for whatever arrives just after a batch closes.\n- **A pool got smaller**, or work moved onto a shared pool. Fine under normal load; at the tail, requests queue. Queueing delay is invisible in the median and dominant in the tail.\n- **More allocation per request.** Nothing visible until GC pauses grow — and GC pauses land squarely in the tail.\n- **A new synchronous dependency** with its own tail. Your p99 is now the convolution of yours and theirs.\n\n**How I would confirm**: compare the full latency *histogram*, not two percentile numbers. The shape says whether the tail is a new mode — a distinct slow path — or a fattened tail, which points at queueing. Then break p99 down by endpoint, instance, tenant, and cache hit versus miss.\n\n**The principle**: measure the tail, optimise for the tail, alert on the tail. Averages and medians describe a system nobody actually experiences.",
+      "keyPoints": [
+        "Roll back first — a p99 regression is real users, not a statistic",
+        "Divergent p50 and p99 signals a fast path plus a new slow path",
+        "Cache hit/miss asymmetry is the most common cause",
+        "Queueing delay from a smaller pool is invisible in the median",
+        "Compare histograms — a new mode differs from a fat tail",
+        "GC pauses live in the tail; graph GC time across deploys"
+      ],
+      "followUps": [
+        {
+          "q": "When would you accept a p99 regression for a p50 win?",
+          "a": "When the tail is genuinely not user-facing — a batch or background path — or when the absolute numbers make it irrelevant: p99 moving from 8ms to 16ms while p50 drops from 40ms to 34ms is a clear net win. The decision needs absolute latencies and who experiences them. Answering in percentages alone is the mistake."
+        },
+        {
+          "q": "Why does depending on several services multiply tail risk?",
+          "a": "If a request needs five services in sequence and each has a 1% chance of being slow, the chance at least one is slow is about 5%. Your p99 is set by their p95s. That arithmetic is the reason fan-out designs need hedged requests, aggressive timeouts and explicit tail tolerance."
+        }
+      ],
+      "redFlags": [
+        "Shipping it because the average improved",
+        "Comparing two percentile numbers without looking at the distribution",
+        "Not considering GC or queueing as tail sources"
+      ],
+      "related": [
+        "cache",
+        "load-balancer"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,388 @@
+{
+  "id": "bit-manipulation",
+  "kind": "pattern",
+  "title": "Bit Manipulation",
+  "group": "Maths & Bits",
+  "level": 3,
+  "difficulty": "intermediate",
+  "estimatedMinutes": 40,
+  "summary": "Operate on the binary representation directly — XOR to cancel pairs, masks to store a set of flags in one int, and a handful of tricks that turn an O(n) space requirement into O(1).",
+  "prerequisites": [
+    "data-and-variables",
+    "arrays"
+  ],
+  "tags": [
+    "bits",
+    "xor",
+    "bitmask",
+    "twos-complement",
+    "maths",
+    "level-3"
+  ],
+  "analogy": {
+    "beginner": "Think of a light switch panel with 32 switches in a row. Instead of carrying around 32 separate notes saying 'kitchen light on, porch light off…', you photograph the panel — one picture holds all 32 answers, and comparing two panels is one glance rather than 32.\n\nXOR is the other half of the idea, and it is the pairing-up game. Imagine everyone at a party is asked to find a partner wearing an identical shirt. Everyone who finds a match walks out together. Whoever is left standing alone is the person whose shirt nobody else wore — and you found them without writing down a single name.",
+    "interview": "Bit manipulation exploits the fact that an `int` is not an abstract number but 32 addressable bits, and that AND, OR, XOR and shifts are single CPU instructions over all 32 at once. Two properties carry most problems: XOR forms an abelian group with a ⊕ a = 0 and a ⊕ 0 = a, so any value appearing an even number of times cancels out of a running XOR; and an integer doubles as the characteristic vector of a subset of a ≤32-element universe, which is what makes bitmask DP over subsets feasible at all."
+  },
+  "intuition": "Every integer you have ever used was already a row of bits. `12` is `1100`: one eight, one four, no two, no one. Nothing new is being introduced here — you are just being handed access to a representation that was always underneath.\n\nThat access buys two specific things, and it is worth being precise about which, because bit manipulation is a small hammer that people swing at the wrong nails.\n\n**One: XOR cancels pairs.** XOR (`^`) returns 1 when its two input bits differ. Two consequences follow immediately:\n\n```\na ^ a = 0        every bit differs from itself in zero positions\na ^ 0 = a        differing from nothing changes nothing\n```\n\nXOR is also commutative and associative, so the order you apply it in does not matter. Put those three facts together and something useful falls out: XOR a whole array together, and every value that appears twice annihilates itself — regardless of where in the array the two copies sit. Whatever is left is the value that had no partner. One `int` of state, one pass, no map.\n\n**Two: an int is a set.** With 32 bits you can represent any subset of a 32-element universe: bit *i* is 1 if element *i* is in the set. Union becomes `|`, intersection becomes `&`, membership becomes `(mask >> i) & 1`, and 'iterate every possible subset' becomes `for (int mask = 0; mask < (1 << n); mask++)`. This is the reason interview constraints of `n ≤ 20` with 'try every subset' are solvable: 2²⁰ is a million, and each subset is a single integer rather than a `List`.\n\n**Two's complement, because the rest depends on it.** Java has no unsigned int. Negative numbers are stored as two's complement: flip every bit and add one. So `-12` is `…11110100`, and the leading bit is 1 exactly when the number is negative.\n\nThis representation is not an arbitrary choice — it makes `a - b` and `a + (-b)` the same hardware operation, which is why every machine uses it. It also explains the two right shifts. `>>` is the *arithmetic* shift: it copies the sign bit inwards, so `-8 >> 1` is `-4` and negative numbers stay negative. `>>>` is the *logical* shift: it always feeds in zeros, so `-8 >>> 1` is a huge positive number. Use `>>` for arithmetic and `>>>` when the value is a bag of bits rather than a quantity — which is exactly why `Integer.toBinaryString` and the midpoint idiom `(lo + hi) >>> 1` use it.\n\n**An honest caveat before you invest.** Bit tricks are rarely the *point* of an interview problem. No interviewer asks 'do you know `n & (n-1)`?' for its own sake. They appear when a constraint forces them — 'O(1) extra space', 'n ≤ 20, consider every subset', 'the values are flags' — and the skill being tested is noticing that the constraint points here. Recognising `n & -n` is a party trick; recognising that 'constant extra space' rules out the HashMap and leaves XOR is the actual skill.",
+  "problemFirst": {
+    "motivatingProblem": "You are given an array in which every value appears exactly twice, except for one value that appears once. Return that value. The catch is the constraint: you must use O(1) extra space, and the input array may not be modified.",
+    "bruteForce": {
+      "idea": "Count occurrences in a HashMap, then scan the map for the key whose count is 1. The obvious, readable, correct solution.",
+      "code": [
+        "public static int singleNumber(int[] nums) {",
+        "    Map<Integer, Integer> counts = new HashMap<>();",
+        "    for (int value : nums) {",
+        "        counts.merge(value, 1, Integer::sum);",
+        "    }",
+        "    for (Map.Entry<Integer, Integer> entry : counts.entrySet()) {",
+        "        if (entry.getValue() == 1) return entry.getKey();",
+        "    }",
+        "    throw new IllegalArgumentException(\"no unpaired element\");",
+        "}"
+      ],
+      "complexity": {
+        "time": "O(n)",
+        "space": "O(n)"
+      },
+      "whySlow": "This one is not slow at all — it is O(n) time, which is optimal, and in a normal codebase it is the right answer. It fails on the *other* axis: the map holds up to n/2 boxed Integer entries, and the problem explicitly forbids O(n) extra space. That is the whole difficulty. When the time complexity is already optimal and the constraint is on memory, the question stops being 'how do I avoid re-scanning?' and becomes 'what can I remember in a single variable?'"
+    },
+    "observation": "The map stores far more than the question needs. We never care *how many times* a value appeared or *which* values appeared — only that pairs are irrelevant and one element is unpaired. We are paying O(n) memory to store facts we will throw away, because the counting approach has no way to make a pair delete itself.",
+    "leap": "Find an operation under which a pair annihilates. XOR is exactly that: `a ^ a = 0` and `a ^ 0 = a`, and because XOR is commutative and associative, the two copies of a value cancel no matter how far apart they sit. So fold the entire array into a single running XOR — every paired value cancels to 0 along the way, and the loner is what remains. One `int` of state instead of a map.",
+    "optimizedSketch": [
+      "// O(n) time, O(1) space — one int of state.",
+      "int result = 0;",
+      "for (int value : nums) {",
+      "    result ^= value;   // pairs cancel: (x ^ x) = 0, and 0 ^ loner = loner",
+      "}",
+      "return result;"
+    ]
+  },
+  "howItWorks": [
+    "**`x << k` — shift left, multiply by 2ᵏ.** Each bit moves to a higher position; zeros feed in from the right. `1 << i` is the single-bit value with only bit *i* set, and it is the building block of every mask. Beware: shifting into or past bit 31 overflows an `int` — use `1L << i` beyond 31 bits.",
+    "**`x >> k` — arithmetic shift right, divide by 2ᵏ, rounding towards negative infinity.** The sign bit is copied inwards, so negatives stay negative. Note `-7 >> 1` is `-4`, not `-3`, because it rounds down rather than towards zero the way `-7 / 2` does.",
+    "**`x >>> k` — logical shift right.** Always feeds in zeros, so the result is never negative. This exists because Java has no unsigned types: when you are treating the value as 32 loose bits rather than as a quantity, `>>>` is the one you want. It is also why the safe midpoint is `(lo + hi) >>> 1` — if the sum overflows into the sign bit, `>>>` still yields the correct index.",
+    "**`x & 1` — read the lowest bit.** 1 for odd, 0 for even. Identical in cost to `x % 2` but, unlike `%`, correct for negatives without thought: `-3 % 2` is `-1` in Java, while `-3 & 1` is `1`.",
+    "**`x & (x - 1)` — clear the lowest set bit.** Subtracting 1 flips the lowest 1 to 0 and turns every 0 below it into 1; ANDing with the original keeps only the bits above, so exactly one bit disappears. Loop it and count the iterations and you have Brian Kernighan's population count — it runs once per *set* bit rather than once per bit, so a sparse int costs almost nothing. A bonus corollary: `x & (x - 1) == 0` tests 'is x a power of two (or zero)?' in one operation.",
+    "**`x & -x` — isolate the lowest set bit.** In two's complement `-x` is `~x + 1`, and that construction leaves the lowest set bit as the only position where `x` and `-x` agree. The result is that bit alone, as a value. This is the operation a Fenwick (binary indexed) tree walks with, and it is also how you iterate the members of a bitmask one at a time.",
+    "**`x ^ y` — XOR, the pair-canceller.** 1 where the bits differ. `a ^ a = 0`, `a ^ 0 = a`, commutative and associative — together these mean a running XOR over a collection silently deletes anything that appears an even number of times, whatever the order. It is also self-inverse (`(a ^ k) ^ k == a`), which is why XOR shows up in toy ciphers and in swapping without a temporary.",
+    "**An `int` as a set of up to 32 flags.** Bit *i* set means 'element *i* is present'. Add: `mask |= (1 << i)`. Remove: `mask &= ~(1 << i)`. Toggle: `mask ^= (1 << i)`. Test: `(mask & (1 << i)) != 0`. Union, intersection and difference of two sets are `|`, `&` and `a & ~b`. A `long` gives you 64; beyond that use `java.util.BitSet`, which is this idea in an array of longs with a readable API.",
+    "**Enumerating every subset.** `for (int mask = 0; mask < (1 << n); mask++)` walks all 2ⁿ subsets, and the bits of `mask` say which elements are in this one. This is the iterative alternative to backtracking for subset problems, and the foundation of bitmask DP (`dp[mask]` = the best answer for the set of items in `mask`), which is how Travelling Salesman for n ≤ 20 is solved.",
+    "**Use the library when it says what you mean.** `Integer.bitCount` (which compiles to a single POPCNT instruction on modern CPUs), `Integer.toBinaryString`, `Integer.highestOneBit`, `Integer.numberOfTrailingZeros`, `Long.bitCount`. Hand-rolling Kernighan's loop in production code when `Integer.bitCount` exists is showing off, not engineering — know the trick for the interview, call the library in the repository."
+  ],
+  "patternRecognition": {
+    "signals": [
+      "**'O(1) extra space'** attached to a problem about duplicates, pairs or occurrences — the constraint is there to rule out the HashMap, and XOR is what is left",
+      "Elements appear in pairs (or in threes) with one exception — a running XOR, or per-bit counting modulo k",
+      "**n ≤ 20–25** together with 'every subset', 'every assignment', 'visit all cities' — a bitmask is the state, and `dp[1 << n]` fits in memory",
+      "The data is genuinely flags: permissions, feature toggles, a set of days, which of 8 sensors fired",
+      "Arithmetic that is exactly a power of two — 'is it a power of 2', 'round up to the next power of 2', 'divide by 2ᵏ'",
+      "The problem is about the binary representation itself: count set bits, reverse the bits, find the single differing bit"
+    ],
+    "antiSignals": [
+      "You are using bit tricks for speed on ordinary arithmetic — `x >> 1` instead of `x / 2` is a micro-optimisation the JIT already performs, and it costs readability for nothing",
+      "The universe is larger than 64 elements — use `BitSet` or a `HashSet`, not a hand-rolled array of masks",
+      "Values are not small non-negative integers — masks assume a small, dense, indexable universe",
+      "There is no space constraint and no subset enumeration — then a HashMap version will be clearer, and clearer is the correct answer",
+      "You need ordering or comparison — bit operations say nothing about magnitude, and sign makes `<` on masks a trap"
+    ]
+  },
+  "visualizations": [
+    {
+      "id": "bit-ops",
+      "title": "The six operations, in binary — where they are obvious",
+      "engine": "bitOps",
+      "input": {
+        "value": 12
+      },
+      "code": [
+        "int value = 12;                      // 0000 1100",
+        "int doubled = value << 1;            // shift left  -> multiply by 2",
+        "int halved  = value >> 1;            // shift right -> divide by 2 (sign-extending)",
+        "int isOdd   = value & 1;             // keep the lowest bit only",
+        "int dropped = value & (value - 1);   // clear the LOWEST SET bit (Kernighan)",
+        "int lowest  = value & -value;        // isolate the lowest set bit",
+        "int zero    = value ^ value;         // XOR is its own inverse: a ^ a == 0"
+      ]
+    }
+  ],
+  "implementations": [
+    {
+      "label": "Simple",
+      "language": "java",
+      "explanation": "The two results worth being able to write from memory. `singleNumber` is the XOR fold — note that it needs no knowledge of the array's size, order or contents, only that everything else is paired. `countSetBits` is Kernighan's trick: each iteration removes exactly one set bit, so the loop runs once per 1 in the number rather than 32 times. The `isPowerOfTwo` one-liner is the same identity read differently: a power of two has exactly one set bit, so clearing that bit leaves zero.",
+      "code": [
+        "/** Every value appears twice except one. O(n) time, O(1) space. */",
+        "public static int singleNumber(int[] nums) {",
+        "    int result = 0;",
+        "    for (int value : nums) {",
+        "        result ^= value;        // paired values cancel; order is irrelevant",
+        "    }",
+        "    return result;",
+        "}",
+        "",
+        "/** Brian Kernighan: loops once per SET bit, not once per bit. */",
+        "public static int countSetBits(int value) {",
+        "    int count = 0;",
+        "    while (value != 0) {",
+        "        value &= (value - 1);   // clears the lowest set bit",
+        "        count++;",
+        "    }",
+        "    return count;",
+        "}",
+        "// In production: Integer.bitCount(value) — one POPCNT instruction.",
+        "",
+        "/** Exactly one bit set means exactly one power of two. */",
+        "public static boolean isPowerOfTwo(int value) {",
+        "    return value > 0 && (value & (value - 1)) == 0;",
+        "}",
+        "",
+        "/** Swap without a temporary. A curiosity, not production code:",
+        "    it breaks when i == j, because a[i] ^= a[i] zeroes the slot. */",
+        "public static void xorSwap(int[] a, int i, int j) {",
+        "    if (i == j) return;",
+        "    a[i] ^= a[j];",
+        "    a[j] ^= a[i];",
+        "    a[i] ^= a[j];",
+        "}"
+      ]
+    },
+    {
+      "label": "Optimized",
+      "language": "java",
+      "explanation": "An `int` used as a set, which is where bitmasks earn their keep. `Permissions` shows the flags idiom you will meet in real APIs (file modes, Android intent flags, JDBC constants). `subsets` shows subset enumeration: the loop counts from 0 to 2ⁿ-1 and each integer *is* a subset, with no recursion and no backtracking bookkeeping. The final loop shows the `mask & -mask` idiom for walking only the members that are present, which costs one iteration per element in the set instead of n.",
+      "code": [
+        "import java.util.*;",
+        "",
+        "public final class Bitmasks {",
+        "",
+        "    // --- an int as a set of flags -------------------------------------",
+        "    static final int READ    = 1 << 0;   // 0001",
+        "    static final int WRITE   = 1 << 1;   // 0010",
+        "    static final int EXECUTE = 1 << 2;   // 0100",
+        "",
+        "    static int grant(int mask, int flag)  { return mask |  flag; }",
+        "    static int revoke(int mask, int flag) { return mask & ~flag; }",
+        "    static int toggle(int mask, int flag) { return mask ^  flag; }",
+        "    static boolean has(int mask, int flag) { return (mask & flag) != 0; }",
+        "",
+        "    // --- an int as a subset of nums -----------------------------------",
+        "    /** All 2^n subsets, iteratively. O(n · 2^n) time, which is the size of the output. */",
+        "    static List<List<Integer>> subsets(int[] nums) {",
+        "        int n = nums.length;",
+        "        List<List<Integer>> out = new ArrayList<>(1 << n);",
+        "",
+        "        for (int mask = 0; mask < (1 << n); mask++) {   // every integer IS a subset",
+        "            List<Integer> subset = new ArrayList<>(Integer.bitCount(mask));",
+        "            for (int i = 0; i < n; i++) {",
+        "                if ((mask & (1 << i)) != 0) {           // is element i in this subset?",
+        "                    subset.add(nums[i]);",
+        "                }",
+        "            }",
+        "            out.add(subset);",
+        "        }",
+        "        return out;",
+        "    }",
+        "",
+        "    /** Walk only the members that are present: one iteration per set bit. */",
+        "    static void forEachMember(int mask, IntConsumerLike action) {",
+        "        while (mask != 0) {",
+        "            int lowest = mask & -mask;                        // isolate lowest set bit",
+        "            action.accept(Integer.numberOfTrailingZeros(lowest));   // its index",
+        "            mask ^= lowest;                                  // remove it and continue",
+        "        }",
+        "    }",
+        "",
+        "    interface IntConsumerLike { void accept(int index); }",
+        "",
+        "    private Bitmasks() {}",
+        "}"
+      ]
+    },
+    {
+      "label": "Two's complement",
+      "language": "java",
+      "explanation": "The representation everything above rests on, made visible. Run this once and the sign-extension rule stops being something you memorise. The key line is the pair of right shifts: the same bits, two different questions. `>>` asks 'what is this number divided by two?' and must preserve the sign to answer correctly. `>>>` asks 'what are these bits shifted right?' and has no concept of sign at all.",
+      "code": [
+        "public class TwosComplement {",
+        "    public static void main(String[] args) {",
+        "        int value = 12;",
+        "",
+        "        System.out.println(Integer.toBinaryString(value));",
+        "        // 1100",
+        "",
+        "        System.out.println(Integer.toBinaryString(-value));",
+        "        // 11111111111111111111111111110100   (~12 + 1)",
+        "        System.out.println((~value) + 1 == -value);            // true, by definition",
+        "",
+        "        // The two right shifts, on the same bits:",
+        "        System.out.println(-8 >> 1);    // -4  arithmetic: sign bit copied inwards",
+        "        System.out.println(-8 >>> 1);   // 2147483644  logical: zeros fed in",
+        "",
+        "        // Rounding differs from division for negatives:",
+        "        System.out.println(-7 / 2);     // -3  towards zero",
+        "        System.out.println(-7 >> 1);    // -4  towards negative infinity",
+        "",
+        "        // Why (lo + hi) >>> 1 is the safe midpoint:",
+        "        int lo = Integer.MAX_VALUE - 2;",
+        "        int hi = Integer.MAX_VALUE;",
+        "        System.out.println((lo + hi) / 2);     // negative — the sum overflowed",
+        "        System.out.println((lo + hi) >>> 1);   // 2147483645 — correct",
+        "",
+        "        // Isolate the lowest set bit, and see why it works:",
+        "        System.out.println(12 & -12);   // 4",
+        "    }",
+        "}"
+      ]
+    }
+  ],
+  "complexity": {
+    "time": "O(1) per operation; O(n) for a single pass such as the XOR fold; O(number of set bits) for Kernighan's loop, bounded by 32; O(2ⁿ) or O(n · 2ⁿ) for subset enumeration.",
+    "space": "O(1) — one `int` holds 32 bits of state, which is the entire reason the pattern exists. Bitmask DP is the exception at O(2ⁿ) for the table.",
+    "why": "AND, OR, XOR and shifts are single machine instructions operating on all 32 bits simultaneously, so they are constant time regardless of the value — `12 ^ 5` and `2000000000 ^ 999999999` cost exactly the same. That is why replacing a HashMap with a running XOR changes the space complexity from O(n) to O(1) without changing the time complexity: both make one pass, but one allocates a hash table with n/2 boxed entries and the other allocates a single register-sized variable. Kernighan's loop is O(popcount) rather than O(32) because each iteration deletes a set bit, so a value with three bits set costs three iterations whatever its magnitude. Subset enumeration is O(2ⁿ) because that is how many subsets exist — the output itself is exponential, so no algorithm can be faster; the bitmask makes each subset cost one integer of state rather than a `List` allocation, which is a large constant-factor win and the difference between n = 20 running and timing out."
+  },
+  "commonMistakes": [
+    {
+      "mistake": "Writing `mask & 1 << i` and expecting it to mean `mask & (1 << i)`",
+      "fix": "Shift has *lower* precedence than `&`, `|` and `^` in Java, so that parses as `(mask & 1) << i`. Always parenthesise shifts inside bitwise expressions. This is the single most common bug in bitmask code."
+    },
+    {
+      "mistake": "Testing membership with `(mask & (1 << i)) == 1`",
+      "fix": "The result is `1 << i`, not 1 — it equals 1 only for i = 0, so every other bit silently tests false. Compare against `!= 0`, or shift first: `((mask >> i) & 1) == 1`."
+    },
+    {
+      "mistake": "Using `>>` when you mean 'just move the bits'",
+      "fix": "`>>` copies the sign bit, so on a negative value it feeds in 1s and a loop like `while (x != 0) { count += x & 1; x >>= 1; }` never terminates. Use `>>>` whenever the value is a bag of bits rather than a quantity."
+    },
+    {
+      "mistake": "Shifting by 32 or more",
+      "fix": "Java masks the shift distance by 31 for ints, so `1 << 32` is `1`, not 0 — no exception, just a wrong answer. Use `1L << i` and a `long` when you need bits 32–63."
+    },
+    {
+      "mistake": "Overflowing `1 << n` for n ≥ 31",
+      "fix": "`1 << 31` is `Integer.MIN_VALUE`, so `for (int mask = 0; mask < (1 << 31); mask++)` never runs. Enumerating subsets is only viable up to about n = 25 anyway; above that, the loop count is the real problem."
+    },
+    {
+      "mistake": "Assuming XOR finds the unpaired element when values appear three times",
+      "fix": "XOR cancels *pairs*. For 'every element appears three times except one', count each bit position modulo 3, or use the two-accumulator `ones`/`twos` state machine."
+    },
+    {
+      "mistake": "XOR-swapping an element with itself",
+      "fix": "`a[i] ^= a[j]` with `i == j` zeroes the slot and destroys the value. Guard the equality — or simply use a temporary variable, which is faster on real hardware anyway."
+    },
+    {
+      "mistake": "Reaching for bit tricks to make ordinary code faster",
+      "fix": "`x >> 1` for `x / 2` and `x & 1` for `x % 2` are optimisations the JIT already applies. Use bit operations where they express the *meaning* — a set, a mask, a pair cancellation — not as a performance ritual."
+    }
+  ],
+  "realWorldUses": [
+    "Unix file permissions are a three-bit mask per class of user: `chmod 755` is literally `rwx` = 111, `r-x` = 101, `r-x` = 101 packed into octal digits.",
+    "Feature flags and capability sets in APIs: `java.util.regex.Pattern`'s `CASE_INSENSITIVE | MULTILINE` flags, Android's intent flags and JDBC's result-set constants are all `1 << n` values combined with `|`.",
+    "Database and search engines store bitmap indexes — one bit per row per value — so `WHERE country = 'IN' AND active` becomes a single AND across machine words rather than a row-by-row test.",
+    "Bloom filters, HyperLogLog and other probabilistic structures are bit arrays with hash functions choosing which bits to set; they trade exactness for constant memory.",
+    "Chess and board-game engines represent a board as a 64-bit `long` per piece type — one `long` per bitboard — so 'all squares a rook attacks' is a few shifts and masks instead of a loop over squares.",
+    "Network protocols and binary file formats pack flags into header bytes (TCP's SYN/ACK/FIN bits), so parsing one is masking and shifting."
+  ],
+  "interviewNotes": [
+    "State the constraint that sent you here. 'The O(1) space requirement rules out the frequency map, so I need an operation under which duplicates cancel — that is XOR.' The reasoning is what is being marked, not the trick.",
+    "Say the two XOR identities out loud before you use them: `a ^ a = 0` and `a ^ 0 = a`, plus commutativity so order does not matter. Three short sentences and the solution is already justified.",
+    "For any bitmask question, translate the constraint: `n ≤ 20` with subsets means 2²⁰ ≈ 10⁶ states, which is why the exponential solution is the intended one and not a failure.",
+    "If asked to count set bits, give Kernighan's loop *and* mention `Integer.bitCount`. Knowing the library is not a weakness; pretending it does not exist is.",
+    "Expect the sign follow-up: 'what does `-1 >> 1` give?' (`-1`, because the sign bit propagates) and 'when would you use `>>>`?'. Java's lack of unsigned types is the reason both exist.",
+    "Be willing to say a bit trick is the wrong tool. 'I could pack this into a mask, but the universe is 10,000 elements, so a BitSet or a HashSet is clearer and no slower' is a stronger answer than a clever one-liner."
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "identify-pattern",
+      "question": "'Every element in the array appears twice except for one. Find it, using constant extra space.' Which approach does the constraint force?",
+      "options": [
+        "A HashMap of counts",
+        "Sorting, then scanning for the odd one out",
+        "XOR every element together",
+        "Binary search"
+      ],
+      "answerIndex": 2,
+      "explanation": "The HashMap answer is O(n) time and would be right in production, but it is O(n) space and the constraint exists precisely to forbid it. Sorting is O(n log n) and modifies the input. XOR works because `a ^ a = 0` and `a ^ 0 = a`, and because XOR is commutative and associative, so every pair cancels regardless of position and only the loner survives — one pass, one int of state."
+    },
+    {
+      "id": "q2",
+      "type": "mcq",
+      "question": "What does `12 & 11` (that is, `n & (n - 1)` for n = 12) evaluate to, and what is the operation called?",
+      "options": [
+        "0 — it tests for zero",
+        "8 — it clears the lowest set bit, the basis of Kernighan's population count",
+        "4 — it isolates the lowest set bit",
+        "12 — it leaves the value unchanged"
+      ],
+      "answerIndex": 1,
+      "explanation": "12 is 1100 and 11 is 1011. ANDing gives 1000 = 8: the lowest set bit (the 4) has been cleared and everything above it kept. Subtracting 1 flips the lowest 1 to 0 and sets every 0 below it, so the AND removes exactly one bit. Repeat until the value is 0 and the iteration count is the number of set bits — Brian Kernighan's trick. `n & -n` is the different operation that isolates that bit, giving 4."
+    },
+    {
+      "id": "q3",
+      "type": "mcq",
+      "question": "Why does Java have both `>>` and `>>>`?",
+      "options": [
+        "`>>>` is faster",
+        "`>>` shifts by one and `>>>` shifts by two",
+        "Java has no unsigned types: `>>` copies the sign bit so arithmetic on negatives stays correct, while `>>>` feeds in zeros for when the value is a bag of bits rather than a quantity",
+        "`>>>` works on longs and `>>` only on ints"
+      ],
+      "answerIndex": 2,
+      "explanation": "`-8 >> 1` is `-4` because the sign bit is copied inwards, preserving 'divide by two'. `-8 >>> 1` is 2147483644 because zeros are fed in and the result is read as a positive bit pattern. C solves this with unsigned types; Java, having none, gives you two operators instead. It is also why the overflow-safe midpoint is `(lo + hi) >>> 1`."
+    },
+    {
+      "id": "q4",
+      "type": "mcq",
+      "question": "A problem gives `n ≤ 20` and asks you to evaluate every subset of n items. What does that constraint signal?",
+      "options": [
+        "Use dynamic programming over indices",
+        "A bitmask: iterate `mask` from 0 to 2ⁿ-1, where each integer's bits are one subset — 2²⁰ ≈ 10⁶ states, which is entirely feasible",
+        "Sort the input first",
+        "The problem is impossible as stated"
+      ],
+      "answerIndex": 1,
+      "explanation": "A tiny n with 'every subset' in the statement is the signature of an intentionally exponential solution. 2²⁰ is about a million, which runs in milliseconds. Representing each subset as an `int` rather than a collection makes the state cheap enough to memoise, which is exactly what bitmask DP (`dp[mask]`) does."
+    },
+    {
+      "id": "q5",
+      "type": "mcq",
+      "question": "In Java, what does `mask & 1 << i` actually compute?",
+      "options": [
+        "`mask & (1 << i)`, as intended",
+        "`(mask & 1) << i`, because `<<` binds more loosely than `&` — a very common bug",
+        "A compile error",
+        "Always zero"
+      ],
+      "answerIndex": 1,
+      "explanation": "Shift operators have lower precedence than the bitwise operators in Java, so the expression groups as `(mask & 1) << i`. It tests the lowest bit and then shifts the answer, which is almost never what was meant. Always parenthesise the shift: `mask & (1 << i)`."
+    },
+    {
+      "id": "q6",
+      "type": "mcq",
+      "question": "An array has every element appearing three times except one. Will a running XOR find the odd element?",
+      "options": [
+        "Yes, XOR cancels any repeated value",
+        "No — XOR cancels values in pairs, so a triple leaves one copy behind; you need per-bit counting modulo 3 instead",
+        "Yes, but only if the array is sorted",
+        "No, and there is no O(1)-space solution"
+      ],
+      "answerIndex": 1,
+      "explanation": "`a ^ a = 0` cancels pairs; `a ^ a ^ a = a`, so three copies survive as one and the fold returns the XOR of every distinct value. The generalisation is to count, for each of the 32 bit positions, how many elements have that bit set, then take the count modulo 3 — the remaining bits spell out the answer. The `ones`/`twos` two-accumulator solution is the same computation in O(1) space."
+    }
+  ],
+  "practiceProblems": [
+    "single-number",
+    "number-of-1-bits",
+    "reverse-bits",
+    "counting-bits",
+    "subsets-bitmask",
+    "single-number-ii"
+  ],
+  "related": [
+    "hashing",
+    "arrays",
+    "big-o",
+    "backtracking",
+    "dynamic-programming-basics"
+  ]
+}

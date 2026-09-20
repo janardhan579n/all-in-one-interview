@@ -1,0 +1,210 @@
+{
+  "id": "http",
+  "title": "HTTP — How Clients and Servers Talk",
+  "group": "Foundations",
+  "level": 0,
+  "estimatedMinutes": 20,
+  "summary": "A text-based request-response protocol: a method, a path, headers, an optional body — and a status code coming back.",
+  "analogy": "Posting a letter with a very strict form on the envelope. The method is what you want done (READ this / ADD this / REPLACE this / DESTROY this), the path is which thing, the headers are the notes in the margin (what language you read, who you are, what formats you accept), and the body is the enclosure. The reply comes back with a three-digit code that tells you, before you read a word of it, whether things went well.",
+  "explanation": {
+    "beginner": "When you open a web page, your browser sends a short text message to a server: 'GET /products/42, and by the way I accept JSON, and here is my login token.' The server sends back a code — 200 means fine, 404 means no such thing, 500 means the server broke — plus the data. Each message is independent: the server does not remember you between requests unless you send something that identifies you, which is what cookies and tokens are for.",
+    "interview": "A stateless application-layer protocol over TCP (HTTP/1.1, HTTP/2) or QUIC/UDP (HTTP/3). Methods carry semantics that matter operationally: GET and HEAD are safe, and GET, PUT and DELETE are idempotent, which is what makes retries safe for them and dangerous for POST. Statelessness is the property that permits horizontal scaling; caching semantics are negotiated via Cache-Control, ETag and conditional requests."
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "client",
+        "label": "Client",
+        "type": "client",
+        "x": 130,
+        "y": 300
+      },
+      {
+        "id": "dns",
+        "label": "DNS",
+        "type": "dns",
+        "x": 380,
+        "y": 140,
+        "note": "Resolves api.example.com to an IP address. Cached aggressively — which is why DNS changes take time to propagate."
+      },
+      {
+        "id": "tls",
+        "label": "TLS handshake",
+        "type": "proxy",
+        "x": 380,
+        "y": 440,
+        "note": "Negotiates encryption. One extra round trip in TLS 1.3, two in 1.2 — a real cost on high-latency links."
+      },
+      {
+        "id": "server",
+        "label": "Server",
+        "type": "server",
+        "x": 700,
+        "y": 300,
+        "note": "Parses the request line, headers and body; returns a status code, headers and body."
+      },
+      {
+        "id": "app",
+        "label": "Handler",
+        "type": "worker",
+        "x": 930,
+        "y": 300,
+        "note": "Your code: routing, validation, business logic."
+      }
+    ],
+    "edges": [
+      {
+        "from": "client",
+        "to": "dns",
+        "label": "1. resolve name"
+      },
+      {
+        "from": "client",
+        "to": "tls",
+        "label": "2. secure channel"
+      },
+      {
+        "from": "client",
+        "to": "server",
+        "label": "3. GET /products/42"
+      },
+      {
+        "from": "server",
+        "to": "app",
+        "label": "4. route"
+      },
+      {
+        "from": "server",
+        "to": "client",
+        "label": "5. 200 OK + JSON",
+        "dashed": true
+      }
+    ]
+  },
+  "why": {
+    "without": [
+      "Every application would invent its own wire format",
+      "No shared caching, no proxies, no standard error semantics",
+      "Intermediaries could not understand or optimise traffic they forward"
+    ],
+    "with": [
+      "Any client can talk to any server",
+      "Caches, proxies, load balancers and CDNs understand the traffic and can act on it",
+      "Status codes give machine-readable outcomes"
+    ],
+    "conclusion": "A shared protocol is what lets infrastructure you did not write make your system faster and more reliable."
+  },
+  "whenToUse": [
+    "Request-response interactions",
+    "Public APIs and anything that must traverse firewalls and proxies",
+    "When you want caching and CDNs to work for free"
+  ],
+  "whenNotToUse": [
+    "Server-initiated push at high frequency — use WebSockets or Server-Sent Events",
+    "Very low-latency internal RPC between services — gRPC over HTTP/2 is leaner",
+    "Streaming media — purpose-built protocols do better"
+  ],
+  "tradeoffs": [
+    {
+      "option": "REST over HTTP/JSON",
+      "pros": [
+        "Universally understood, debuggable with curl",
+        "Cacheable by existing infrastructure",
+        "No client codegen required"
+      ],
+      "cons": [
+        "Verbose on the wire",
+        "Over- and under-fetching",
+        "No schema unless you add one"
+      ]
+    },
+    {
+      "option": "gRPC over HTTP/2",
+      "pros": [
+        "Compact binary encoding, strong schema, streaming",
+        "Lower latency for service-to-service calls"
+      ],
+      "cons": [
+        "Not browser-native without a proxy",
+        "Harder to inspect",
+        "HTTP caches cannot help"
+      ]
+    },
+    {
+      "option": "GraphQL",
+      "pros": [
+        "Client asks for exactly the fields it needs",
+        "One endpoint for many views"
+      ],
+      "cons": [
+        "HTTP caching largely bypassed",
+        "Easy to write queries that are catastrophically expensive server-side"
+      ]
+    }
+  ],
+  "keyNumbers": [
+    {
+      "label": "Status 2xx",
+      "value": "Success"
+    },
+    {
+      "label": "Status 3xx",
+      "value": "Redirect / not modified"
+    },
+    {
+      "label": "Status 4xx",
+      "value": "The client got it wrong — 400, 401, 403, 404, 409, 429"
+    },
+    {
+      "label": "Status 5xx",
+      "value": "The server got it wrong — 500, 502, 503, 504"
+    }
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "mcq",
+      "question": "Which HTTP methods are idempotent (repeating them has the same effect as doing them once)?",
+      "options": [
+        "Only GET",
+        "GET, PUT and DELETE",
+        "POST and PATCH",
+        "All of them"
+      ],
+      "answerIndex": 1,
+      "explanation": "Repeating a GET reads the same thing; repeating a PUT sets the same value; repeating a DELETE leaves it deleted. POST creates something new each time, which is why safely retrying a POST needs an idempotency key."
+    },
+    {
+      "id": "q2",
+      "type": "architecture",
+      "question": "Your API returns 500 for a request containing an invalid email address. What is wrong?",
+      "options": [
+        "Nothing",
+        "5xx means the server failed; invalid input is the client's error and should be 400",
+        "It should return 200 with an error message",
+        "It should return 404"
+      ],
+      "answerIndex": 1,
+      "explanation": "Status classes drive real behaviour: clients and load balancers retry 5xx, alerting fires on 5xx rates, and health checks may pull the instance. Misclassifying validation errors as 5xx creates false alarms and pointless retries."
+    },
+    {
+      "id": "q3",
+      "type": "mcq",
+      "question": "What does it mean that HTTP is stateless?",
+      "options": [
+        "It cannot store data",
+        "The server keeps no memory of previous requests; any identity or context must be re-supplied each time",
+        "It does not use TCP",
+        "Responses cannot be cached"
+      ],
+      "answerIndex": 1,
+      "explanation": "Each request is self-contained, which is exactly why a load balancer can send consecutive requests from one user to different servers."
+    }
+  ],
+  "related": [
+    "client-server",
+    "api",
+    "cdn",
+    "load-balancer"
+  ]
+}

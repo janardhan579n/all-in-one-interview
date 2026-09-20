@@ -1,0 +1,458 @@
+{
+  "id": "heap",
+  "kind": "data-structure",
+  "title": "Heaps & Priority Queues",
+  "group": "Trees",
+  "level": 3,
+  "difficulty": "intermediate",
+  "estimatedMinutes": 40,
+  "summary": "An array that pretends to be a tree, so that the smallest (or largest) element is always at index 0 and both insert and remove cost O(log n) — the structure you reach for when you need the extreme, repeatedly, and never the whole order.",
+  "prerequisites": [
+    "arrays",
+    "trees"
+  ],
+  "tags": [
+    "heap",
+    "priority-queue",
+    "top-k",
+    "tree",
+    "array",
+    "level-3"
+  ],
+  "analogy": {
+    "beginner": "A hospital emergency room. Patients do not get seen in the order they arrived; they get seen worst-first. The staff never maintain a full ranked list of everybody in the waiting room — that would be pointless work, since only one person is called at a time. They just need to know who is most urgent *right now*, and to slot each new arrival roughly into place. That is a heap: perfectly ordered at the top, deliberately vague everywhere else.",
+    "interview": "A complete binary tree satisfying the heap property — every node compares favourably with both of its children — stored implicitly in an array, so node i has children at 2i+1 and 2i+2 and parent at (i-1)/2. Completeness is what makes the array encoding possible with no gaps, and the heap property is weaker than a total order, which is exactly why insert and extract cost O(log n) instead of O(n) or O(n log n)."
+  },
+  "intuition": "A heap is the data structure you get when you ask: *what is the least amount of order I can maintain and still answer 'what is the smallest?' instantly?*\n\nA sorted array answers that in O(1) too — but it charges O(n) per insert, because keeping everything in order means physically shifting elements. A heap gives up almost all of that order and keeps only one rule:\n\n> **Every node is ≤ both of its children.** (min-heap; flip the comparison for a max-heap)\n\nThat single rule forces the minimum to the root, and says *nothing* about siblings, cousins, or anything else. `[1, 3, 2, 7, 5, 8, 4]` is a valid min-heap. It is obviously not sorted. The `3` at index 1 is bigger than the `2` at index 2, and the heap does not care, because 3 and 2 are in different subtrees and no rule connects them.\n\nThe second idea is the one people find genuinely surprising: **there is no tree.** No node objects, no left/right pointers, no allocation per element. There is one array, and the tree is arithmetic:\n\n```\nindex:  0   1   2   3   4   5   6\nvalue: [1,  3,  2,  7,  5,  8,  4]\n\n              1(0)\n            /      \\\n         3(1)      2(2)\n         /  \\      /  \\\n      7(3) 5(4) 8(5) 4(6)\n\nchildren of i : 2i+1 and 2i+2\nparent   of i : (i-1)/2\n```\n\nCheck it: children of index 1 are 3 and 4, holding 7 and 5. Both ≥ 3. Children of index 2 are 5 and 6, holding 8 and 4. Both ≥ 2. The picture and the array are the same object.\n\nEverything else follows. Because the tree is **complete** — every level full except possibly the last, which fills left to right — its height is ⌊log₂ n⌋. An operation that walks one root-to-leaf path therefore touches about log₂ n elements, and that is where both O(log n) bounds come from. With a million elements, that is twenty comparisons.\n\nTwo repair operations are all you need:\n\n- **Sift up** (after an insert): the new value goes at the end, then swims towards the root while it is smaller than its parent. It stops the moment its parent is smaller — everything above is already fine.\n- **Sift down** (after an extract): the root leaves, the last leaf is dropped into the hole to keep the tree complete, then it sinks by swapping with its *smaller* child until both children are larger. Swapping with the larger child would put a big value above a small one and break the other subtree.",
+  "problemFirst": {
+    "motivatingProblem": "A log file holds a million response-time measurements. Find the 100 largest.",
+    "bruteForce": {
+      "idea": "Sort the whole array descending, then take the first k elements.",
+      "code": [
+        "Integer[] boxed = Arrays.stream(values).boxed().toArray(Integer[]::new);",
+        "Arrays.sort(boxed, Comparator.reverseOrder());   // orders all 1,000,000",
+        "",
+        "int[] top = new int[k];",
+        "for (int i = 0; i < k; i++) {",
+        "    top[i] = boxed[i];                           // …then we look at 100 of them",
+        "}",
+        "return top;"
+      ],
+      "complexity": {
+        "time": "O(n log n)",
+        "space": "O(n)"
+      },
+      "whySlow": "The question asks which 100 values are largest. Sorting answers a far bigger question: the exact rank of all 1,000,000, including the precise ordering of the 999,900 losers — information that is computed, paid for, and thrown away. It is roughly 20 million comparisons to produce an answer that needs nothing of the kind, and it forces the entire dataset into memory at once, which a stream of measurements may not even allow."
+    },
+    "observation": "Walk the values one at a time, keeping the best 100 seen so far. For each new value there is exactly one question: *is it better than the worst value I am currently keeping?* Nothing else about the 100 matters — not their order, not the second-worst, not the best. Only the weakest survivor, because that is the only one that can ever be evicted.",
+    "leap": "Keep the k best in a **min-heap of size k**. The root is then the weakest survivor, available in O(1). Each new value is one comparison against the root; if it loses, it is discarded with no heap work at all, and if it wins, one poll and one offer at O(log k) replace it. Total: O(n log k) time and O(k) space. The inversion catches everyone out the first time — to track the k *largest*, you use a **min**-heap.",
+    "optimizedSketch": [
+      "PriorityQueue<Integer> keep = new PriorityQueue<>();   // min-heap, size ≤ k",
+      "for (int value : values) {",
+      "    if (keep.size() < k) {",
+      "        keep.offer(value);",
+      "    } else if (value > keep.peek()) {                  // beat the weakest survivor?",
+      "        keep.poll();                                   // evict it",
+      "        keep.offer(value);",
+      "    }",
+      "}",
+      "return keep;   // the k largest, in no particular order"
+    ]
+  },
+  "howItWorks": [
+    "**The array is the structure** — node `i` has children at `2i+1` and `2i+2` and parent at `(i-1)/2`. No pointers, no allocation per element, and the children of a node sit next to each other in memory, which is why heaps are cache-friendly compared with pointer-based trees.",
+    "**Completeness is a requirement, not a coincidence** — every level is full except the last, which fills left to right. That is what guarantees the array has no holes and that the height is ⌊log₂ n⌋. Both repair operations are written the way they are (append at the end; move the last leaf to the root) precisely to preserve completeness.",
+    "**insert = append + sift up** — put the value at index `size`, then swap it upwards while it beats its parent. It stops early the moment the parent already beats it, because everything above the parent was already in order.",
+    "**extract = take root + move last leaf to root + sift down** — the root is the answer; the hole it leaves must be filled by the *last* element so the tree stays complete, and that element then sinks by swapping with its smaller child (for a min-heap) until both children are larger.",
+    "**peek is O(1)** — the answer is literally `a[0]`. This is the operation you are buying the whole structure for.",
+    "**A heap is not sorted, and this is the point** — only the root is guaranteed. Iterating a `PriorityQueue` with a for-each loop gives you its internal array order, which is *not* ascending. Only repeated `poll()` produces sorted output, and that costs O(n log n) — at which point you have implemented heapsort.",
+    "**Building from an existing array is O(n), not O(n log n)** — `for (int i = n/2 - 1; i >= 0; i--) siftDown(i);`. Start at the last internal node and work backwards, because the second half of the array is all leaves and every leaf is already a valid one-element heap.",
+    "**Java gives you `PriorityQueue`, which is a min-heap** — `offer` and `poll` are O(log n), `peek` is O(1). For a max-heap, pass a reversed comparator: `new PriorityQueue<>(Comparator.reverseOrder())`. There is no `MaxPriorityQueue` class; the comparator *is* the difference.",
+    "**`remove(Object)` and `contains` are O(n)** — the heap has no index of where a value lives, so an arbitrary removal is a linear scan. If a problem needs 'decrease the priority of this specific item', a bare heap is the wrong tool; pair it with a HashMap from item to position, or use lazy deletion (push the new entry, discard stale ones when they surface)."
+  ],
+  "patternRecognition": {
+    "signals": [
+      "The words **k largest**, **k smallest**, **k most frequent**, **k closest** — anything 'top k' where k is much smaller than n",
+      "**Repeatedly take the current extreme** — a scheduler, a merge of sorted sources, a simulation that always processes the earliest event",
+      "**Running median** or 'the middle of a stream' — two heaps facing each other, a max-heap for the lower half and a min-heap for the upper half",
+      "The data **arrives as a stream** or is too big to sort, but the answer only concerns a bounded number of extremes",
+      "A brute force that reads 'sort everything, then look at a few of them'"
+    ],
+    "antiSignals": [
+      "You need the **full sorted order** → just sort; a heap gives you no advantage and `poll()`-ing everything is heapsort with extra steps",
+      "You need the **k-th element by index** in an unordered array and n is huge but k is close to n → Quickselect averages O(n), beating O(n log k)",
+      "You need to **search for an arbitrary value**, or query a range → a heap has no ordering to search on; use a HashMap or a balanced BST (`TreeMap`)",
+      "You need **sorted iteration plus updates** → `TreeMap` / `TreeSet` give you O(log n) ordered traversal, which a heap cannot do at all",
+      "Priorities of items already inside change frequently and you must find those items → a plain heap has O(n) lookup; you need an indexed heap or lazy deletion"
+    ]
+  },
+  "visualizations": [
+    {
+      "id": "heap-operations",
+      "title": "Insert and extract — watch the array, not a drawing of a tree",
+      "engine": "heapOps",
+      "input": {
+        "operations": [
+          {
+            "op": "insert",
+            "value": 5
+          },
+          {
+            "op": "insert",
+            "value": 3
+          },
+          {
+            "op": "insert",
+            "value": 8
+          },
+          {
+            "op": "insert",
+            "value": 1
+          },
+          {
+            "op": "extract"
+          },
+          {
+            "op": "extract"
+          }
+        ]
+      },
+      "code": [
+        "int[] heap = new int[capacity]; int size = 0;      // the heap IS this array",
+        "heap[size++] = value;                              // insert: append, tree stays complete",
+        "int i = size - 1;                                  // sift up from the new leaf",
+        "while (i > 0 && heap[(i - 1) / 2] > heap[i]) {     // parent bigger? property broken",
+        "    swap(heap, i, (i - 1) / 2);                    // swap with the parent",
+        "    i = (i - 1) / 2;                               // climb; i == 0 is the root",
+        "}",
+        "int min = heap[0];                                 // extractMin: only the root is guaranteed",
+        "heap[0] = heap[--size];                            // last leaf fills the hole at the root",
+        "int j = 0, c;                                      // sift down from the root",
+        "while ((c = smallerChild(heap, j, size)) != j) { swap(heap, j, c); j = c; }",
+        "// loop ends when heap[j] <= both children — the heap property is restored"
+      ]
+    },
+    {
+      "id": "top-k",
+      "title": "Top 3 of seven values — a min-heap holds the largest, and that is not a typo",
+      "engine": "topKHeap",
+      "input": {
+        "array": [
+          4,
+          1,
+          7,
+          3,
+          9,
+          2,
+          8
+        ],
+        "k": 3
+      },
+      "code": [
+        "PriorityQueue<Integer> keep = new PriorityQueue<>();   // MIN-heap of the k largest so far",
+        "for (int value : nums) {",
+        "    if (keep.size() < k) keep.offer(value);            // not full yet — everything qualifies",
+        "    else if (value > keep.peek()) {                    // beats the weakest survivor?",
+        "        keep.poll(); keep.offer(value);                // evict the weakest, keep this one",
+        "    }",
+        "    // else: value <= keep.peek(), so it can never be top-k — drop it, no heap work",
+        "}",
+        "return new ArrayList<>(keep);                          // O(n log k), not O(n log n)"
+      ]
+    }
+  ],
+  "implementations": [
+    {
+      "label": "Simple",
+      "language": "java",
+      "explanation": "A min-heap from scratch. Write this once and the structure stops being magic. The two private methods are the whole data structure; everything public is three lines of bookkeeping around them. Note that `siftUp` stops early and `siftDown` always picks the *smaller* child — swapping with the larger one is the single most common bug in a hand-rolled heap, and it silently corrupts the other subtree.",
+      "code": [
+        "import java.util.Arrays;",
+        "import java.util.NoSuchElementException;",
+        "",
+        "/**",
+        " * A binary min-heap. The \"tree\" is arithmetic on array indices: nothing is linked,",
+        " * nothing is allocated per element, and children sit adjacent in memory.",
+        " */",
+        "public final class MinHeap {",
+        "    private int[] a = new int[16];",
+        "    private int size = 0;",
+        "",
+        "    public int size() { return size; }",
+        "    public boolean isEmpty() { return size == 0; }",
+        "",
+        "    /** O(1) — the answer is literally a[0]. This is what the structure exists for. */",
+        "    public int peek() {",
+        "        if (size == 0) throw new NoSuchElementException(\"empty heap\");",
+        "        return a[0];",
+        "    }",
+        "",
+        "    /** O(log n) — one walk up a root-to-leaf path, at most ⌊log₂ n⌋ swaps. */",
+        "    public void insert(int value) {",
+        "        if (size == a.length) a = Arrays.copyOf(a, size * 2);",
+        "        a[size++] = value;          // append: the tree stays complete",
+        "        siftUp(size - 1);",
+        "    }",
+        "",
+        "    /** O(log n) — remove and return the minimum. */",
+        "    public int extractMin() {",
+        "        int min = peek();",
+        "        a[0] = a[--size];           // the LAST leaf fills the hole, preserving completeness",
+        "        if (size > 0) siftDown(0);",
+        "        return min;",
+        "    }",
+        "",
+        "    private void siftUp(int i) {",
+        "        while (i > 0) {",
+        "            int parent = (i - 1) / 2;",
+        "            if (a[parent] <= a[i]) break;   // parent already wins ⇒ everything above is fine",
+        "            swap(i, parent);",
+        "            i = parent;",
+        "        }",
+        "    }",
+        "",
+        "    private void siftDown(int i) {",
+        "        while (true) {",
+        "            int left = 2 * i + 1;",
+        "            int right = 2 * i + 2;",
+        "            int smallest = i;",
+        "            if (left < size && a[left] < a[smallest]) smallest = left;",
+        "            if (right < size && a[right] < a[smallest]) smallest = right;",
+        "            if (smallest == i) return;      // both children are >= a[i]: done",
+        "            swap(i, smallest);              // ALWAYS the smaller child",
+        "            i = smallest;",
+        "        }",
+        "    }",
+        "",
+        "    private void swap(int i, int j) {",
+        "        int tmp = a[i];",
+        "        a[i] = a[j];",
+        "        a[j] = tmp;",
+        "    }",
+        "}"
+      ]
+    },
+    {
+      "label": "Build in O(n)",
+      "language": "java",
+      "explanation": "Turning an existing array into a heap looks like it should cost n inserts at O(log n) each. It does not, and the reason is a counting argument worth being able to reproduce: sifting *down* from the bottom is cheap for the many nodes and expensive only for the few. Half the array is leaves and costs nothing. A quarter sits one level up and can sink at most one level. In general there are at most ⌈n/2^(h+1)⌉ nodes at height h, each costing O(h), and Σ h·n/2^(h+1) converges to n — the series Σ h/2^h equals 2. So the total is O(n). Sifting *up* from the top gives the opposite distribution — the many nodes are the expensive ones — and genuinely costs O(n log n).",
+      "code": [
+        "/** Heapify in place: O(n), not O(n log n). Start at the last internal node. */",
+        "public static void heapify(int[] a) {",
+        "    for (int i = a.length / 2 - 1; i >= 0; i--) {",
+        "        siftDown(a, i, a.length);   // everything from a.length/2 onwards is a leaf",
+        "    }",
+        "}",
+        "",
+        "private static void siftDown(int[] a, int i, int size) {",
+        "    while (true) {",
+        "        int left = 2 * i + 1;",
+        "        int right = 2 * i + 2;",
+        "        int smallest = i;",
+        "        if (left < size && a[left] < a[smallest]) smallest = left;",
+        "        if (right < size && a[right] < a[smallest]) smallest = right;",
+        "        if (smallest == i) return;",
+        "        int tmp = a[i]; a[i] = a[smallest]; a[smallest] = tmp;",
+        "        i = smallest;",
+        "    }",
+        "}",
+        "",
+        "// Java does this for you: new PriorityQueue<>(collection) heapifies in O(n),",
+        "// whereas offering the elements one by one is O(n log n). Prefer the constructor",
+        "// when you already hold all the data."
+      ]
+    },
+    {
+      "label": "Optimized",
+      "language": "java",
+      "explanation": "In an interview you almost never hand-roll the heap — you reach for `PriorityQueue` and spend your time on the comparator and the size bound. Three things to say out loud: `PriorityQueue` is a min-heap by default; a max-heap is the same class with a reversed comparator; and bounding the heap at k is what turns O(n log n) into O(n log k). The subtraction comparator `(x, y) -> y[1] - x[1]` is idiomatic and overflows for large values — `Comparator.comparingInt` does not.",
+      "code": [
+        "import java.util.ArrayList;",
+        "import java.util.Comparator;",
+        "import java.util.List;",
+        "import java.util.PriorityQueue;",
+        "",
+        "/**",
+        " * The k largest values, in O(n log k) time and O(k) space.",
+        " * To keep the k LARGEST you need a MIN-heap: the root is the weakest survivor,",
+        " * which is the only element you ever need to look at or evict.",
+        " */",
+        "public static List<Integer> kLargest(int[] nums, int k) {",
+        "    if (k <= 0) return List.of();",
+        "    PriorityQueue<Integer> keep = new PriorityQueue<>();   // natural order = min-heap",
+        "",
+        "    for (int value : nums) {",
+        "        if (keep.size() < k) {",
+        "            keep.offer(value);                  // O(log k)",
+        "        } else if (value > keep.peek()) {       // O(1) glance at the weakest survivor",
+        "            keep.poll();                        // O(log k)",
+        "            keep.offer(value);                  // O(log k)",
+        "        }",
+        "        // else: it cannot displace anyone — dropped with zero heap work",
+        "    }",
+        "    return new ArrayList<>(keep);   // k elements, in NO particular order",
+        "}",
+        "",
+        "// --- the comparator is the only difference between a min-heap and a max-heap ---",
+        "PriorityQueue<Integer> minHeap = new PriorityQueue<>();",
+        "PriorityQueue<Integer> maxHeap = new PriorityQueue<>(Comparator.reverseOrder());",
+        "",
+        "// Ordering objects: by a field, ascending then descending.",
+        "PriorityQueue<int[]> byCountAsc  = new PriorityQueue<>(Comparator.comparingInt(e -> e[1]));",
+        "PriorityQueue<int[]> byCountDesc = new PriorityQueue<>(",
+        "        Comparator.comparingInt((int[] e) -> e[1]).reversed());",
+        "",
+        "// Avoid (x, y) -> y[1] - x[1]: correct only while the difference fits in an int."
+      ]
+    }
+  ],
+  "complexity": {
+    "time": "peek O(1) · insert O(log n) · extract O(log n) · build-from-array O(n) · search for an arbitrary value O(n) · top-k over n items O(n log k)",
+    "space": "O(n) for the array itself, O(1) extra for every operation — all repairs are in-place swaps, and sift up / sift down are loops, not recursion",
+    "why": "Every bound comes from one fact: a complete binary tree over n nodes has height ⌊log₂ n⌋, because each level holds twice the previous one, so it takes log₂ n doublings to reach n. `insert` appends and then walks *up* one root-to-leaf path, so it performs at most that many comparisons and swaps. `extract` moves the last leaf to the root and walks *down* one path, with two comparisons per level to find the smaller child — still Θ(log n). `peek` is O(1) because the heap property forces the minimum to index 0 and no work is needed to find it. Building from an existing array is O(n) rather than O(n log n) because sifting down from the bottom charges the *cheap* cost to the *many* nodes: at most n/2^(h+1) nodes sit at height h, each costing O(h), and Σ h·n/2^(h+1) = n·Σ h/2^h = 2n. The O(n) search is the honest weakness — the heap property says nothing about where a non-minimal value lives, so finding one means scanning. Finally, top-k is O(n log k) rather than O(n log n) because the heap is *capped at k*: each of the n elements costs at most one O(log k) poll plus one O(log k) offer, and the common case (a value that loses to the root) costs a single comparison and nothing else."
+  },
+  "commonMistakes": [
+    {
+      "mistake": "Using a max-heap to find the k largest elements",
+      "fix": "Backwards. A max-heap of size k gives you cheap access to the *best* of the ones you kept, which you never need to touch. You need cheap access to the *worst* one you kept, because that is the only candidate for eviction — so it is a min-heap of size k. Symmetrically, the k smallest need a max-heap of size k."
+    },
+    {
+      "mistake": "Assuming a heap is sorted, or iterating a `PriorityQueue` with for-each and expecting ascending order",
+      "fix": "Only the root is guaranteed. `toString()` and iteration expose the raw internal array, where siblings are in arbitrary relative order. To get sorted output you must `poll()` repeatedly, which is O(n log n)."
+    },
+    {
+      "mistake": "Swapping with the larger child when sifting down a min-heap",
+      "fix": "If you promote the larger of the two children, the smaller child now sits under a value bigger than itself and the heap property is broken in that subtree — silently, with no exception. Always compare both children and take the smaller (for a min-heap)."
+    },
+    {
+      "mistake": "Building a heap by calling insert n times when you already have the array",
+      "fix": "That is O(n log n). Use `heapify` — sift down from index `n/2 - 1` back to 0 — or `new PriorityQueue<>(collection)`, both O(n)."
+    },
+    {
+      "mistake": "Letting the top-k heap grow to size n",
+      "fix": "If you offer everything first and poll k times at the end, you have paid O(n log n) and O(n) space — exactly what the heap was supposed to avoid. Evict *inside* the loop so the heap never exceeds k."
+    },
+    {
+      "mistake": "Writing the comparator as a subtraction: `(x, y) -> y.count - x.count`",
+      "fix": "It overflows when the difference exceeds `Integer.MAX_VALUE`, producing a comparator that violates transitivity and a heap that returns wrong answers on extreme inputs. Use `Comparator.comparingInt(...)` or `Integer.compare(a, b)`."
+    },
+    {
+      "mistake": "Calling `peek()` or `extractMin()` on an empty heap",
+      "fix": "`a[0]` on an empty heap reads stale data rather than failing. Check `isEmpty()` first — Java's `poll()` and `peek()` return `null`, which then becomes a `NullPointerException` at the unboxing site, far from the real bug."
+    },
+    {
+      "mistake": "Reaching for `remove(item)` to change an element's priority",
+      "fix": "`PriorityQueue.remove(Object)` is O(n) — the heap has no index of positions. Either keep a HashMap from item to array index and re-sift from there, or use lazy deletion: push the updated entry and skip stale ones when they reach the root."
+    }
+  ],
+  "realWorldUses": [
+    "OS and thread schedulers: run the highest-priority runnable task next, and put it back when its slice expires — pure repeated extract-max plus insert.",
+    "Dijkstra's shortest path and A*: the frontier is a priority queue keyed by tentative distance; the heap is what turns the O(V²) version into O(E log V).",
+    "Event-driven simulation and timer wheels: a min-heap keyed by timestamp answers 'what happens next?' in O(1) and advances in O(log n). `ScheduledThreadPoolExecutor` uses exactly this.",
+    "Streaming analytics: 'top 100 URLs by traffic' over a firehose, where the data never fits in memory and sorting is not an option.",
+    "Merging sorted files during an external sort or an LSM-tree compaction: a heap of k file cursors emits the globally next record in O(log k).",
+    "Huffman coding: repeatedly combine the two least frequent symbols — the algorithm is defined in terms of a min-heap."
+  ],
+  "interviewNotes": [
+    "Say the size bound out loud. 'Heap' alone is a half-answer; 'a min-heap capped at k, so O(n log k) time and O(k) space' is the answer, and the capping is what the interviewer is listening for.",
+    "Be ready for the follow-up 'can you do better than O(n log k)?'. Yes: Quickselect partitions around a pivot for O(n) average time, but it is O(n²) worst case, needs the whole array in memory, and mutates it. The heap wins on streams and on worst-case guarantees; say which trade you are making rather than declaring one 'better'.",
+    "The O(n) heapify argument is a classic follow-up. Practise the sentence: 'most nodes are near the bottom and can sink almost nowhere, and Σ h/2^h converges to 2, so the total is linear.'",
+    "'Running median of a stream' is the standard two-heap question: a max-heap for the lower half, a min-heap for the upper half, sizes kept within one of each other, median read off one or both roots in O(1).",
+    "If asked to implement one from scratch, narrate the index arithmetic (2i+1, 2i+2, (i-1)/2) before writing anything — getting those three expressions on the whiteboard first prevents most of the bugs."
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "identify-pattern",
+      "question": "'A stream of 50 million search queries arrives; report the 20 most frequent.' Which structure carries the second half of the solution, after counting?",
+      "options": [
+        "A sorted array rebuilt after each query",
+        "A min-heap of size 20",
+        "A max-heap of size 50 million",
+        "A balanced BST holding every distinct query"
+      ],
+      "answerIndex": 1,
+      "explanation": "Counting needs a hash map; selecting the top 20 needs cheap access to the weakest of the 20 you are currently keeping, so it is a min-heap capped at 20. O(n log 20) time and O(20) space beyond the counts. A max-heap of everything would sort work you never asked for."
+    },
+    {
+      "id": "q2",
+      "type": "mcq",
+      "question": "In an array-backed heap, where do the children of the node at index i live?",
+      "options": [
+        "i-1 and i+1",
+        "2i and 2i+1",
+        "2i+1 and 2i+2",
+        "i/2 and i/2 + 1"
+      ],
+      "answerIndex": 2,
+      "explanation": "With 0-based indexing, children are at 2i+1 and 2i+2 and the parent is at (i-1)/2. (2i and 2i+1 is the 1-based version, used when the array wastes index 0 — both are correct, but you must not mix them.)"
+    },
+    {
+      "id": "q3",
+      "type": "mcq",
+      "question": "Is [1, 3, 2, 7, 5, 8, 4] a valid min-heap?",
+      "options": [
+        "No — it is not in ascending order",
+        "No — the 3 at index 1 is larger than the 2 at index 2",
+        "Yes — every node is ≤ both of its children, which is the only rule",
+        "Only if you re-sort it first"
+      ],
+      "answerIndex": 2,
+      "explanation": "The heap property constrains parents and children, nothing else. 1 ≤ {3,2}, 3 ≤ {7,5}, 2 ≤ {8,4}. Indices 1 and 2 are siblings in different subtrees, so no rule relates them. A heap is deliberately, usefully unsorted."
+    },
+    {
+      "id": "q4",
+      "type": "complexity",
+      "question": "Why is building a heap from an existing array of n elements O(n) rather than O(n log n)?",
+      "options": [
+        "Because the array is already partly sorted",
+        "Because siftDown is O(1)",
+        "Because sifting down from the bottom means most nodes are near the leaves and can sink at most a level or two; Σ h·n/2^(h+1) converges to 2n",
+        "Because heapify skips half the elements without examining them"
+      ],
+      "answerIndex": 2,
+      "explanation": "The cost is not n × (max height). At most n/2^(h+1) nodes sit at height h, and each costs O(h). Summing gives n·Σ h/2^h = 2n. The distribution is what matters: the expensive nodes are rare. Sifting up from the top inverts that distribution and really is O(n log n)."
+    },
+    {
+      "id": "q5",
+      "type": "mcq",
+      "question": "In Java, how do you get a max-heap of integers?",
+      "options": [
+        "new MaxPriorityQueue<Integer>()",
+        "new PriorityQueue<Integer>(Comparator.reverseOrder())",
+        "new PriorityQueue<Integer>() and then call reverse() on it",
+        "Negate every value before offering it, which is the only option"
+      ],
+      "answerIndex": 1,
+      "explanation": "`PriorityQueue` is a min-heap on natural ordering; the comparator is the only difference. There is no `MaxPriorityQueue` and no `reverse()`. Negating values does work for numeric types and is a common trick, but it is a workaround, not the idiom, and it breaks on `Integer.MIN_VALUE`."
+    },
+    {
+      "id": "q6",
+      "type": "mcq",
+      "question": "You need the k largest of n values. Which sizing is correct?",
+      "options": [
+        "A max-heap of size k, evicting the root when a larger value arrives",
+        "A min-heap of size k, evicting the root when a larger value arrives",
+        "A min-heap of size n, polling k times at the end",
+        "A max-heap of size n, polling k times at the end"
+      ],
+      "answerIndex": 1,
+      "explanation": "You only ever need to look at the weakest element you are keeping, so the weakest must be at the root: a min-heap. Capping it at k is what makes it O(n log k) and O(k) space. Options 3 and 4 work but cost O(n log n) time and O(n) space — they are the brute force wearing a heap costume."
+    }
+  ],
+  "practiceProblems": [
+    "kth-largest-element",
+    "last-stone-weight",
+    "top-k-frequent",
+    "k-closest-points",
+    "reorganize-string",
+    "merge-k-sorted-lists",
+    "find-median-from-stream"
+  ],
+  "related": [
+    "arrays",
+    "trees",
+    "queue",
+    "big-o"
+  ]
+}

@@ -1,0 +1,142 @@
+{
+  "id": "moving-average-stream",
+  "title": "Moving Average from Data Stream",
+  "patternId": "queue",
+  "difficulty": "beginner",
+  "tags": [
+    "queue",
+    "design",
+    "sliding-window",
+    "stream"
+  ],
+  "statement": "Design a class that is constructed with a window size k and exposes next(val): it accepts one integer from an unbounded stream and returns the average of the last k values seen. If fewer than k values have arrived, return the average of all of them.",
+  "realWorld": "Every metrics pipeline computes rolling statistics this way — mean request latency over the last 100 requests feeding an alerting rule, a moving average of CPU load driving an autoscaler, a smoothed bandwidth estimate in a congestion controller. The stream never ends, so retaining all of it is not an option; only the k values that can still leave the window matter.",
+  "examples": [
+    {
+      "input": "MovingAverage(3); next(1), next(10), next(3), next(5)",
+      "output": "1.0, 5.5, 4.66667, 6.0",
+      "explanation": "The first two answers average fewer than k values. On the fourth call the window is full, so 1 leaves as 5 arrives: (10 + 3 + 5) / 3 = 6.0."
+    },
+    {
+      "input": "MovingAverage(1); next(4), next(9)",
+      "output": "4.0, 9.0",
+      "explanation": "k = 1, so every value immediately evicts the previous one and the average is just the latest value."
+    },
+    {
+      "input": "MovingAverage(2); next(3), next(4), next(-7)",
+      "output": "3.0, 3.5, -1.5",
+      "explanation": "Negative values and a non-integer average. Returning an int here would report -1, which is the most common way this breaks."
+    }
+  ],
+  "constraints": [
+    "1 <= size <= 1000",
+    "-10^5 <= val <= 10^5",
+    "At most 10^4 calls to next",
+    "next() must run in O(1)"
+  ],
+  "bruteForce": {
+    "idea": "Append every value to a growing list. On each call, sum the last k entries of the list and divide.",
+    "code": [
+      "private final List<Integer> all = new ArrayList<>();",
+      "private final int size;",
+      "",
+      "public double next(int val) {",
+      "    all.add(val);",
+      "    int from = Math.max(0, all.size() - size);",
+      "    double sum = 0;",
+      "    for (int i = from; i < all.size(); i++) sum += all.get(i);",
+      "    return sum / (all.size() - from);",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(k) per call",
+      "space": "O(n) — the whole stream"
+    },
+    "whySlow": "Consecutive windows overlap in k-1 of their k values, and the loop re-adds every one of those. The previous call already computed a sum that differs from this one by exactly two numbers: the value that just arrived and the value that just expired. Re-adding the k-1 survivors is the waste — over m calls that is m*k additions to produce m answers that m*2 additions would have given. The list is the second waste: it grows without bound to hold values that can never re-enter the window."
+  },
+  "patternIdentification": "Two signals stack here. 'The last k things', with items entering at one end and expiring at the other in the order they arrived, is first-in-first-out — a queue, so that the expiring element is always identifiable in O(1). And when the quantity you report over a window is a sum (or a count), maintain it incrementally: add what enters, subtract what leaves, never recompute the middle. Together they are the fixed-size sliding window, and the general test for applying it is whether the window's answer can be repaired from the two elements that changed rather than rebuilt from all k.",
+  "optimized": {
+    "idea": "Hold the current window in a queue and the window's total in a running sum. Each call enqueues the new value and adds it to the sum; if that pushed the window over k, dequeue the oldest and subtract exactly that value. Divide by the queue's current size — not by k — so the warm-up calls, when fewer than k values have arrived, are correct without a special case.",
+    "code": [
+      "class MovingAverage {",
+      "",
+      "    private final Deque<Integer> window = new ArrayDeque<>();",
+      "    private final int size;",
+      "    private long sum = 0;   // long: 10^4 values of magnitude 10^5 would still fit in an int, but the habit is cheap",
+      "",
+      "    public MovingAverage(int size) {",
+      "        this.size = size;",
+      "    }",
+      "",
+      "    public double next(int val) {",
+      "        window.offer(val);",
+      "        sum += val;",
+      "        if (window.size() > size) {",
+      "            sum -= window.poll();   // subtract precisely what left; the k-1 survivors are never touched",
+      "        }",
+      "        return (double) sum / window.size();",
+      "    }",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(1) per call",
+      "space": "O(k)"
+    }
+  },
+  "visualization": {
+    "engine": "queueOps",
+    "input": {
+      "operations": [
+        {
+          "op": "enqueue",
+          "value": 1
+        },
+        {
+          "op": "enqueue",
+          "value": 10
+        },
+        {
+          "op": "enqueue",
+          "value": 3
+        },
+        {
+          "op": "peek"
+        },
+        {
+          "op": "dequeue"
+        },
+        {
+          "op": "enqueue",
+          "value": 5
+        }
+      ]
+    },
+    "code": [
+      "Deque<Integer> window = new ArrayDeque<>();",
+      "window.offer(val); sum += val;",
+      "int oldest = window.peek();",
+      "if (window.size() > size) sum -= window.poll();",
+      "return (double) sum / window.size();"
+    ]
+  },
+  "commonMistakes": [
+    "Dividing by `size` instead of `window.size()` — every answer before the window fills is wrong: with k = 3, next(1) returns 0.333 instead of 1.0. Tests that only inspect the steady state never catch it.",
+    "Integer division: keeping the sum in an int and writing `return sum / window.size();` returns 5 where 5.5 is correct, and -1 where -1.5 is correct. The values are plausible enough to pass a careless eyeball check.",
+    "Rebuilding the sum by iterating the queue after each eviction instead of subtracting the polled value — the answers are right, but next() is back to O(k) and the O(1) requirement quietly fails; on a 10^4-call stream with k = 1000 this is the difference between passing and timing out."
+  ],
+  "similar": [
+    "design-circular-queue",
+    "max-sum-subarray-k",
+    "implement-queue-using-stacks",
+    "min-stack"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 346,
+      "slug": "moving-average-from-data-stream",
+      "title": "Moving Average from Data Stream",
+      "url": "https://leetcode.com/problems/moving-average-from-data-stream/",
+      "premium": true
+    }
+  }
+}

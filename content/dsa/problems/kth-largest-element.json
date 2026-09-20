@@ -1,0 +1,127 @@
+{
+  "id": "kth-largest-element",
+  "title": "Kth Largest Element in an Array",
+  "patternId": "heap",
+  "difficulty": "beginner",
+  "tags": [
+    "array",
+    "heap",
+    "top-k",
+    "selection"
+  ],
+  "statement": "Given an integer array `nums` and an integer `k`, return the k-th largest element in the array. This is the k-th largest in sorted order, not the k-th distinct element.",
+  "realWorld": "Service-level objectives are this problem: the p99 latency of a request is the k-th largest response time for k = 1% of the sample. Monitoring systems compute it continuously over a window of millions of measurements, which is why they never sort.",
+  "examples": [
+    {
+      "input": "nums = [3,2,1,5,6,4], k = 2",
+      "output": "5",
+      "explanation": "Sorted descending: [6,5,4,3,2,1]. The 2nd element is 5."
+    },
+    {
+      "input": "nums = [3,2,3,1,2,4,5,5,6], k = 4",
+      "output": "4",
+      "explanation": "Sorted descending: [6,5,5,4,3,3,2,2,1]. The 4th is 4. Duplicates count separately — 5 appears twice and occupies two positions."
+    },
+    {
+      "input": "nums = [1], k = 1",
+      "output": "1",
+      "explanation": "The largest element of a one-element array."
+    }
+  ],
+  "constraints": [
+    "1 <= k <= nums.length <= 10^5",
+    "-10^4 <= nums[i] <= 10^4",
+    "k is always valid — there are at least k elements"
+  ],
+  "bruteForce": {
+    "idea": "Sort the array descending and index into position k-1.",
+    "code": [
+      "public static int findKthLargest(int[] nums, int k) {",
+      "    Arrays.sort(nums);                  // ascending, O(n log n)",
+      "    return nums[nums.length - k];       // …and we read exactly one of them",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n log n)",
+      "space": "O(log n) for the sort's recursion, or O(n) if you box the values to sort descending"
+    },
+    "whySlow": "The question asks for one element. Sorting determines the exact rank of all n, including the full internal ordering of the n-k elements that lose and the k-1 that beat the answer — none of which is read. For n = 100,000 that is roughly 1.7 million comparisons to produce a single number. It also mutates the caller's array, which is a real side effect if the array is reused."
+  },
+  "patternIdentification": "'The k-th largest' is a top-k question in disguise: the k-th largest is the *smallest* of the k largest. So if you can maintain the k largest elements seen so far, the answer is whichever of them is weakest — and a min-heap of size k puts exactly that element at its root, in O(1). The signal is that k is bounded and small while n is large, and that no element outside the top k ever matters.",
+  "optimized": {
+    "idea": "Sweep the array once, keeping a min-heap capped at k. While the heap is short of k, everything goes in. After that, a value only matters if it beats the heap's root — the weakest element currently being kept. If it does, evict the root and insert the value; if it does not, it can never be in the top k and is dropped with a single comparison. At the end the heap holds the k largest and its root is the k-th largest.",
+    "code": [
+      "import java.util.PriorityQueue;",
+      "",
+      "/** O(n log k) time, O(k) space. Does not mutate nums. */",
+      "public static int findKthLargest(int[] nums, int k) {",
+      "    PriorityQueue<Integer> keep = new PriorityQueue<>();   // MIN-heap of the k largest so far",
+      "",
+      "    for (int value : nums) {",
+      "        if (keep.size() < k) {",
+      "            keep.offer(value);",
+      "        } else if (value > keep.peek()) {   // beats the weakest survivor?",
+      "            keep.poll();                    // evict the weakest",
+      "            keep.offer(value);",
+      "        }",
+      "        // else: it cannot displace anyone — one comparison, no heap work",
+      "    }",
+      "    return keep.peek();   // the weakest of the k largest IS the k-th largest",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n log k)",
+      "space": "O(k)"
+    }
+  },
+  "visualization": {
+    "engine": "topKHeap",
+    "title": "k = 3: the heap only ever holds three values, and its root is the answer",
+    "input": {
+      "array": [
+        4,
+        1,
+        7,
+        3,
+        9,
+        2,
+        8
+      ],
+      "k": 3
+    },
+    "code": [
+      "PriorityQueue<Integer> keep = new PriorityQueue<>();   // MIN-heap of the k largest so far",
+      "for (int value : nums) {",
+      "    if (keep.size() < k) keep.offer(value);            // not full yet — everything qualifies",
+      "    else if (value > keep.peek()) {                    // beats the weakest survivor?",
+      "        keep.poll(); keep.offer(value);                // evict the weakest, keep this one",
+      "    }",
+      "    // else: value <= keep.peek(), so it can never be top-k — drop it",
+      "}",
+      "return keep.peek();                                    // the k-th largest"
+    ]
+  },
+  "commonMistakes": [
+    "Using a max-heap of size k. The root would then be the *largest* of the ones you kept, which you never need; you need the weakest, because that is the only element eviction can ever target. Use a min-heap.",
+    "Offering every element and then polling k times. That is a heap of size n — O(n log n) time and O(n) space, i.e. the brute force with extra machinery. The cap at k is the entire optimisation.",
+    "Returning `keep.poll()` instead of `keep.peek()` when the caller may reuse the heap, or confusing the two while debugging. Both return the root; `poll` also removes it.",
+    "Treating duplicates as one element. With nums = [3,3,3] and k = 2 the answer is 3; the problem ranks positions, not distinct values. Do not de-duplicate.",
+    "Off-by-one between 'k-th largest' and 'index k' — after an ascending sort the k-th largest is at `nums.length - k`, not at `k` or `k - 1`.",
+    "Unboxing `keep.peek()` without checking for an empty heap. If k is 0 or the array is empty, `peek()` returns null and the implicit `intValue()` throws a NullPointerException far from the real cause."
+  ],
+  "similar": [
+    "top-k-frequent",
+    "merge-k-sorted-lists",
+    "contains-duplicate",
+    "find-duplicate-number"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 215,
+      "slug": "kth-largest-element-in-an-array",
+      "title": "Kth Largest Element in an Array",
+      "url": "https://leetcode.com/problems/kth-largest-element-in-an-array/",
+      "premium": false
+    }
+  }
+}

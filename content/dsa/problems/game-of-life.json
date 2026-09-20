@@ -1,0 +1,119 @@
+{
+  "id": "game-of-life",
+  "title": "Game of Life",
+  "patternId": "matrix",
+  "difficulty": "intermediate",
+  "tags": [
+    "matrix",
+    "in-place",
+    "bit-manipulation",
+    "simulation"
+  ],
+  "statement": "An m x n board holds cells that are live (1) or dead (0). Compute the next generation under Conway's rules, applied to every cell simultaneously: a live cell with fewer than two or more than three live neighbours dies; a live cell with two or three live neighbours survives; a dead cell with exactly three live neighbours becomes live. Each cell has up to eight neighbours, horizontally, vertically and diagonally. Update the board in place.",
+  "realWorld": "Any double-buffered simulation step: fluid grids, cellular automata for procedural terrain, image filters where every output pixel depends on its 3x3 input neighbourhood. When the board is large enough that a second buffer would not fit in cache — or on an embedded device where it would not fit in RAM at all — the packing trick here is what an implementation actually does.",
+  "examples": [
+    {
+      "input": "board = [[0,1,0],[0,0,1],[1,1,1],[0,0,0]]",
+      "output": "[[0,0,0],[1,0,1],[0,1,1],[0,1,0]]",
+      "explanation": "One glider step. Cell (1,0) is dead and its five in-bounds neighbours are (0,0)=0, (0,1)=1, (1,1)=0, (2,0)=1, (2,1)=1 — exactly three live, so it is born. Cell (0,1) is live with only one live neighbour and dies of underpopulation."
+    },
+    {
+      "input": "board = [[1,1],[1,0]]",
+      "output": "[[1,1],[1,1]]",
+      "explanation": "The dead cell (1,1) has exactly three live neighbours and is born; each live cell has two live neighbours and survives. This is the case where a naive in-place pass reads an already-updated cell: after writing (0,0) you would count it wrongly for (0,1)."
+    },
+    {
+      "input": "board = [[1]]",
+      "output": "[[0]]",
+      "explanation": "A lone live cell has zero neighbours and dies of underpopulation. The 1x1 board is where an unguarded neighbour loop walks off all four edges at once."
+    }
+  ],
+  "constraints": [
+    "m == board.length, n == board[i].length",
+    "1 <= m, n <= 25",
+    "board[i][j] is 0 or 1",
+    "The update must happen in place — O(1) extra space beyond a few variables"
+  ],
+  "bruteForce": {
+    "idea": "Copy the board, read neighbour counts from the copy, and write results into the original.",
+    "code": [
+      "int rows = board.length, cols = board[0].length;",
+      "int[][] snapshot = new int[rows][cols];",
+      "for (int r = 0; r < rows; r++) snapshot[r] = board[r].clone();",
+      "for (int r = 0; r < rows; r++) {",
+      "    for (int c = 0; c < cols; c++) {",
+      "        int live = 0;",
+      "        for (int dr = -1; dr <= 1; dr++) {",
+      "            for (int dc = -1; dc <= 1; dc++) {",
+      "                if (dr == 0 && dc == 0) continue;",
+      "                int nr = r + dr, nc = c + dc;",
+      "                if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) continue;",
+      "                live += snapshot[nr][nc];",
+      "            }",
+      "        }",
+      "        board[r][c] = (snapshot[r][c] == 1) ? ((live == 2 || live == 3) ? 1 : 0) : ((live == 3) ? 1 : 0);",
+      "    }",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(m*n)",
+      "space": "O(m*n)"
+    },
+    "whySlow": "This one is not slow — it is already O(m*n), and you cannot beat that, since every cell's fate depends on reading it. The waste is *memory*: a whole second board, duplicated so that each cell can be read after it has been overwritten. And notice what is actually being stored there. Each cell holds one bit of information, 0 or 1, inside a 32-bit int. The copy exists to keep two states per cell alive at once, and there are thirty-one unused bits per cell sitting right there. The redundancy is in the representation, not in the algorithm."
+  },
+  "patternIdentification": "The difficulty here is not complexity, it is **simultaneity**. The rules say every cell transitions at the same instant, so every neighbour count must be read from the *old* generation. A single in-place pass in row-major order violates that immediately: by the time you evaluate cell (1,1), the cells (0,0), (0,1), (0,2) and (1,0) already hold their new values, and counting them gives you a hybrid of two generations. The board silently produces a plausible-looking but wrong next state — gliders drift the wrong way and still-lifes decay — which is much harder to debug than a crash.\n\nWhenever a transformation is defined as simultaneous and you are asked to do it in place, the question is: *where do I put the new value so it does not destroy the old one?* Three answers recur. Store the new state in unused bits of the same cell (here); use out-of-range sentinel values that encode 'was alive, now dead' and 'was dead, now alive' (workable but needs four codes and careful ordering); or process in an order where overwrites cannot matter, which works for `rotate-image` and `set-matrix-zeroes` but not here, because dependencies point in every direction.\n\nThe bit-packing answer generalises well: a cell holds one bit of live state in a 32-bit slot, so bit 0 can keep the current generation while bit 1 accumulates the next one. Reading `board[r][c] & 1` always gives the old value no matter how many neighbours have already been half-updated, and one final shift promotes every cell at once — which *is* the simultaneous transition, performed as a separate pass.",
+  "optimized": {
+    "idea": "Two passes, two bits per cell.\n\nPass one computes each cell's next state and records it in bit 1, leaving bit 0 untouched. Neighbour counting uses `board[nr][nc] & 1`, which reads only bit 0 and therefore always sees the original generation, whether or not that neighbour has already had its bit 1 set. Setting the next state is `board[r][c] |= 2` — an OR, so it never disturbs bit 0. Cells that will be dead need no write at all, because bit 1 starts at 0.\n\nPass two does `board[r][c] >>= 1` everywhere, which discards the old generation and promotes the new one. That shift is the simultaneous transition: until it runs, no cell has changed as far as any reader is concerned.\n\nFor an infinite board, the same idea scales by storing only the coordinates of live cells in a hash set and counting neighbours from that — the two-bit trick is what you use when the board is dense and bounded.",
+    "code": [
+      "public static void gameOfLife(int[][] board) {",
+      "    int rows = board.length, cols = board[0].length;",
+      "    for (int r = 0; r < rows; r++) {",
+      "        for (int c = 0; c < cols; c++) {",
+      "            int live = 0;",
+      "            for (int dr = -1; dr <= 1; dr++) {",
+      "                for (int dc = -1; dc <= 1; dc++) {",
+      "                    if (dr == 0 && dc == 0) continue;",
+      "                    int nr = r + dr, nc = c + dc;",
+      "                    if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) continue;",
+      "                    live += board[nr][nc] & 1;   // bit 0 still holds the ORIGINAL state, whatever bit 1 now says",
+      "                }",
+      "            }",
+      "            int alive = board[r][c] & 1;",
+      "            if (alive == 1 ? (live == 2 || live == 3) : live == 3) {",
+      "                board[r][c] |= 2;               // record the next state in bit 1, leaving bit 0 intact",
+      "            }",
+      "        }",
+      "    }",
+      "    for (int r = 0; r < rows; r++) {",
+      "        for (int c = 0; c < cols; c++) {",
+      "            board[r][c] >>= 1;                  // one shift promotes every cell at once: the simultaneous transition",
+      "        }",
+      "    }",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(m*n) — 8 neighbour reads per cell plus one promotion pass",
+      "space": "O(1)"
+    }
+  },
+  "commonMistakes": [
+    "Counting neighbours with `board[nr][nc]` instead of `board[nr][nc] & 1`. Any neighbour already marked for birth reads as 3 rather than 1, so the live count jumps and cells die of overpopulation that never happened. The symptom is a board that is correct in its first row and wrong everywhere below it.",
+    "Writing the next state with `board[r][c] = 2` instead of `|= 2`. The assignment wipes bit 0, so every later cell that looks at this one sees a dead neighbour: on [[1,1],[1,0]] the answer comes back [[1,1],[1,0]] or worse, and the error again appears only after the first cell is processed.",
+    "Folding the promotion into the first pass — shifting each cell right as soon as its next state is decided, instead of running a separate second pass. That destroys the old bit 0 while later cells still need to read it, which is the very problem the encoding was introduced to solve; the board comes back subtly wrong rather than obviously so. Omitting the second pass entirely is the milder version: every cell is left holding 2 or 3 instead of 1 or 0, and the failing comparison shows values that are exactly double, or double plus one, what you expected."
+  ],
+  "similar": [
+    "set-matrix-zeroes",
+    "rotate-image",
+    "spiral-matrix",
+    "number-of-islands"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 289,
+      "slug": "game-of-life",
+      "title": "Game of Life",
+      "url": "https://leetcode.com/problems/game-of-life/",
+      "premium": false
+    }
+  }
+}

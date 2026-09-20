@@ -1,0 +1,93 @@
+{
+  "id": "find-min-rotated-array",
+  "title": "Find Minimum in Rotated Sorted Array",
+  "patternId": "binary-search",
+  "difficulty": "intermediate",
+  "tags": [
+    "binary-search",
+    "array",
+    "rotation"
+  ],
+  "statement": "An array sorted in ascending order was rotated between 1 and n times, so [0,1,2,4,5,6,7] may have become [4,5,6,7,0,1,2]. All elements are distinct. Return the minimum element in O(log n) time.",
+  "realWorld": "Ring buffers and circular logs. A fixed-size append-only log that wraps around holds timestamps in ascending order except for one wrap point; finding the oldest surviving record means finding exactly this minimum. The same shape appears when reading a circular journal or a rotated time-series shard and you need to know where the sequence actually begins.",
+  "examples": [
+    {
+      "input": "nums = [3,4,5,1,2]",
+      "output": "1",
+      "explanation": "The original [1,2,3,4,5] was rotated 3 times. The minimum sits at index 3, immediately after the one descending step."
+    },
+    {
+      "input": "nums = [11,13,15,17]",
+      "output": "11",
+      "explanation": "A full rotation leaves the array sorted. There is no descending step, so the answer is nums[0] — the case that breaks any solution that insists on finding a drop."
+    },
+    {
+      "input": "nums = [2,1]",
+      "output": "1",
+      "explanation": "The smallest interesting input. low = 0, high = 1, mid = 0; nums[0] = 2 > nums[1] = 1, so low becomes 1 and the loop ends."
+    }
+  ],
+  "constraints": [
+    "1 <= nums.length <= 5000",
+    "-5000 <= nums[i] <= 5000",
+    "All integers are unique",
+    "The array is a rotation of a strictly ascending array"
+  ],
+  "bruteForce": {
+    "idea": "Scan every element and keep the smallest, or scan for the single position where the value drops.",
+    "code": [
+      "int best = nums[0];",
+      "for (int i = 1; i < nums.length; i++) {",
+      "    if (nums[i] < best) best = nums[i];",
+      "}",
+      "return best;"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(1)"
+    },
+    "whySlow": "The scan treats the array as unordered and re-derives, element by element, a structure the problem already handed you. Two thirds of every comparison is wasted: one look at a midpoint tells you which half of the array contains the wrap point, and the scan asks n separate questions to learn what log n questions would settle. The array is not sorted, but it is not arbitrary either, and a linear scan is what you pay when you refuse to exploit the difference."
+  },
+  "patternIdentification": "A rotated sorted array is two ascending runs stuck together, and every element of the left run is larger than every element of the right run. That gives you a monotone predicate — 'is nums[i] in the right (small) run?' is false, false, ..., true, true — and a monotone predicate is all binary search needs. The general move: when an array is not globally sorted but is made of a bounded number of sorted pieces, look for a comparison that tells you which piece the midpoint is in, and binary search on that instead of on the values.",
+  "optimized": {
+    "idea": "Compare nums[mid] against nums[high], not nums[low]. If nums[mid] > nums[high], then mid is in the left (large) run and the wrap point is strictly to its right, so low = mid + 1. Otherwise mid is in the right (small) run and could itself be the minimum, so high = mid. The range shrinks every step and converges on the minimum.\n\nWhy nums[high] and not nums[low]? Because the comparison against the low end answers the wrong question. In [3,4,5,1,2] the probe is mid = 2, nums[mid] = 5, nums[low] = 3, so nums[mid] > nums[low] — and the minimum is to the right. In [1,2,3,4,5] the probe is mid = 2, nums[mid] = 3, nums[low] = 1, so nums[mid] > nums[low] again — and the minimum is at index 0, to the left. Identical comparison, opposite conclusions, so nums[low] alone cannot decide which half to keep. Against nums[high] the answer is never ambiguous: nums[mid] > nums[high] holds if and only if mid sits in the left run, because every element of the left run exceeds every element of the right run and nums[high] is always in the right run (or, in the un-rotated case, is the whole array's maximum, so the test is correctly false and the search walks left).\n\nWith duplicates allowed (the 'II' variant), nums[mid] == nums[high] tells you nothing — the wrap point could be on either side — and the only safe move is high-- , which degrades the worst case to O(n) on an input like [1,1,1,0,1].",
+    "code": [
+      "public static int findMin(int[] nums) {",
+      "    int low = 0, high = nums.length - 1;",
+      "    while (low < high) {",
+      "        int mid = low + (high - low) / 2;",
+      "        if (nums[mid] > nums[high]) {",
+      "            low = mid + 1;      // mid is in the left (large) run, so the minimum is strictly right of it",
+      "        } else {",
+      "            high = mid;         // mid is in the right (small) run and may be the minimum itself",
+      "        }",
+      "    }",
+      "    return nums[low];",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(log n)",
+      "space": "O(1)"
+    }
+  },
+  "commonMistakes": [
+    "Comparing nums[mid] with nums[low] instead of nums[high]. It works on [4,5,6,7,0,1,2] and then returns 4 on the un-rotated [1,2,3,4,5], because nums[mid] > nums[low] is true there too but means the opposite thing — the symptom is a wrong answer only on arrays that happen to be fully sorted.",
+    "Writing `high = mid - 1` in the else branch. When mid is already the minimum it gets thrown away: on [2,1] mid = 0 is not greater than nums[1], high becomes -1, and you index nums[-1] or return the wrong element. The symptom is an ArrayIndexOutOfBoundsException on two-element inputs.",
+    "Using `while (low <= high)` with `high = mid`. Once low == high == mid the assignment changes nothing and the loop never exits — the test hangs rather than failing, which is easy to misread as a slow machine."
+  ],
+  "similar": [
+    "search-rotated-array",
+    "binary-search-basic",
+    "first-bad-version",
+    "search-2d-matrix"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 153,
+      "slug": "find-minimum-in-rotated-sorted-array",
+      "title": "Find Minimum in Rotated Sorted Array",
+      "url": "https://leetcode.com/problems/find-minimum-in-rotated-sorted-array/",
+      "premium": false
+    }
+  }
+}

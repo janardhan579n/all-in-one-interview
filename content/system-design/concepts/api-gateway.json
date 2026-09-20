@@ -1,0 +1,278 @@
+{
+  "id": "api-gateway",
+  "title": "API Gateway",
+  "group": "Architecture",
+  "level": 2,
+  "estimatedMinutes": 26,
+  "summary": "One front door in front of many services, so that authentication, rate limiting, TLS and routing are implemented once instead of once per service. The danger is that a box every request passes through is also the most tempting place in the system to hide business logic.",
+  "analogy": "The reception desk of an office building. Visitors do not need to know which floor each department is on, they show ID once instead of at every door, and the desk turns away the person who has already been asked to leave. But everyone still has to walk past it, so if reception closes the whole building is shut — and if you let reception start answering questions about the departments, you have quietly rebuilt the switchboard nobody wanted.",
+  "explanation": {
+    "beginner": "Once you have several backend services, someone has to decide which one a request belongs to. If clients decide, every mobile app and web page has to learn your internal layout and be updated whenever it changes. If each service decides on its own, each one has to handle its own HTTPS certificates, check its own logins and enforce its own request limits — six teams solving the same problem six slightly different ways. An API gateway is a single service that sits in front of all of them: clients call one address, the gateway checks who you are and whether you are allowed to make this many requests, then forwards the call to the right service.",
+    "interview": "A gateway is the north-south edge: one address, one TLS termination point, one place that validates tokens, applies per-client rate limits and quotas, routes by path or host, shapes requests and responses, and mints the request id that every downstream log and trace carries. Its value is that cross-cutting policy is implemented once and cannot be forgotten by a new service; services behind it can then speak a simpler internal protocol and trust an authenticated identity header. The costs are real: one more hop (typically ~1-5 ms in-region), a component whose failure is total unless it is run redundantly behind a load balancer across zones, and a well-documented tendency to accumulate orchestration logic until it becomes a shared deployment bottleneck — a monolith wearing a proxy's clothes. Keep it policy-aware and domain-ignorant, and where a client genuinely needs aggregation, prefer a backend-for-frontend owned by the client team."
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "client",
+        "label": "Clients",
+        "type": "client",
+        "x": 100,
+        "y": 320,
+        "note": "Web, mobile, partner integrations. Each knows exactly one address."
+      },
+      {
+        "id": "idp",
+        "label": "Identity provider",
+        "type": "server",
+        "x": 380,
+        "y": 90,
+        "note": "Issues and signs tokens. The gateway validates signatures against its published keys — see auth."
+      },
+      {
+        "id": "gw",
+        "label": "API gateway",
+        "type": "proxy",
+        "x": 380,
+        "y": 320,
+        "note": "One front door: TLS, token validation, rate limits, routing, request ids.",
+        "why": {
+          "without": [
+            "Every client hardcodes the address of every service and must be redeployed when the topology changes",
+            "Six services each implement authentication, rate limiting, TLS and CORS — six times, six subtly different ways, and the seventh service forgets one",
+            "A change to the token format means a coordinated release of every service at once"
+          ],
+          "with": [
+            "Clients know one address; services can be split, merged or moved without a client release",
+            "Auth, rate limiting and TLS are configured once and a new service inherits them by default",
+            "Request ids and edge metrics start in one place, so every trace has a common root"
+          ],
+          "conclusion": "Cross-cutting policy is enforced once rather than re-implemented per service — paid for with one extra hop and a component that must never be a single point of failure."
+        }
+      },
+      {
+        "id": "orders",
+        "label": "Orders service",
+        "type": "server",
+        "x": 670,
+        "y": 140,
+        "note": "Receives an already-authenticated request and a trusted identity header. No TLS or token code of its own."
+      },
+      {
+        "id": "catalog",
+        "label": "Catalog service",
+        "type": "server",
+        "x": 670,
+        "y": 320,
+        "note": "Public reads, but still behind the same rate limits and the same request id."
+      },
+      {
+        "id": "users",
+        "label": "Users service",
+        "type": "server",
+        "x": 670,
+        "y": 500,
+        "note": "Never exposed directly — internal-only endpoints stay internal because only the gateway routes to them."
+      },
+      {
+        "id": "metrics",
+        "label": "Tracing + metrics",
+        "type": "monitor",
+        "x": 950,
+        "y": 320,
+        "note": "The edge is where the request id is minted and where client-visible latency is measured."
+      }
+    ],
+    "edges": [
+      {
+        "from": "client",
+        "to": "gw",
+        "label": "1. HTTPS + bearer token"
+      },
+      {
+        "from": "gw",
+        "to": "idp",
+        "label": "2. validate signature",
+        "dashed": true
+      },
+      {
+        "from": "gw",
+        "to": "orders",
+        "label": "3. route /orders"
+      },
+      {
+        "from": "gw",
+        "to": "catalog",
+        "label": "3. route /catalog"
+      },
+      {
+        "from": "gw",
+        "to": "users",
+        "label": "3. route /users"
+      },
+      {
+        "from": "gw",
+        "to": "metrics",
+        "label": "4. emit request id",
+        "dashed": true
+      }
+    ]
+  },
+  "why": {
+    "without": [
+      "Every client has to know the topology: which host serves orders, which serves catalog — and a service split becomes a coordinated mobile app release you cannot force users to install",
+      "Authentication, rate limiting, TLS termination and CORS get implemented independently in every service, inconsistently, and the newest service is the one that gets it wrong",
+      "There is no single place that can reject an abusive client, so a burst hits every service at once and each throttles differently",
+      "Internal-only endpoints are one firewall rule away from being public, because every service is directly reachable",
+      "Request ids start in different places (or nowhere), so correlating one user's request across services means guessing from timestamps"
+    ],
+    "with": [
+      "Clients bind to one stable address and one stable contract, so services can be split or moved behind it freely",
+      "Policy is configuration, not code repeated N times: a new service is protected by default rather than by remembering",
+      "One enforcement point for quotas and per-client limits, in front of everything worth protecting",
+      "Only what the gateway routes to is reachable, which shrinks the exposed surface to the routes you declared",
+      "The edge mints the request id and records client-visible latency, giving every trace one root and one honest number"
+    ],
+    "conclusion": "A gateway trades one extra hop and one more thing to keep highly available for consistent, centrally enforced cross-cutting policy. It earns its place the moment you have several services and more than one kind of client — and stops earning it the moment business logic moves into it."
+  },
+  "whenToUse": [
+    "Several backend services and more than one kind of client, where every client would otherwise learn the topology",
+    "Cross-cutting concerns you want enforced by default rather than by each team remembering: token validation, per-client rate limits, TLS, CORS, request ids",
+    "A public or partner-facing API where you need versioning, quotas and a stable contract that outlives your internal refactors",
+    "You want internal endpoints unreachable except through declared routes",
+    "You need to shape or translate at the edge — REST in front of gRPC internally, or trimming fields a client has no business seeing"
+  ],
+  "whenNotToUse": [
+    "A single service with a single client: the gateway adds a hop, a deployment and an outage mode in exchange for routing decisions there are none of",
+    "Purely internal service-to-service traffic — that is east-west, and forcing it through the north-south edge adds latency and makes the gateway a chokepoint; a mesh or direct calls with client-side policy fit better",
+    "Latency budgets where the extra hop matters relative to the work — a handful of milliseconds on a 10 ms call is a large fraction, and tight real-time paths often bypass the edge deliberately",
+    "You are considering it mainly to host aggregation and orchestration logic: that logic belongs in a service (or a backend-for-frontend) that a team owns, not in shared infrastructure everyone must coordinate to deploy",
+    "You cannot run it redundantly across zones — a single gateway instance converts every service's independent availability into one shared outage"
+  ],
+  "tradeoffs": [
+    {
+      "option": "Gateway handles routing and policy only (thin gateway)",
+      "pros": [
+        "Stays a mostly-stateless proxy that is cheap to scale horizontally and quick to reason about",
+        "Rarely needs deploying, so it is rarely the thing that breaks",
+        "Clear ownership boundary: platform owns policy, product teams own behaviour",
+        "Failure modes are few and well understood — it either routes or it does not"
+      ],
+      "cons": [
+        "Chatty clients still make many round trips, which hurts most on high-latency mobile networks",
+        "Response shaping per client type has to happen somewhere else",
+        "Clients must handle partial failure across several calls themselves"
+      ]
+    },
+    {
+      "option": "Gateway also aggregates (one client call fans out to several services)",
+      "pros": [
+        "One round trip instead of five, which matters when each round trip costs 50-100 ms on a mobile network",
+        "Fan-out happens inside the datacenter where calls are sub-millisecond",
+        "Clients get a payload shaped for the screen rather than for the service boundaries"
+      ],
+      "cons": [
+        "Business logic now lives in shared infrastructure that every team must coordinate to change",
+        "The gateway acquires knowledge of domain models and starts needing releases whenever they change — the road back to a monolith",
+        "Partial failure handling (which of the five calls may fail?) becomes gateway policy, and it is rarely the right place to decide",
+        "Gateway CPU and memory now scale with product complexity, not just traffic"
+      ]
+    },
+    {
+      "option": "Backend-for-frontend (one aggregating service per client type, behind the gateway)",
+      "pros": [
+        "Aggregation is owned by the team that owns the client, and changes at the client's pace",
+        "Each client type gets exactly the payload it wants without compromise between web and mobile",
+        "Keeps the shared gateway thin and domain-ignorant"
+      ],
+      "cons": [
+        "One more service per client type to build, deploy and be on call for",
+        "Logic is duplicated across BFFs when the client types are actually similar",
+        "Another hop: client → gateway → BFF → services"
+      ]
+    },
+    {
+      "option": "No gateway — clients call services directly",
+      "pros": [
+        "Fewest hops and the lowest possible latency",
+        "Nothing shared to operate, version or keep highly available",
+        "No temptation to centralise logic, because there is no centre"
+      ],
+      "cons": [
+        "Every service re-implements auth, rate limiting, TLS and CORS, inconsistently",
+        "Clients are coupled to the topology, so refactoring services means releasing clients",
+        "Every service is directly exposed, so the attack surface is the union of all of them",
+        "No single place to throttle an abusive client or to start a request id"
+      ]
+    }
+  ],
+  "keyNumbers": [
+    {
+      "label": "Latency added by the gateway hop, same region",
+      "value": "~1-5 ms"
+    },
+    {
+      "label": "Round-trip time on a typical mobile network",
+      "value": "~50-100 ms — which is why five client calls hurt and five in-datacenter calls do not"
+    },
+    {
+      "label": "In-datacenter service call the gateway makes on your behalf",
+      "value": "~0.5-1 ms"
+    },
+    {
+      "label": "Gateway availability required so it is not the weakest link",
+      "value": "Strictly better than the services behind it — redundant instances across at least two zones"
+    },
+    {
+      "label": "Cross-cutting concerns implemented once instead of N times",
+      "value": "TLS, authn, rate limits, CORS, request ids — 5 concerns × N services collapsed to 5"
+    }
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "mcq",
+      "question": "In one sentence each, what distinguishes a load balancer, an API gateway and a service mesh?",
+      "options": [
+        "They are three names for the same component at different scales",
+        "A load balancer spreads traffic across identical instances of one service (L4/L7); a gateway is the north-south edge doing protocol- and policy-aware work like auth, rate limiting and routing across different services; a service mesh handles east-west service-to-service traffic through sidecars",
+        "A load balancer does authentication, a gateway does retries, a mesh does TLS",
+        "A gateway replaces the load balancer; a mesh replaces the gateway"
+      ],
+      "answerIndex": 1,
+      "explanation": "The axis that separates them is what traffic they see and what they know. A load balancer picks among interchangeable instances and knows nothing about your domain or your tokens. A gateway sits at the north-south edge — traffic entering from outside — and makes policy decisions that need to understand the request. A mesh governs east-west traffic between services, applying mTLS, retries and timeouts from a sidecar next to each instance. In practice you often run all three, and a gateway is usually itself behind a load balancer so it is not a single point of failure."
+    },
+    {
+      "id": "q2",
+      "type": "architecture",
+      "question": "Your gateway started as routing and auth. Two years on it holds the logic that decides which of five services to call for a checkout, how to merge their responses, and what to do when one fails — and three teams now queue for its release slot. What went wrong and what is the fix?",
+      "options": [
+        "Nothing went wrong; aggregation is the gateway's purpose",
+        "The gateway absorbed business logic and became a shared deployment bottleneck — a distributed monolith's front end; move the orchestration into a service or a backend-for-frontend that one team owns, and keep the gateway policy-aware and domain-ignorant",
+        "The gateway needs more replicas",
+        "The services should be merged back into a monolith"
+      ],
+      "answerIndex": 1,
+      "explanation": "Aggregation at the edge is genuinely useful for slow clients, but it puts domain knowledge into infrastructure everyone shares. Once the gateway must be released whenever a domain model changes, you have re-created the coupling microservices were meant to remove, and you have put partial-failure decisions in the component least equipped to make them. The standard fix is a backend-for-frontend: an aggregating service per client type, owned by the client team, sitting behind the gateway."
+    },
+    {
+      "id": "q3",
+      "type": "architecture",
+      "question": "You deploy a single API gateway instance in front of eight services, each independently available 99.95% of the time. What is the main risk you have introduced?",
+      "options": [
+        "Higher per-request CPU cost in the services",
+        "Client-side caching stops working",
+        "Every request now depends on one component, so the gateway's availability caps the whole system's — run redundant instances across at least two zones behind a load balancer",
+        "The services can no longer scale independently"
+      ],
+      "answerIndex": 2,
+      "explanation": "A front door that everything passes through is a single point of failure by construction. Careful service-level availability is wasted if a component with worse availability sits in front of all of it. The gateway must be stateless enough to run as several instances, spread across availability zones, with a load balancer in front and health checks that actually remove a sick instance. The extra hop of latency is the accepted cost; a shared outage is not."
+    }
+  ],
+  "related": [
+    "load-balancer",
+    "proxy",
+    "microservices",
+    "rate-limiting",
+    "auth"
+  ]
+}

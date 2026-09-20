@@ -1,0 +1,35 @@
+# Netlify build configuration.
+#
+# This file exists so that connecting the repository is the whole setup — no build command to
+# remember in a web form, and no drift between what your machine builds and what Netlify builds.
+#
+# Only the frontend is deployed, deliberately. The backend has one user and no authentication by
+# design (§1, "local-first, no mandatory auth"), so publishing it would give every visitor write
+# access to the same progress, notes and bookmarks. The frontend does not need it: the entire
+# content library is bundled at build time and each visitor's progress lives in their own
+# browser, which for a public site is the behaviour you actually want. `docs/DEPLOYMENT.md`
+# explains the two modes.
+
+[build]
+  # Commands run from frontend/, but the whole repository is checked out, so the `prebuild` step
+  # can still reach ../content to sync the library into the bundle.
+  base = "frontend"
+  # The gates run before the build, so a push that breaks the content library fails the deploy
+  # instead of publishing it. Netlify keeps the last good deploy live when a build fails, which
+  # turns "deploy on every push" from a risk into a safety net. Both gates are fast — the
+  # validator is about a second, the test suite under ten.
+  command = "npm ci && npm run validate:content && npm test && npm run build"
+  # Relative to `base`, so this is frontend/dist.
+  publish = "dist"
+
+[build.environment]
+  # Pinned so a Netlify default bump cannot change the build under you. Vite 5 needs 18+.
+  NODE_VERSION = "20"
+  # Vite's base path and the router's basename come from this. "/" is right for a Netlify
+  # subdomain or a custom domain; only a sub-path deploy (GitHub Pages) needs it changed.
+  VITE_BASE = "/"
+
+# Redirects and headers are deliberately NOT here. They live in frontend/public/_redirects and
+# frontend/public/_headers, which Vite copies into dist/ — so they apply to a drag-and-drop
+# deploy too, where this file is never uploaded. One home per rule; this file is build config
+# only, because that is the one thing dist/ cannot carry.

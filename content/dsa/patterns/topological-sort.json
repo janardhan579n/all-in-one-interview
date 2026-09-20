@@ -1,0 +1,333 @@
+{
+  "id": "topological-sort",
+  "kind": "pattern",
+  "title": "Topological Sort",
+  "group": "Graphs",
+  "level": 4,
+  "difficulty": "intermediate",
+  "estimatedMinutes": 40,
+  "summary": "Order a directed acyclic graph so every edge points forwards — by repeatedly taking whatever currently owes nothing.",
+  "prerequisites": [
+    "graphs",
+    "queue",
+    "bfs"
+  ],
+  "tags": [
+    "topological-sort",
+    "kahn",
+    "graph",
+    "dag",
+    "cycle-detection",
+    "level-4"
+  ],
+  "analogy": {
+    "beginner": "You are cooking a recipe. You cannot ice the cake before it is baked, and you cannot bake it before the batter is mixed — but you can wash the bowl at any point, because nothing waits on it. So you look at the whole recipe and ask: which steps have nothing standing in their way right now? Do one of those. Crossing it off may unblock other steps, so ask again. Keep going. If you ever reach a point where every remaining step is waiting on another remaining step, the recipe is impossible — someone wrote 'preheat after baking'.",
+    "interview": "A linear ordering of a DAG's vertices such that for every edge u → v, u precedes v. Kahn's algorithm maintains an indegree array and a queue of indegree-zero vertices; removing a vertex decrements its successors' indegrees and enqueues any that reach zero. O(V + E) time, O(V) space. If fewer than V vertices are emitted, the remaining vertices form a cycle — which is how the same code doubles as a directed cycle detector."
+  },
+  "intuition": "The whole algorithm is one sentence: **anything with no unmet prerequisites can go now, and removing it may free others.**\n\nThat is it. Everything else is bookkeeping to answer 'how many prerequisites does this still have?' quickly. The bookkeeping is an `indegree` array — for each node, the number of edges pointing *into* it. A node with indegree 0 owes nothing and is safe to emit immediately.\n\nThe queue is not a queue in the BFS sense of 'distance rings'. It is a **ready set**: a bag of nodes that are currently unblocked. Any of them could legitimately go next, and a topological order is usually not unique — swapping two nodes that never depended on each other gives another perfectly valid answer. A stack would work just as well; the queue is simply what people reach for. (Swap it for a `PriorityQueue` and you get the *lexicographically smallest* valid order, which some problems ask for.)\n\nThe one subtlety worth internalising is what happens when the queue runs dry with nodes left over. Those nodes each still have indegree ≥ 1, which means each is waiting on another node that is also still waiting — follow that chain in a finite graph and you must eventually revisit a node. That is a **cycle**. And the right reading is not 'the algorithm failed'. It is 'the question has no answer': a graph with a cycle has no topological order at all, because the order would have to place some node before itself. The leftover count is not an error code, it is the correct output.\n\nThe alternative is DFS with finish times: run DFS, and when a node's recursion *finishes* (all its descendants are done), push it onto a stack. Reverse the stack — or equivalently, read the stack top-down — and you have a topological order, because a node finishes only after everything it depends on has finished. Same O(V + E), different shape, and it needs a separate three-colour marking to detect cycles. Kahn's gives you cycle detection for free, which is usually why it wins in an interview.",
+  "problemFirst": {
+    "motivatingProblem": "A build system has modules where some must be compiled before others (`ui` needs `api`, `api` needs `core`). Given the dependency list, produce a compile order — or report that the dependencies are circular and no order exists.",
+    "bruteForce": {
+      "idea": "Generate an ordering, check every dependency against it, and if one is violated back out and try a different ordering.",
+      "code": [
+        "List<String> tryOrder(List<String> remaining, List<String> built) {",
+        "    if (remaining.isEmpty()) return built;",
+        "    for (int i = 0; i < remaining.size(); i++) {",
+        "        String candidate = remaining.get(i);",
+        "        if (!allPrerequisitesBuilt(candidate, built)) continue;",
+        "        List<String> rest = new ArrayList<>(remaining);",
+        "        rest.remove(i);",
+        "        built.add(candidate);",
+        "        List<String> done = tryOrder(rest, built);",
+        "        if (done != null) return done;",
+        "        built.remove(built.size() - 1);   // backtrack and try another module",
+        "    }",
+        "    return null;",
+        "}"
+      ],
+      "complexity": {
+        "time": "O(n! · E) in the worst case",
+        "space": "O(n) recursion depth"
+      },
+      "whySlow": "It searches the space of *orderings*, and there are n! of them. Thirteen modules already give over six billion permutations. Worse, the search is redundant: if `core` is buildable first, every branch that postpones it is exploring an arrangement that was never going to be better, because a valid order does not care which of several unblocked modules you pick."
+    },
+    "observation": "A module is buildable the instant all of its dependencies are built — and nothing that happens later can ever make it *un*buildable. So there is no reason to try alternatives and backtrack. If a module is ready, taking it now is always safe.",
+    "leap": "Track, for each module, a single number: how many dependencies it is still waiting on. Start with every module whose count is zero. Take one, emit it, and decrement the counter of everything that depended on it — any counter hitting zero joins the ready set. Each node is emitted once and each edge is decremented once, so the whole thing is O(V + E) instead of O(n!).",
+    "optimizedSketch": [
+      "int[] indegree = new int[n];",
+      "for (int[] edge : edges) indegree[edge[1]]++;      // edge = {from, to}",
+      "",
+      "Queue<Integer> ready = new ArrayDeque<>();          // owes nothing right now",
+      "for (int v = 0; v < n; v++) if (indegree[v] == 0) ready.offer(v);",
+      "",
+      "while (!ready.isEmpty()) {",
+      "    int node = ready.poll();",
+      "    order.add(node);",
+      "    for (int next : adj.get(node)) {",
+      "        if (--indegree[next] == 0) ready.offer(next);",
+      "    }",
+      "}",
+      "// order.size() < n  =>  the leftovers form a cycle: no ordering exists"
+    ]
+  },
+  "howItWorks": [
+    "**Build the adjacency list and the indegree array in one pass.** For every edge `u → v`, append `v` to `adj[u]` and increment `indegree[v]`. Getting the direction right is the single most common bug: in 'a depends on b', the edge runs `b → a`, because b must come first.",
+    "**Seed the queue with every indegree-zero node**, not just one. A dependency graph is often disconnected — several modules may have no prerequisites at all, and missing one of them silently truncates the output.",
+    "**Loop**: poll a node, append it to the output, then for each successor decrement its indegree and enqueue it the moment the counter hits zero. `if (--indegree[next] == 0)` does the decrement and the test in one expression.",
+    "**Why the queue holds exactly the 'ready' nodes.** A node enters the queue only at the instant its last prerequisite is emitted, and it is emitted only once. So the queue's contents are always 'nodes that can legally go next' — and any of them is a correct choice. That is why the answer is usually not unique.",
+    "**The leftover count is the cycle test.** After the loop, compare `order.size()` with `n`. Fewer means the remaining nodes all still have indegree ≥ 1, each blocked by another blocked node — a cycle. Report 'no valid order exists', not 'the algorithm failed'.",
+    "**Lexicographically smallest order** — swap `ArrayDeque` for `PriorityQueue<Integer>`. It costs an O(log V) factor per operation, so O(V log V + E), and problems that ask for 'the smallest valid order' want exactly this.",
+    "**The DFS alternative** — run DFS over every node; when a node's recursion returns (all descendants finished), push it to a stack. Popping the stack gives a topological order. Detecting cycles here needs three-colour marking (0 unvisited, 1 on the current path, 2 finished): meeting a node coloured 1 is a back edge, hence a cycle.",
+    "**Only DAGs.** Directed, because 'before' is meaningless on an undirected edge. Acyclic, because a cycle would demand that a node precede itself. Any graph that is not a DAG has no topological order — and that is a fact about the input, not a limitation of the algorithm."
+  ],
+  "patternRecognition": {
+    "signals": [
+      "Explicit dependencies, prerequisites or ordering constraints — 'X before Y', 'a requires b'",
+      "'Is there a valid order?', 'return any valid order', 'return the lexicographically smallest order'",
+      "'Detect a circular dependency' in a directed graph",
+      "Build systems, package managers, task schedulers, course plans, spreadsheet formula recalculation",
+      "The input is a list of pairs that reads as 'this must come first'"
+    ],
+    "antiSignals": [
+      "The graph is undirected — 'before' has no meaning; you probably want connected components or union-find",
+      "You need the shortest path rather than a legal order → BFS (unweighted) or Dijkstra (weighted)",
+      "Cycles are expected and fine, and you only need reachability → plain DFS or BFS",
+      "There is a cost to minimise across the ordering, not just a feasibility question → this is scheduling or DP, not a topological sort alone",
+      "Constraints are on *values* rather than order (a < b numerically) → sorting or a constraint solver"
+    ],
+    "decisionTreeId": "graph-algorithm"
+  },
+  "visualizations": [
+    {
+      "id": "kahn",
+      "title": "Kahn's algorithm — each node shows how many prerequisites it still owes",
+      "engine": "topologicalSort",
+      "input": {},
+      "code": [
+        "int[] indegree = new int[n];   Queue<Integer> ready = new ArrayDeque<>();",
+        "for (int[] e : edges) indegree[e[1]]++;          // count prerequisites",
+        "for (int v = 0; v < n; v++) if (indegree[v] == 0) ready.offer(v);",
+        "while (!ready.isEmpty()) {",
+        "    int node = ready.poll();  order.add(node);   // owes nothing - it can go now",
+        "    for (int next : adj.get(node)) {",
+        "        if (--indegree[next] > 0) continue;      // still waiting on others",
+        "        ready.offer(next);                       // its last prerequisite cleared",
+        "    }",
+        "}",
+        "return order.size() == n ? order : List.of();    // short means a cycle"
+      ]
+    }
+  ],
+  "implementations": [
+    {
+      "label": "Simple",
+      "language": "java",
+      "explanation": "Kahn's algorithm in full. It returns the order, or an empty list when the graph has a cycle — the caller distinguishes the two by checking whether the result is empty, since a DAG with at least one node always yields a non-empty order.",
+      "code": [
+        "/**",
+        " * A topological order of a directed graph, or an empty list if it has a cycle.",
+        " * edges[i] = {from, to} meaning `from` must come before `to`.",
+        " * O(V + E) time, O(V + E) space.",
+        " */",
+        "public static List<Integer> topologicalOrder(int n, int[][] edges) {",
+        "    List<List<Integer>> adj = new ArrayList<>();",
+        "    for (int i = 0; i < n; i++) adj.add(new ArrayList<>());",
+        "    int[] indegree = new int[n];",
+        "",
+        "    for (int[] edge : edges) {",
+        "        adj.get(edge[0]).add(edge[1]);   // from -> to",
+        "        indegree[edge[1]]++;             // `to` owes one more prerequisite",
+        "    }",
+        "",
+        "    Deque<Integer> ready = new ArrayDeque<>();",
+        "    for (int v = 0; v < n; v++) {",
+        "        if (indegree[v] == 0) ready.offer(v);   // seed with ALL of them",
+        "    }",
+        "",
+        "    List<Integer> order = new ArrayList<>(n);",
+        "    while (!ready.isEmpty()) {",
+        "        int node = ready.poll();",
+        "        order.add(node);",
+        "        for (int next : adj.get(node)) {",
+        "            if (--indegree[next] == 0) ready.offer(next);",
+        "        }",
+        "    }",
+        "",
+        "    // Fewer than n emitted: the rest are blocked on each other, i.e. a cycle.",
+        "    // The input has no topological order at all — this is the answer, not a failure.",
+        "    return order.size() == n ? order : List.of();",
+        "}"
+      ]
+    },
+    {
+      "label": "Optimized",
+      "language": "java",
+      "explanation": "The DFS-with-finish-times alternative. A node is pushed only once every node it points to has finished, so the stack ends up in reverse topological order. Cycle detection needs the three-colour marking: colour 1 means 'on the current recursion path', and meeting it again is a back edge. Same O(V + E), but it uses the call stack rather than an explicit queue — worth knowing, and worth avoiding on graphs deep enough to overflow it.",
+      "code": [
+        "private static final int UNVISITED = 0, ON_PATH = 1, FINISHED = 2;",
+        "",
+        "/** Topological order via DFS finish times, or an empty list on a cycle. */",
+        "public static List<Integer> topologicalOrderDfs(int n, List<List<Integer>> adj) {",
+        "    int[] colour = new int[n];",
+        "    Deque<Integer> finished = new ArrayDeque<>();   // used as a stack",
+        "",
+        "    for (int v = 0; v < n; v++) {",
+        "        if (colour[v] == UNVISITED && !visit(v, adj, colour, finished)) {",
+        "            return List.of();        // a back edge was found: cycle",
+        "        }",
+        "    }",
+        "",
+        "    List<Integer> order = new ArrayList<>(n);",
+        "    while (!finished.isEmpty()) order.add(finished.pop());   // reverse finish order",
+        "    return order;",
+        "}",
+        "",
+        "/** Returns false if a cycle is reachable from `node`. */",
+        "private static boolean visit(int node, List<List<Integer>> adj,",
+        "                             int[] colour, Deque<Integer> finished) {",
+        "    if (colour[node] == ON_PATH) return false;    // back edge -> cycle",
+        "    if (colour[node] == FINISHED) return true;    // already placed",
+        "",
+        "    colour[node] = ON_PATH;",
+        "    for (int next : adj.get(node)) {",
+        "        if (!visit(next, adj, colour, finished)) return false;",
+        "    }",
+        "    colour[node] = FINISHED;",
+        "    finished.push(node);        // everything it depends on is already below it",
+        "    return true;",
+        "}"
+      ]
+    }
+  ],
+  "complexity": {
+    "time": "O(V + E)",
+    "space": "O(V + E) — O(V) for the indegree array, output and queue, plus O(E) for the adjacency list",
+    "why": "Building the adjacency list and indegree array touches each edge once: O(E). In the main loop each vertex is enqueued at most once — a vertex enters the queue only when its indegree transitions to zero, and indegrees never increase — so the loop body runs V times: O(V). Inside it, each node's successor list is walked exactly once, and across all nodes those lists contain every edge exactly once: another O(E). Nothing is revisited, which is the whole difference from the O(n!) backtracking version. The space is dominated by the adjacency list at O(V + E); the ready queue can hold up to V nodes in the worst case, when the graph has no edges at all and everything is ready immediately. Swapping in a PriorityQueue for the lexicographically smallest order raises the time to O(V log V + E), since each of the V insert/extract pairs costs O(log V)."
+  },
+  "commonMistakes": [
+    {
+      "mistake": "Reversing the edge direction",
+      "fix": "'a depends on b' means b comes first, so the edge is b → a and you increment indegree[a]. Write one concrete pair on paper before coding — this bug produces a plausible-looking but exactly backwards order."
+    },
+    {
+      "mistake": "Seeding the queue with only one indegree-zero node",
+      "fix": "Loop over every vertex. Dependency graphs are frequently disconnected, and missing a root silently drops a whole component from the output."
+    },
+    {
+      "mistake": "Treating a cycle as a crash or an exception",
+      "fix": "A cycle means the question has no answer. Return an empty list, or false, and say so — the algorithm behaved correctly."
+    },
+    {
+      "mistake": "Checking the cycle condition with a visited set instead of the output size",
+      "fix": "Compare `order.size()` with V. A visited set tells you what was reached, not what was blocked."
+    },
+    {
+      "mistake": "Decrementing a node's indegree more than once for the same edge",
+      "fix": "Parallel duplicate edges each count, which is correct; but do not also decrement while iterating a second structure. One pass over `adj.get(node)` per emitted node, no more."
+    },
+    {
+      "mistake": "Reaching for Kahn's on an undirected graph",
+      "fix": "Indegree is meaningless there — every edge contributes to both endpoints. Undirected 'ordering' problems are usually connected components or union-find."
+    },
+    {
+      "mistake": "In the DFS version, using a single boolean visited array",
+      "fix": "You must distinguish 'currently on the recursion path' from 'finished'. With one flag, a diamond-shaped DAG is reported as a cycle."
+    }
+  ],
+  "realWorldUses": [
+    "Build tools — Maven, Gradle, Bazel and make all topologically sort the target graph, and the 'circular dependency detected' error is precisely the leftover-count check.",
+    "Package managers (npm, apt, pip) resolve install order this way; a dependency cycle is reported rather than attempted.",
+    "Spring's application context orders bean instantiation by dependency, and throws BeanCurrentlyInCreationException on a cycle.",
+    "Spreadsheet engines recalculate cells in topological order of formula references — circular reference warnings come from the same check.",
+    "Database migration runners, CI/CD pipeline stages, and Airflow DAGs (the name is literal).",
+    "Compilers order module or class initialisation; instruction schedulers order operations by data dependency."
+  ],
+  "interviewNotes": [
+    "Say the words 'this is a topological sort' as soon as you see dependency pairs. Then state which variant you will write and why: Kahn's if cycle detection is part of the question, DFS if the interviewer wants recursion.",
+    "Volunteer that the answer is usually not unique. Interviewers often ask this as a follow-up, and knowing it signals you understand the ready-set rather than having memorised a template.",
+    "Be explicit that this requires a DAG, and that a cycle means no ordering exists. 'Course Schedule' is literally the cycle-detection half of this algorithm with the order thrown away.",
+    "If asked for the smallest valid order, reach for a PriorityQueue and mention the O(V log V + E) cost — do not pretend it is still O(V + E).",
+    "Know the one-line reason the greedy is safe: emitting a ready node can never make another node unready, because indegrees only ever decrease."
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "mcq",
+      "question": "In Kahn's algorithm, what does the queue actually contain?",
+      "options": [
+        "Nodes in order of their distance from the start node",
+        "Every node whose prerequisites have all been emitted, so any of them may legally go next",
+        "Nodes sorted by their indegree, largest first",
+        "The nodes that form a cycle"
+      ],
+      "answerIndex": 1,
+      "explanation": "It is a ready set, not a distance frontier. A node enters it exactly when its last prerequisite is emitted, which is why any node in the queue is a valid next choice and why topological orders are usually not unique."
+    },
+    {
+      "id": "q2",
+      "type": "mcq",
+      "question": "The loop ends but only 4 of 7 nodes were emitted. What does that mean?",
+      "options": [
+        "The algorithm has a bug and should be restarted from a different node",
+        "The graph is disconnected and the other component needs a second run",
+        "The 3 remaining nodes are blocked on each other — a cycle — so no topological order exists for this input",
+        "Three nodes had indegree zero and were skipped"
+      ],
+      "answerIndex": 2,
+      "explanation": "Every leftover node still has indegree ≥ 1, meaning it waits on another leftover node; in a finite graph that chain must close into a cycle. A graph with a cycle has no topological order at all, so the short output is the correct answer, not a failure. Disconnection is not an issue because the queue is seeded with every indegree-zero node."
+    },
+    {
+      "id": "q3",
+      "type": "identify-pattern",
+      "question": "'Given tasks where some must finish before others, return any valid execution order, or [] if impossible.' Which approach?",
+      "options": [
+        "Dijkstra from each task",
+        "Kahn's algorithm: indegree counts plus a queue of ready tasks, with the output length as the cycle check",
+        "Sort the tasks by number of dependencies and return that",
+        "Backtracking over all permutations"
+      ],
+      "answerIndex": 1,
+      "explanation": "Dependency pairs plus 'any valid order' plus 'or impossible' is the exact signature of a topological sort with cycle detection. Sorting by dependency count is not sufficient — it ignores which specific tasks block which."
+    },
+    {
+      "id": "q4",
+      "type": "complexity",
+      "question": "Why is Kahn's algorithm O(V + E) rather than something worse?",
+      "options": [
+        "Because the queue is a FIFO",
+        "Because indegrees never increase, each vertex is enqueued at most once and each edge is decremented exactly once",
+        "Because the graph is acyclic, so it is a tree",
+        "Because the adjacency list is sorted"
+      ],
+      "answerIndex": 1,
+      "explanation": "A vertex enters the queue only on the transition of its indegree to zero, and indegrees only ever decrease — so that happens at most once per vertex. Each node's successor list is walked once when it is emitted, and those lists together contain each edge exactly once."
+    },
+    {
+      "id": "q5",
+      "type": "mcq",
+      "question": "In the DFS variant, when is a node pushed onto the result stack?",
+      "options": [
+        "The moment it is first visited",
+        "When it is enqueued",
+        "When its recursion finishes — after every node it points to has already been pushed",
+        "Only if its indegree is zero"
+      ],
+      "answerIndex": 2,
+      "explanation": "Pushing on finish means everything the node depends on sits below it on the stack, so popping yields a valid order. Pushing on first visit would give the reverse of what you want and break as soon as the graph branches."
+    }
+  ],
+  "practiceProblems": [
+    "course-schedule",
+    "course-schedule-ii",
+    "parallel-courses",
+    "alien-dictionary",
+    "sequence-reconstruction"
+  ],
+  "related": [
+    "graphs",
+    "bfs",
+    "dfs",
+    "queue",
+    "shortest-paths"
+  ]
+}

@@ -1,0 +1,116 @@
+{
+  "id": "surrounded-regions",
+  "title": "Surrounded Regions",
+  "patternId": "dfs",
+  "difficulty": "intermediate",
+  "tags": [
+    "dfs",
+    "grid",
+    "flood-fill",
+    "complement"
+  ],
+  "statement": "Given an m x n board of characters 'X' and 'O', capture every region of 'O's that is completely surrounded by 'X's by flipping all of that region's 'O's to 'X'. A region is a group of 'O's connected 4-directionally, and it is surrounded exactly when none of its cells lies on the border of the board. Modify the board in place.",
+  "realWorld": "The paint-bucket fill and its inverse in image editing: deciding which holes inside a drawn shape should be filled, versus which transparent area is simply background connected to the canvas edge. Cartography does the same thing when it separates inland lakes from the ocean on a raster coastline — a body of water that touches the edge of the tile is not a lake.",
+  "examples": [
+    {
+      "input": "board = [[\"X\",\"X\",\"X\",\"X\"],[\"X\",\"O\",\"O\",\"X\"],[\"X\",\"X\",\"O\",\"X\"],[\"X\",\"O\",\"X\",\"X\"]]  (rows of characters)",
+      "output": "[[\"X\",\"X\",\"X\",\"X\"],[\"X\",\"X\",\"X\",\"X\"],[\"X\",\"X\",\"X\",\"X\"],[\"X\",\"O\",\"X\",\"X\"]]",
+      "explanation": "The three-cell region at (1,1),(1,2),(2,2) touches no border and is captured. The single 'O' at (3,1) sits on the bottom row, so it survives."
+    },
+    {
+      "input": "board = [[\"X\",\"O\",\"X\"],[\"O\",\"X\",\"O\"],[\"X\",\"O\",\"X\"]]",
+      "output": "unchanged",
+      "explanation": "Four separate one-cell regions, every one of them on a border. Nothing is captured — a reminder that a region of size 1 is still a region."
+    },
+    {
+      "input": "board = [[\"O\",\"O\"],[\"O\",\"O\"]]",
+      "output": "unchanged",
+      "explanation": "On a 2x2 board every cell is a border cell, so nothing can ever be surrounded. Small boards are the cheapest way to catch a seeding loop that only visits the first and last row."
+    }
+  ],
+  "constraints": [
+    "m == board.length, n == board[i].length",
+    "1 <= m, n <= 200",
+    "board[i][j] is 'X' or 'O'"
+  ],
+  "bruteForce": {
+    "idea": "Ask the question the problem asks, cell by cell: for each 'O', search outward from it and see whether the border is reachable through 'O' cells. If it is not, that cell is enclosed and should be flipped.",
+    "code": [
+      "boolean[][] capture = new boolean[rows][cols];",
+      "for (int r = 0; r < rows; r++) {",
+      "    for (int c = 0; c < cols; c++) {",
+      "        if (board[r][c] != 'O') continue;",
+      "        capture[r][c] = !reachesBorder(board, r, c, new boolean[rows][cols]);   // a full search per cell",
+      "    }",
+      "}",
+      "for (int r = 0; r < rows; r++)",
+      "    for (int c = 0; c < cols; c++)",
+      "        if (capture[r][c]) board[r][c] = 'X';"
+    ],
+    "complexity": {
+      "time": "O((m * n)^2)",
+      "space": "O(m * n) for each fresh visited grid"
+    },
+    "whySlow": "Every cell of a region runs its own search over that entire region and reaches the same verdict, because 'can I reach the border' is a property the whole connected region shares — if one cell of it touches the border, all of them do. On a 200x200 board that is one huge region, the first cell already walked all 40,000 cells and answered the question for every other cell, and the code then does it 39,999 more times. It also allocates a fresh visited grid for each of those searches."
+  },
+  "patternIdentification": "The condition is negative: a region is captured when it never touches the border. Negative conditions are expensive to test, because ruling something out means exhausting every possibility. The complement is positive and, better, has an obvious starting set — the cells reachable from the border are found by starting at the border. So solve the complement: flood fill inward from every border 'O', marking everything it reaches as safe; whatever is still 'O' afterwards is, by construction, enclosed. That move generalises well beyond grids. When a problem asks for the things that cannot reach X, seed the search at X and take what is left over; one traversal replaces one traversal per candidate.",
+  "optimized": {
+    "idea": "Two passes. First, for every 'O' on the four borders, run a DFS that rewrites the region it reaches to a placeholder '#', meaning 'connected to the border, therefore permanently safe'. Second, sweep the board once: anything still 'O' was never reached from the border and is captured (write 'X'), and anything marked '#' is restored to 'O'. The placeholder is what keeps the two categories distinguishable during the sweep — this is the only reason a third character is needed.",
+    "code": [
+      "public static void solve(char[][] board) {",
+      "    if (board == null || board.length == 0) return;",
+      "    int rows = board.length, cols = board[0].length;",
+      "",
+      "    for (int r = 0; r < rows; r++) {",
+      "        markSafe(board, r, 0);",
+      "        markSafe(board, r, cols - 1);",
+      "    }",
+      "    for (int c = 0; c < cols; c++) {",
+      "        markSafe(board, 0, c);",
+      "        markSafe(board, rows - 1, c);",
+      "    }",
+      "",
+      "    for (int r = 0; r < rows; r++) {",
+      "        for (int c = 0; c < cols; c++) {",
+      "            if (board[r][c] == 'O') board[r][c] = 'X';        // never reached from a border: captured",
+      "            else if (board[r][c] == '#') board[r][c] = 'O';   // border-connected: restore",
+      "        }",
+      "    }",
+      "}",
+      "",
+      "private static void markSafe(char[][] board, int r, int c) {",
+      "    if (r < 0 || r >= board.length || c < 0 || c >= board[0].length) return;",
+      "    if (board[r][c] != 'O') return;   // also stops re-entering a cell already marked '#'",
+      "    board[r][c] = '#';",
+      "    markSafe(board, r + 1, c);",
+      "    markSafe(board, r - 1, c);",
+      "    markSafe(board, r, c + 1);",
+      "    markSafe(board, r, c - 1);",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(m * n)",
+      "space": "O(m * n) worst-case recursion depth"
+    }
+  },
+  "commonMistakes": [
+    "Forgetting the restore pass, or writing it as a single sweep that only handles 'O' — the board comes back full of '#' characters where the surviving regions should be, which fails every test including example 2 where nothing was supposed to change.",
+    "Using 'X' as the safe marker instead of a third character — after the border fill there is no way to tell a safe cell from an originally-blocked one, so the restore pass either does nothing (every 'O' vanishes) or turns genuine 'X' cells into 'O'.",
+    "Seeding from the first and last row only, or the first and last column only — a region touching the middle of the left edge is then never marked safe, and the lone border 'O' at (1,0) in example 2 is wrongly captured while the rest of the board looks correct."
+  ],
+  "similar": [
+    "number-of-islands",
+    "max-area-of-island",
+    "pacific-atlantic-water-flow",
+    "walls-and-gates"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 130,
+      "slug": "surrounded-regions",
+      "title": "Surrounded Regions",
+      "url": "https://leetcode.com/problems/surrounded-regions/",
+      "premium": false
+    }
+  }
+}

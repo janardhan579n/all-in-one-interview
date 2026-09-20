@@ -1,0 +1,261 @@
+{
+  "id": "object-storage",
+  "title": "Object Storage",
+  "group": "Data",
+  "level": 1,
+  "estimatedMinutes": 24,
+  "summary": "A flat keyspace of immutable blobs behind an HTTP API, cheap per gigabyte and extraordinarily durable. The system-design payload is that bytes should never travel through your application servers — hand the client a pre-signed URL and let it talk to storage directly.",
+  "analogy": "A vast automated warehouse where you hand over a sealed crate and get a ticket. Anyone with a valid ticket can collect the crate, and the warehouse keeps pieces of it in several buildings so no single fire loses it. But you cannot open the crate to change one item — you take the whole thing out, repack it, and put a new one in. And 'renaming' a crate means physically carrying it to a new shelf and discarding the old one: cheap for one crate, an afternoon's work for a million.",
+  "explanation": {
+    "beginner": "There are three ways to store data on servers. Block storage is a raw disk attached to one machine — fast, but it belongs to that machine. File storage is a shared folder with directories and permissions that several machines can mount. Object storage is different: you give it a key like `uploads/2024/avatar-91.jpg` and some bytes, and it stores them as a single unit called an object, reachable over HTTP from anywhere. There are no real folders — the slashes in the key are just part of the name. You cannot edit the middle of an object; to change it you upload the whole thing again. In exchange you get effectively unlimited capacity at a low price per gigabyte, and the service keeps enough redundant copies that losing your data is almost impossible.",
+    "interview": "Object storage is a flat key-to-blob map with per-object metadata, exposed over an HTTP API with whole-object PUT/GET semantics. There is no partial write, no append, no POSIX rename — a rename is a server-side copy followed by a delete, which is O(n) in objects and not atomic across them. Durability comes from erasure coding: an object is split into k data and m parity fragments spread across independent failure domains, so it survives m losses while storing far less than full replication would; providers advertise design targets around eleven nines of durability, with availability SLAs a few orders of magnitude weaker — durability and availability are separate promises. Costs are two-dimensional: cheap per GB-month, but billed per request, so a million small objects can cost more in requests than in bytes. Latency is tens of milliseconds to first byte versus sub-millisecond local NVMe, which is why it is an origin, not a working store. Architecturally the rule is never to proxy large objects through application servers — issue a pre-signed URL so the client PUTs and GETs directly against storage, keeping the app out of the bandwidth path, and front reads with a CDN. Round it out with storage classes and lifecycle policies to age data into cheaper tiers, and remember that while object reads are typically read-after-write consistent now, bucket listings are an index that can lag."
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "client",
+        "label": "Client",
+        "type": "client",
+        "x": 110,
+        "y": 300,
+        "note": "Uploads and downloads bytes itself, using a short-lived pre-signed URL. The app never touches the payload."
+      },
+      {
+        "id": "app",
+        "label": "App server",
+        "type": "server",
+        "x": 370,
+        "y": 300,
+        "note": "Authorises the transfer and signs a URL scoped to one key, one method and a few minutes. Handles kilobytes, not gigabytes."
+      },
+      {
+        "id": "cdn",
+        "label": "CDN",
+        "type": "cdn",
+        "x": 660,
+        "y": 140,
+        "note": "Caches hot objects at the edge. Cuts per-request storage charges and egress, and takes tens of milliseconds off first-byte time."
+      },
+      {
+        "id": "store",
+        "label": "Object storage",
+        "type": "storage",
+        "x": 660,
+        "y": 450,
+        "note": "Flat keyspace, whole-object writes, metadata per object.",
+        "why": {
+          "without": [
+            "Every byte flows through the app: a 500 MB upload occupies a worker and its bandwidth for the whole transfer",
+            "Throughput is capped by application servers, so you scale compute to move files that need no computation",
+            "Files on local disk die with the instance and are invisible to every other replica"
+          ],
+          "with": [
+            "Clients transfer directly against storage; the app handles only a signed URL of a few hundred bytes",
+            "Capacity is effectively unbounded and priced per GB-month rather than per provisioned volume",
+            "Erasure coding across independent failure domains gives durability no single-machine disk can match"
+          ],
+          "conclusion": "You get cheap, effectively infinite, extremely durable capacity and you get your application out of the bandwidth path — at the cost of higher latency, per-request charges and no filesystem semantics."
+        }
+      },
+      {
+        "id": "db",
+        "label": "Metadata DB",
+        "type": "db",
+        "x": 930,
+        "y": 300,
+        "note": "Holds the key, owner, size and content type. Query the database; fetch bytes by key. Never list a bucket to find a user's files."
+      }
+    ],
+    "edges": [
+      {
+        "from": "client",
+        "to": "app",
+        "label": "1. request upload URL"
+      },
+      {
+        "from": "app",
+        "to": "db",
+        "label": "2. record key + metadata"
+      },
+      {
+        "from": "client",
+        "to": "store",
+        "label": "3. PUT bytes directly"
+      },
+      {
+        "from": "client",
+        "to": "cdn",
+        "label": "4. GET"
+      },
+      {
+        "from": "cdn",
+        "to": "store",
+        "label": "5. on miss",
+        "dashed": true
+      },
+      {
+        "from": "app",
+        "to": "store",
+        "label": "lifecycle / admin only",
+        "dashed": true
+      }
+    ]
+  },
+  "why": {
+    "without": [
+      "Uploads and downloads stream through application servers, so one 500 MB transfer ties up a worker and its bandwidth for its whole duration and a few concurrent uploads starve the API",
+      "You scale compute to move bytes that require no computation — the most expensive tier doing the least valuable work",
+      "Files written to an instance's local disk vanish when it is replaced and are invisible to every other replica, so the same request must land on the same machine",
+      "A shared network filesystem makes files visible everywhere but reintroduces a capacity ceiling, a performance ceiling and a thing to fail over"
+    ],
+    "with": [
+      "Clients transfer directly to and from storage; the application only signs a URL",
+      "Capacity grows without provisioning, and lifecycle rules move cold data to cheaper tiers automatically",
+      "Erasure coding across failure domains survives whole-machine and whole-rack loss with far less overhead than full replication",
+      "A CDN in front turns repeat reads into edge hits, removing both latency and per-request cost"
+    ],
+    "conclusion": "Object storage is where large, immutable, infrequently-changed data belongs — and the architectural win is as much about what leaves your application servers as about the storage itself."
+  },
+  "whenToUse": [
+    "User-uploaded files, images, video and documents — write once, read many, never edited in place",
+    "Backups, database snapshots, logs and any archive where capacity matters more than latency",
+    "Static site assets and anything you want a CDN to cache and serve globally",
+    "Data lake storage read in large sequential scans by batch or analytics jobs",
+    "Anywhere multiple services or replicas need the same blob and no single machine should own it"
+  ],
+  "whenNotToUse": [
+    "Anything that needs filesystem semantics — random writes into the middle of a file, appends, byte-range locking or POSIX permissions. There is no partial write: changing one byte means re-uploading the whole object",
+    "Small records that change frequently, such as a user's profile fields or a counter. Each update rewrites the whole object, every read costs a request charge, and you cannot query by anything but the key — that is a database's job",
+    "Low-latency lookups in a request path: tens of milliseconds to first byte is fine for a download, fatal for something you need on every page render",
+    "Workloads dominated by huge numbers of tiny objects — per-request pricing and per-object overhead mean the requests cost more than the bytes, and listing them is slow",
+    "Directory-style workflows that rename or move large trees, because a rename is a copy plus a delete per object and is not atomic across them"
+  ],
+  "tradeoffs": [
+    {
+      "option": "Block storage (an attached volume)",
+      "pros": [
+        "Lowest latency and highest IOPS — sub-millisecond on local NVMe",
+        "Arbitrary random reads and writes, and it is what a database wants underneath it",
+        "Full filesystem semantics, because you put a filesystem on it"
+      ],
+      "cons": [
+        "Attached to one instance at a time, so it does not shard across a fleet",
+        "Fixed provisioned capacity you pay for whether used or not, and resizing is an operation",
+        "Durability is your problem: snapshots and replication are things you must set up"
+      ]
+    },
+    {
+      "option": "File storage (shared network filesystem)",
+      "pros": [
+        "Many machines mount the same tree with real directories, permissions and locking",
+        "Existing applications work unmodified — it looks like a local disk",
+        "Appends and in-place edits work as expected"
+      ],
+      "cons": [
+        "Throughput and metadata operations become a shared bottleneck as clients multiply",
+        "Costs substantially more per GB than object storage",
+        "Another stateful, highly-available system to operate, and network filesystem semantics under partition are subtle"
+      ]
+    },
+    {
+      "option": "Object storage",
+      "pros": [
+        "Effectively unlimited capacity at the lowest price per GB, with no provisioning",
+        "Very high durability through erasure coding across independent failure domains",
+        "HTTP API means clients, CDNs and other services can read it directly without going through you"
+      ],
+      "cons": [
+        "No partial writes, no appends, no rename — a rename is a copy plus a delete",
+        "Tens of milliseconds of latency and a charge per request, so many small operations are expensive",
+        "Listing a bucket is an index scan that can lag behind writes, so you keep the real index in a database"
+      ]
+    },
+    {
+      "option": "Pre-signed URLs vs proxying through the app",
+      "pros": [
+        "Bytes bypass your servers entirely, so bandwidth and worker time stop scaling with file size",
+        "Expiry, method and key scope are all baked into the signature, so access stays narrow and time-boxed",
+        "Works naturally with multipart upload and resumable transfers from the client"
+      ],
+      "cons": [
+        "The app cannot inspect, scan or transform the payload in flight — validation moves to an event fired after upload",
+        "A leaked URL is usable by anyone until it expires, so lifetimes must be short",
+        "Clients must handle upload failures and retries themselves, which is more client code than posting to your API"
+      ]
+    }
+  ],
+  "keyNumbers": [
+    {
+      "label": "Advertised durability design target",
+      "value": "~11 nines (99.999999999%)"
+    },
+    {
+      "label": "Typical availability SLA",
+      "value": "~99.9% — far weaker than durability, and a separate promise"
+    },
+    {
+      "label": "Time to first byte",
+      "value": "tens of ms, vs sub-ms for local NVMe"
+    },
+    {
+      "label": "Maximum single object size",
+      "value": "~5 TB, with multipart upload above ~5 GB"
+    },
+    {
+      "label": "Minimum multipart part size",
+      "value": "~5 MB (last part exempt)"
+    },
+    {
+      "label": "Archive tier vs standard, per GB",
+      "value": "roughly an order of magnitude cheaper, with minutes-to-hours retrieval"
+    }
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "architecture",
+      "question": "Users upload 200 MB videos by POSTing to your API, which streams them to object storage. At 50 concurrent uploads the API stops answering ordinary requests. What is the fix?",
+      "options": [
+        "Add more application servers until the uploads fit",
+        "Have the app sign a short-lived pre-signed PUT URL and let the client upload directly to storage, then confirm via an event or a callback",
+        "Compress the videos before upload",
+        "Move the uploads onto a message queue"
+      ],
+      "answerIndex": 1,
+      "explanation": "The application is acting as a bandwidth proxy: each upload occupies a worker and a slice of network for the whole transfer, so the API's capacity is measured in megabytes rather than requests. Scaling servers buys linear relief for a problem that should not exist. With a pre-signed URL the app handles a few hundred bytes — an authorisation check and a signature — and the client talks to storage directly, with multipart upload giving it retries and resumption for free. Validation moves to after the fact, triggered by a storage event. Do the mirror image on the read side: serve downloads via a CDN, not through the app."
+    },
+    {
+      "id": "q2",
+      "type": "mcq",
+      "question": "Which workload is the worst fit for object storage?",
+      "options": [
+        "Storing 4 TB of user-uploaded photos read a few times each",
+        "A 50-byte view counter incremented on every page load",
+        "Nightly database backups kept for a year",
+        "Static JavaScript bundles served through a CDN"
+      ],
+      "answerIndex": 1,
+      "explanation": "There is no in-place update and no increment. Every bump rewrites the whole object, pays a request charge in each direction, and gives you no atomicity — two concurrent increments are a lost update. Add tens of milliseconds of latency on a per-page-load path and it is wrong on every axis. Small, frequently-mutated, queryable records belong in a database; object storage is for large, immutable blobs."
+    },
+    {
+      "id": "q3",
+      "type": "mcq",
+      "question": "Your service needs to show a user their files, sorted by upload date. What is the right approach?",
+      "options": [
+        "List the bucket with the user's id as a key prefix and sort the results",
+        "Store the key, owner, size and timestamp as rows in a database and query that; fetch bytes from storage by key",
+        "Encode the date into the key so listing returns them in order",
+        "Keep a JSON manifest object per user in the bucket and rewrite it on each upload"
+      ],
+      "answerIndex": 1,
+      "explanation": "A bucket is a key-value store, not a query engine. Listing is a paginated prefix scan whose cost grows with the number of objects, it can only order by key, it cannot filter on anything else, and the listing index may lag recent writes — so a file just uploaded can be missing from the list even though a GET on its key succeeds. The standard pattern is a database as the index of record and object storage as the byte store: the database answers 'which files, whose, in what order', storage answers 'give me these bytes'."
+    }
+  ],
+  "related": [
+    "cdn",
+    "http",
+    "database",
+    "replication",
+    "api-gateway"
+  ]
+}

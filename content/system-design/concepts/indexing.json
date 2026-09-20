@@ -1,0 +1,271 @@
+{
+  "id": "indexing",
+  "title": "Database Indexing",
+  "group": "Data",
+  "level": 1,
+  "estimatedMinutes": 32,
+  "summary": "A second, sorted copy of one or more columns with pointers back to the rows, so the database can seek instead of scan. Every index you add makes reads faster and writes slower, and the planner will quietly refuse to use one you wrote the query wrong for.",
+  "analogy": "The index at the back of a textbook. You find 'mitochondria, p. 412' in seconds instead of turning every page — but the index took pages to print, it has to be reprinted whenever the chapters change, and it is sorted by topic, so if you want 'everything on page 412' the index is useless and you are back to flipping. An index only answers questions asked in the order it was sorted in.",
+  "explanation": {
+    "beginner": "Without an index the database has to look at every row to find the ones you asked for. On a table with ten million rows that means reading ten million rows from disk, every single time. An index is a separate, sorted structure — think of a sorted list of values, each with a pointer to where the full row lives. Because it is sorted, the database can jump straight to the value instead of walking the table. The price is that the index is extra data on disk, and every insert, update or delete has to change the index too, not just the row.",
+    "interview": "An index is an auxiliary access path, almost always a B+tree: internal nodes hold only keys and child pointers, leaves hold keys in sorted order with row locators and are linked for range scans. Because a node fills a disk page and holds hundreds of keys, the fanout is huge and depth stays around four levels even at a billion rows — and the upper levels live in the buffer pool, so a point lookup is typically one or two physical reads. Lookup cost goes from O(n) pages scanned to O(log_f n) with a very large f. The things that break it: a clustered index stores the row in the leaf while a secondary index stores a locator, so a non-covering secondary lookup costs a second descent; a composite index is sorted lexicographically, so only a leftmost prefix is seekable; and any expression wrapped around the column, a leading-wildcard LIKE, or an implicit type cast makes the predicate non-sargable and the planner falls back to a sequential scan. Hash indexes give O(1) equality and nothing else — no ranges, no ORDER BY, no prefix matching."
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "client",
+        "label": "Client",
+        "type": "client",
+        "x": 110,
+        "y": 300,
+        "note": "Sends a query with a WHERE clause. It has no idea which access path will be chosen."
+      },
+      {
+        "id": "planner",
+        "label": "Query planner",
+        "type": "server",
+        "x": 370,
+        "y": 300,
+        "note": "Estimates how many rows match using column statistics, then picks index seek or sequential scan. If the predicate is not sargable it has no choice but to scan."
+      },
+      {
+        "id": "index",
+        "label": "B+tree index",
+        "type": "search",
+        "x": 660,
+        "y": 150,
+        "note": "Keys sorted, leaves linked. Hundreds of keys per page means a billion rows is only about four levels deep.",
+        "why": {
+          "without": [
+            "WHERE email = ? on 10 million rows reads every page of the table, every time",
+            "Query time grows linearly with the table, so the app gets slower as the product succeeds",
+            "Each scan evicts useful pages from the buffer pool, so unrelated queries slow down too"
+          ],
+          "with": [
+            "The same lookup descends ~4 nodes; the top 3 levels are already cached, so it is roughly one physical read",
+            "Range predicates and ORDER BY on the indexed columns are answered by walking linked leaves in order — no sort step",
+            "A covering index answers the query from the index alone and never touches the table"
+          ],
+          "conclusion": "You trade disk space and write throughput for turning a linear scan into a handful of page reads — the best deal in databases, right up until you have eight indexes on a write-heavy table."
+        }
+      },
+      {
+        "id": "table",
+        "label": "Table (heap)",
+        "type": "db",
+        "x": 660,
+        "y": 440,
+        "note": "The rows themselves. A secondary index lookup must come back here for any column it does not store — one extra descent or random read per row."
+      },
+      {
+        "id": "disk",
+        "label": "Storage pages",
+        "type": "storage",
+        "x": 930,
+        "y": 300,
+        "note": "Everything is counted in pages, typically 8 KB or 16 KB. 'Fast query' means 'few pages touched'."
+      }
+    ],
+    "edges": [
+      {
+        "from": "client",
+        "to": "planner",
+        "label": "1. SELECT … WHERE"
+      },
+      {
+        "from": "planner",
+        "to": "index",
+        "label": "2. seek"
+      },
+      {
+        "from": "index",
+        "to": "table",
+        "label": "3. row lookup",
+        "dashed": true
+      },
+      {
+        "from": "planner",
+        "to": "table",
+        "label": "full scan if not sargable",
+        "dashed": true
+      },
+      {
+        "from": "table",
+        "to": "disk",
+        "label": "page reads"
+      },
+      {
+        "from": "index",
+        "to": "disk",
+        "label": "page reads",
+        "dashed": true
+      }
+    ]
+  },
+  "why": {
+    "without": [
+      "Every filtered query is a full table scan: 10 million rows means 10 million rows examined whether one matches or none do",
+      "Latency scales with table size, so the query that was fine in staging with 50k rows takes seconds in production",
+      "Scans flood the buffer pool with pages nobody needed, so queries that were fast become slow as collateral damage",
+      "ORDER BY and GROUP BY have to materialise and sort the whole result, which spills to disk once it outgrows the sort buffer"
+    ],
+    "with": [
+      "A point lookup touches about four index pages regardless of whether the table holds a thousand rows or a billion",
+      "Range scans read a contiguous run of sorted leaves instead of the whole table",
+      "ORDER BY on the indexed columns is free — the data is already in that order",
+      "A covering index answers the query without reading the table at all"
+    ],
+    "conclusion": "Indexing is the difference between a query that is O(n) in the size of your table and one that is effectively constant. The skill is not adding indexes — it is knowing which ones the planner can actually use, and refusing to add the rest."
+  },
+  "whenToUse": [
+    "Columns that appear in WHERE, JOIN or ORDER BY on a table large enough that a scan is measurable",
+    "High-cardinality columns where a lookup narrows the result to a tiny fraction of rows",
+    "Foreign key columns — without an index the join and the parent's delete/update both degrade to scans",
+    "A composite index matching a frequent query's filter columns first and its sort column last",
+    "A covering index for a hot read path, so the query never leaves the index"
+  ],
+  "whenNotToUse": [
+    "Small tables — a few hundred rows fit in one or two pages, and the planner will scan them anyway because a scan is genuinely cheaper than a descent plus a row fetch",
+    "Write-heavy tables such as event or audit logs: every index is an extra sorted structure to update on every insert, so six indexes can cut insert throughput several-fold for reads that nobody runs",
+    "Low-cardinality columns — an index on a boolean or a three-value status matches ~33% of rows, and the planner will scan rather than do millions of random row fetches, so you paid for an index that is never chosen",
+    "Columns only ever queried through a function or a leading-wildcard pattern — the plain index cannot serve those predicates; you need an expression index or a trigram/full-text index instead",
+    "Speculative indexes 'in case we query it later' — they cost write throughput and disk from the day you create them and return nothing until that query exists"
+  ],
+  "tradeoffs": [
+    {
+      "option": "B+tree index (the default)",
+      "pros": [
+        "Serves equality, ranges, prefix matches, ORDER BY and MIN/MAX from one structure",
+        "Depth stays around four levels even at a billion rows because each node holds hundreds of keys",
+        "Upper levels stay resident in the buffer pool, so a lookup is usually one physical read"
+      ],
+      "cons": [
+        "Consumes real disk — a wide composite index can rival a significant fraction of the table",
+        "Every insert, delete and update of an indexed column must maintain it, and page splits cause fragmentation over time",
+        "Random row fetches after a non-covering lookup can be slower than a sequential scan once the match rate gets high"
+      ]
+    },
+    {
+      "option": "Composite index on (a, b, c)",
+      "pros": [
+        "One structure serves queries on a, on a+b, and on a+b+c",
+        "Can filter on a leading column and return rows already sorted by a trailing one, eliminating the sort step",
+        "Often turns two single-column indexes into one that is both smaller and more selective"
+      ],
+      "cons": [
+        "Leftmost-prefix rule: a query filtering only on b cannot seek this index, because b is only sorted within each value of a",
+        "Column order is a commitment — getting it wrong means the index is dead weight for your actual queries",
+        "Wider keys mean fewer entries per page, so the tree is bigger and slightly deeper"
+      ]
+    },
+    {
+      "option": "Covering index (all selected columns in the index)",
+      "pros": [
+        "Index-only scan: the table is never touched, removing one random read per matched row",
+        "Especially large win for secondary indexes on a clustered table, where the row fetch is a second tree descent"
+      ],
+      "cons": [
+        "Duplicates column data, so the index grows toward the size of the table it is covering",
+        "Adding a column to the SELECT list silently un-covers it and the plan regresses with no schema change",
+        "More columns indexed means more writes touch the index"
+      ]
+    },
+    {
+      "option": "Hash index",
+      "pros": [
+        "O(1) equality lookups with no tree descent",
+        "Smaller than a B+tree for the same key set when only equality is needed"
+      ],
+      "cons": [
+        "Equality only — cannot serve ranges, cannot serve ORDER BY, cannot serve prefix or leftmost-prefix matching",
+        "Rarely worth the loss of generality; most engines default to B+tree for exactly this reason"
+      ]
+    },
+    {
+      "option": "Clustered index (rows stored in index order)",
+      "pros": [
+        "Primary key lookups return the row from the leaf — no second fetch",
+        "Range scans on the clustering key read physically adjacent data"
+      ],
+      "cons": [
+        "Only one per table — you cannot cluster on two different orders",
+        "Every secondary index stores the clustering key as its locator, so each secondary lookup costs a second descent",
+        "A random clustering key (such as a random UUID) scatters inserts across the whole tree and causes constant page splits"
+      ]
+    }
+  ],
+  "keyNumbers": [
+    {
+      "label": "Keys per B+tree node (8–16 KB page)",
+      "value": "hundreds"
+    },
+    {
+      "label": "B+tree depth over ~1 billion rows",
+      "value": "~4 levels, top ~3 usually cached"
+    },
+    {
+      "label": "Indexed point lookup vs full scan on 10M rows",
+      "value": "a handful of pages vs the whole table"
+    },
+    {
+      "label": "Match rate above which a scan usually beats an index",
+      "value": "roughly 5–20% of rows"
+    },
+    {
+      "label": "Cost of each extra index",
+      "value": "one more structure written per insert/delete, plus disk"
+    },
+    {
+      "label": "Random read on SSD vs sequential page read",
+      "value": "roughly 0.1 ms vs far cheaper per page in bulk"
+    }
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "mcq",
+      "question": "You have an index on (country, city, created_at). Which of these queries can seek the index?",
+      "options": [
+        "WHERE city = 'Berlin'",
+        "WHERE created_at > '2024-01-01'",
+        "WHERE country = 'DE' AND city = 'Berlin'",
+        "WHERE city = 'Berlin' AND created_at > '2024-01-01'"
+      ],
+      "answerIndex": 2,
+      "explanation": "A composite index is sorted lexicographically by (country, city, created_at). You can seek on a leftmost prefix: country, or country+city, or all three. city alone is not seekable because cities are only sorted within each country — 'Berlin' entries are scattered across every country block, so finding them means scanning the whole index. This is the single most commonly missed indexing question in interviews: the rule is leftmost prefix, not 'any column in the index'."
+    },
+    {
+      "id": "q2",
+      "type": "architecture",
+      "question": "A query on an indexed `email` column was fast for months. Someone changed it to `WHERE LOWER(email) = ?` and it now takes 4 seconds. What happened, and what fixes it?",
+      "options": [
+        "The index became fragmented; rebuild it",
+        "The predicate is no longer sargable — the index stores raw values, not LOWER(values), so the planner must scan; fix it with an expression index on LOWER(email) or by normalising at write time",
+        "The table grew past the buffer pool; add memory",
+        "Statistics are stale; run ANALYZE"
+      ],
+      "answerIndex": 1,
+      "explanation": "Wrapping a column in a function destroys the sort order the index relies on — the database cannot know where LOWER(email) = 'a@b.com' lives in a tree sorted by the original strings. The same trap fires with a leading-wildcard LIKE '%term' (no prefix to seek on) and with an implicit type cast, such as comparing a varchar column to a number. Fix by indexing the expression itself, or by storing the already-normalised value."
+    },
+    {
+      "id": "q3",
+      "type": "mcq",
+      "question": "Which column is the worst candidate for a plain B+tree index on a 50-million-row table?",
+      "options": [
+        "email, unique per user",
+        "is_deleted, a boolean where 98% of rows are false",
+        "created_at, queried with range filters",
+        "tenant_id, with about 20,000 distinct tenants"
+      ],
+      "answerIndex": 1,
+      "explanation": "Low cardinality kills selectivity. An index on is_deleted would match 49 million rows for the common value — the planner would need tens of millions of random row fetches, which is far slower than reading the table sequentially, so it will simply ignore the index while you still pay its write and disk cost. The nuance worth mentioning: the 2% minority value can be worth indexing, and a partial index (WHERE is_deleted = true) gives you exactly that for a fraction of the size."
+    }
+  ],
+  "related": [
+    "database",
+    "search-engine",
+    "cache",
+    "sharding",
+    "replication"
+  ]
+}

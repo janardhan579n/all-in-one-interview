@@ -1,0 +1,132 @@
+{
+  "id": "rotate-array",
+  "title": "Rotate Array",
+  "patternId": "arrays",
+  "difficulty": "intermediate",
+  "tags": [
+    "array",
+    "in-place",
+    "reversal"
+  ],
+  "statement": "Given an integer array nums, rotate it to the right by k steps, where k is non-negative. Do it in place with O(1) extra space. Rotating right by one step means every element moves one position later and the last element wraps around to index 0.",
+  "realWorld": "A fixed-size ring buffer of the last n samples stores its entries starting at an arbitrary offset; flushing it to disk oldest-first means rotating the physical array so the logical head lands at index 0. Log shippers and audio buffers do this every flush, on buffers too large to duplicate.",
+  "examples": [
+    {
+      "input": "nums = [1,2,3,4,5,6,7], k = 3",
+      "output": "[5,6,7,1,2,3,4]",
+      "explanation": "The last three elements wrap to the front. Each element i ends at index (i + 3) mod 7."
+    },
+    {
+      "input": "nums = [-1,-100,3,99], k = 2",
+      "output": "[3,99,-1,-100]",
+      "explanation": "The array splits after index 1; the two halves swap places. Notice the answer is the two halves reversed in sequence but internally intact — which is the clue to the trick."
+    },
+    {
+      "input": "nums = [1,2], k = 3",
+      "output": "[2,1]",
+      "explanation": "k is larger than the array. Rotating by 2 is a no-op, so k = 3 is the same as k = 1."
+    }
+  ],
+  "constraints": [
+    "1 <= nums.length <= 10^5",
+    "-2^31 <= nums[i] <= 2^31 - 1",
+    "0 <= k <= 10^5, and k may exceed nums.length",
+    "In place, O(1) extra space"
+  ],
+  "bruteForce": {
+    "idea": "Rotate right by one step, k times: save the last element, shift everything one slot right, put the saved element at the front.",
+    "code": [
+      "int n = nums.length;",
+      "for (int step = 0; step < k; step++) {",
+      "    int last = nums[n - 1];",
+      "    for (int i = n - 1; i > 0; i--) {",
+      "        nums[i] = nums[i - 1];",
+      "    }",
+      "    nums[0] = last;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n * k)",
+      "space": "O(1)"
+    },
+    "whySlow": "Each single rotation touches all n elements to move each of them one slot, and then the next rotation picks the same n elements up and moves them one slot again. The element originally at index 0 is copied k separate times, through k - 1 intermediate positions nobody ever reads, to reach a destination that was known before the first copy: (0 + k) mod n. With n = k = 10^5 that is 10^10 writes to achieve 10^5 net displacements."
+  },
+  "patternIdentification": "A rotation is not a sequence of shifts, it is a relabelling: every element's final index is (i + k) mod n, and that is known before anything moves. Whenever each element's destination is a closed-form function of its index, look for a constant-space rearrangement — reversal, cyclic replacement, index arithmetic — rather than repeating a cheap operation k times. The specific insight here is that a rotation is the concatenation of two blocks in swapped order, and reversing the whole array puts those blocks in the right order with each block internally backwards; reversing each block then repairs it.",
+  "optimized": {
+    "idea": "Three reversals. Reverse the entire array: the last k elements are now at the front, but each of the two blocks is internally backwards. Reverse the first k elements to repair the wrapped block, then reverse the remaining n - k to repair the other. Reduce k modulo n first, because rotating by a full length changes nothing.",
+    "code": [
+      "public static void rotate(int[] nums, int k) {",
+      "    int n = nums.length;",
+      "    k %= n;                  // rotating by a whole length is a no-op; without this, k > n overruns",
+      "    reverse(nums, 0, n - 1);",
+      "    reverse(nums, 0, k - 1);",
+      "    reverse(nums, k, n - 1);",
+      "}",
+      "",
+      "private static void reverse(int[] nums, int from, int to) {",
+      "    while (from < to) {",
+      "        int temp = nums[from];",
+      "        nums[from++] = nums[to];",
+      "        nums[to--] = temp;",
+      "    }",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(1)"
+    }
+  },
+  "visualization": {
+    "engine": "arrayOps",
+    "input": {
+      "array": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "operations": [
+        {
+          "op": "delete",
+          "index": 4
+        },
+        {
+          "op": "insert",
+          "index": 0,
+          "value": 5
+        }
+      ]
+    },
+    "code": [
+      "// ONE step of the naive rotation, shown as what it really is:",
+      "for (int step = 0; step < k; step++) {",
+      "    int last = nums[n - 1];",
+      "    for (int i = n - 1; i > 0; i--) nums[i] = nums[i - 1];  // shift every element one slot right",
+      "    // taking the tail element out is the cheap half; putting it back costs n moves",
+      "    nums[0] = last;",
+      "}",
+      "// k steps x n moves = O(n * k) — which is what the three reversals replace"
+    ]
+  },
+  "commonMistakes": [
+    "Omitting k %= n: with nums.length = 3 and k = 7, reverse(nums, 0, 6) walks straight off the end and throws ArrayIndexOutOfBoundsException. The test that catches it is always the one where k is bigger than the array, which is easy to leave out.",
+    "Reversing the two blocks first and the whole array last: the order is not symmetric. [1,2,3,4,5,6,7] with k = 3 then comes back [4,5,6,7,1,2,3], which is a rotation by 3 to the LEFT — it looks plausible and passes any test whose input is a palindrome.",
+    "Using cyclic replacement (follow index i to (i + k) % n, place, repeat) without counting the elements moved or stepping by gcd(n, k): with n = 6 and k = 2 the cycle visits only 0, 2, 4 and returns to the start, so the odd indices are never touched and half the array keeps its original values."
+  ],
+  "similar": [
+    "rotate-image",
+    "move-zeroes",
+    "spiral-matrix",
+    "reverse-linked-list"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 189,
+      "slug": "rotate-array",
+      "title": "Rotate Array",
+      "url": "https://leetcode.com/problems/rotate-array/",
+      "premium": false
+    }
+  }
+}

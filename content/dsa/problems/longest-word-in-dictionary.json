@@ -1,0 +1,158 @@
+{
+  "id": "longest-word-in-dictionary",
+  "title": "Longest Word in Dictionary",
+  "patternId": "trie",
+  "difficulty": "intermediate",
+  "tags": [
+    "trie",
+    "string",
+    "dfs",
+    "sorting"
+  ],
+  "statement": "Given a list of words, return the longest word that can be built one character at a time by other words in the same list. In other words, every proper prefix of the answer must itself appear in the list. If several words tie on length, return the lexicographically smallest one. If no word qualifies, return the empty string.",
+  "realWorld": "Validating a hierarchical namespace: a config key, a feature-flag path or a permission scope may only be registered if every parent level is registered too. Finding the deepest fully-registered path - and reporting the first one alphabetically so the answer is stable across runs - is exactly this computation.",
+  "examples": [
+    {
+      "input": "words = [w, wo, wor, worl, world]",
+      "output": "world",
+      "explanation": "Each prefix of world is in the list, so it can be grown one letter at a time."
+    },
+    {
+      "input": "words = [a, banana, app, appl, ap, apply, apple]",
+      "output": "apple",
+      "explanation": "Both apple and apply are buildable through a, ap, app, appl, and both have length 5, so the lexicographic tie-break picks apple. banana is not buildable: b is not in the list, so the chain never starts."
+    },
+    {
+      "input": "words = [ab, cd]",
+      "output": "(empty string)",
+      "explanation": "Neither a nor c is present, so no word has all of its prefixes. Length alone is not enough to qualify."
+    }
+  ],
+  "constraints": [
+    "1 <= words.length <= 1000",
+    "1 <= words[i].length <= 30",
+    "words[i] consists of lowercase English letters",
+    "Words may repeat; a word is always considered a prefix of itself and needs no check for that"
+  ],
+  "bruteForce": {
+    "idea": "Put every word in a hash set. For each word, cut off each of its proper prefixes and look it up; keep the best word seen, preferring longer and then lexicographically smaller.",
+    "code": [
+      "public static String longestWord(String[] words) {",
+      "    Set<String> dict = new HashSet<>(Arrays.asList(words));",
+      "    String best = \"\";",
+      "    for (String word : words) {",
+      "        boolean buildable = true;",
+      "        for (int len = 1; len < word.length(); len++) {",
+      "            if (!dict.contains(word.substring(0, len))) { buildable = false; break; }",
+      "        }",
+      "        if (!buildable) continue;",
+      "        if (word.length() > best.length()",
+      "                || (word.length() == best.length() && word.compareTo(best) < 0)) {",
+      "            best = word;",
+      "        }",
+      "    }",
+      "    return best;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n * L^2) for n words of length up to L",
+      "space": "O(n * L)"
+    },
+    "whySlow": "Every candidate rebuilds its own prefixes as brand-new strings and hashes them from scratch. apple copies and hashes a, ap, app, appl; apply copies and hashes the same four all over again; appl hashed three of them a moment earlier. The characters of a shared prefix are copied and hashed once per word that contains them, even though the answer depends on a single yes-or-no fact per distinct prefix - a fact that could be recorded once, in the place where that prefix physically lives."
+  },
+  "patternIdentification": "The condition is stated over every prefix of a candidate, not over the candidate as a whole. A trie is the structure in which every prefix of x is literally a node on the path to x, so a condition quantified over prefixes collapses into a condition on each node along one path: mark the end of each inserted word as terminal, and a word is buildable exactly when every node on its path is terminal. When a problem constrains all prefixes (or all suffixes) of the answer, stop testing strings against a set and walk the structure where those prefixes already exist as nodes.",
+  "optimized": {
+    "idea": "Insert every word into a 26-way trie, marking the last node of each word terminal. Then depth-first search from the root, descending only into children that are terminal - a non-terminal node means that prefix was never a word, so nothing below it can be buildable and the whole subtree is cut. Visiting children in order a to z makes the DFS enumerate candidates in lexicographic order, so replacing the answer only on a strictly greater length keeps the smallest word of the maximum length automatically. The alternative is worth weighing honestly: sort the words by length and then lexicographically, keep a hash set of the words already accepted, and accept a word when the set contains it minus its last character. That version is shorter, needs no custom node type, and is easy to get right - but it costs O(n L log n) for the sort and still copies a substring per word. The trie is O(total characters), answers the prefix question without building any string, and extends to prefix queries the sorted version cannot answer, at the cost of 26 pointers per node and more code to write under interview pressure.",
+    "code": [
+      "public static String longestWord(String[] words) {",
+      "    Node root = new Node();",
+      "    for (String word : words) {",
+      "        Node node = root;",
+      "        for (char c : word.toCharArray()) {",
+      "            int i = c - 'a';",
+      "            if (node.children[i] == null) node.children[i] = new Node();",
+      "            node = node.children[i];",
+      "        }",
+      "        node.isWord = true;",
+      "    }",
+      "    return walk(root, new StringBuilder(), \"\");",
+      "}",
+      "",
+      "private static String walk(Node node, StringBuilder path, String best) {",
+      "    if (path.length() > best.length()) best = path.toString();",
+      "    for (int i = 0; i < 26; i++) {              // a first: ties resolve to the smallest word",
+      "        Node child = node.children[i];",
+      "        if (child == null || !child.isWord) continue;   // a prefix that is not a word cuts the subtree",
+      "        path.append((char) ('a' + i));",
+      "        best = walk(child, path, best);",
+      "        path.deleteCharAt(path.length() - 1);",
+      "    }",
+      "    return best;",
+      "}",
+      "",
+      "private static class Node {",
+      "    Node[] children = new Node[26];",
+      "    boolean isWord;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(N) where N is the total number of characters across all words - each character builds or visits one node once",
+      "space": "O(N) for the trie plus O(L) recursion depth"
+    }
+  },
+  "visualization": {
+    "engine": "trieOps",
+    "title": "a, ap, app, appl, apple, apply and banana in one trie - the answer is the deepest path whose every node is terminal, which is why the banana branch is dead from its first letter",
+    "input": {
+      "words": [
+        "a",
+        "ap",
+        "app",
+        "appl",
+        "apple",
+        "apply",
+        "banana"
+      ],
+      "search": "apple",
+      "prefix": "app"
+    },
+    "code": [
+      "Node node = root;                                  // --- insert every word ---",
+      "for (char c : word.toCharArray())",
+      "    node = node.children[c - 'a'];                 // created on first use",
+      "node.isWord = true;                                // only the LAST node is terminal",
+      "",
+      "String walk(Node node, StringBuilder path, String best) {   // --- DFS for the answer ---",
+      "    if (path.length() > best.length()) best = path.toString();",
+      "    for (int i = 0; i < 26; i++) {                 // a..z, so ties pick the smallest",
+      "        Node child = node.children[i];",
+      "        if (child == null || !child.isWord) continue;   // not a word: this subtree is unreachable",
+      "        path.append((char) ('a' + i));",
+      "        best = walk(child, path, best);",
+      "        path.deleteCharAt(path.length() - 1);",
+      "    }",
+      "    return best;",
+      "}"
+    ]
+  },
+  "commonMistakes": [
+    "Replacing the best answer on ties as well as on strictly greater length (using >= instead of >) while walking children a to z - the DFS reaches apple first and then overwrites it with apply, so the length is right and the tie-break is wrong.",
+    "Descending into any non-null child instead of only terminal ones - banana is then returned from a list containing neither b nor ba, because the path exists in the trie even though none of its prefixes was ever a word.",
+    "In the sorted alternative, ordering only by length and relying on the input order for ties - the answer silently depends on which of apple and apply appeared first in the file, so the same dictionary in a different order gives a different result."
+  ],
+  "similar": [
+    "implement-trie",
+    "design-add-search-words",
+    "longest-common-prefix",
+    "word-search-ii"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 720,
+      "slug": "longest-word-in-dictionary",
+      "title": "Longest Word in Dictionary",
+      "url": "https://leetcode.com/problems/longest-word-in-dictionary/",
+      "premium": false
+    }
+  }
+}

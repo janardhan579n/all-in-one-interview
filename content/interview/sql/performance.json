@@ -1,0 +1,298 @@
+{
+  "id": "sql-performance",
+  "trackId": "sql",
+  "topic": "performance",
+  "title": "Performance",
+  "summary": "Round trips, row estimates and plan flips — finding the real cost instead of guessing at it.",
+  "questions": [
+    {
+      "id": "sp-01",
+      "level": "junior",
+      "type": "concept",
+      "question": "Why is SELECT * discouraged? Be specific about the cost.",
+      "answer": "The answer people give is \"it sends data you do not need\", which is true and is the least of it.\n\nThe real cost is that it **defeats index-only scans**. If there is an index on `(customer_id, created_at)` and the query asks only for those columns, the database answers from the index and never touches the table. Ask for `*` and it must fetch every matching row from the heap — one random read per row. That is not a marginal difference; it is the difference between reading a few index pages and reading thousands of scattered table pages.\n\nThen the width. A row with a large `text` or `jsonb` column is stored out of line in PostgreSQL once it exceeds the threshold, so selecting it turns one page read into an extra fetch per row, for a column nobody looked at. Multiply by the result size and by the ORM hydrating forty fields into an object to read two.\n\nAnd it makes the query brittle in ways that surface later. Adding a column changes the result shape under code that reads by position, breaks `INSERT INTO t SELECT *`, and creates ambiguity when a join brings in two columns with the same name. A view defined with `SELECT *` freezes its column list at creation time in PostgreSQL, so it silently stops reflecting the table.\n\nWhere it is genuinely fine: ad-hoc exploration, and inside `EXISTS`, where the select list is ignored entirely by the optimiser. The honest position is not that the rule is absolute but that the cost concentrates in wide rows, large result sets and queries that could have been index-only — and those are exactly the queries that matter.",
+      "keyPoints": [
+        "It prevents index-only scans, forcing a heap fetch per row",
+        "Large out-of-line columns cost an extra fetch each when selected needlessly",
+        "ORM hydration and network transfer scale with the column count",
+        "Schema changes silently change result shape; views freeze their column list",
+        "Harmless inside EXISTS and in ad-hoc queries — know which regime you are in"
+      ],
+      "followUps": [
+        {
+          "q": "Does SELECT * slow down COUNT?",
+          "a": "`COUNT(*)` does not read column values at all — the asterisk there means \"count rows\", not \"read every column\", so it is not the same construct. It can still be slow in PostgreSQL because MVCC requires visibility checks, which is why an exact count of a huge table is expensive even though nothing is being selected."
+        }
+      ],
+      "redFlags": [
+        "Only mentioning network bandwidth",
+        "Not knowing about index-only scans",
+        "Treating it as a style rule with no performance reasoning"
+      ],
+      "related": [
+        "database"
+      ]
+    },
+    {
+      "id": "sp-02",
+      "level": "junior",
+      "type": "concept",
+      "question": "What is the N+1 query problem, end to end?",
+      "answer": "You run one query to fetch a list, then for each row in that list something triggers another query. Fetch a hundred orders, then touch `order.getCustomer()` in the render loop, and an ORM configured for lazy loading issues a hundred more selects. One plus N.\n\nWhat makes it dangerous is that it is invisible to every instrument people normally trust. Each of those queries is a primary-key lookup taking a fraction of a millisecond, so the slow query log is empty, database CPU is flat, and the per-query dashboards are green. The damage is a hundred network round trips, each with its own latency and connection handling. At half a millisecond of round trip that is fifty milliseconds of pure waiting, and it scales linearly with page size — so it looks fine on the five rows in development and falls over on the five hundred in production.\n\nThe metric that exposes it is queries per request, not query duration. Hibernate's statistics, a datasource proxy, `pg_stat_statements` ordered by `calls` rather than by total time, or the span count in an APM trace will all show it immediately.\n\nThe fixes, in the order worth trying: batch fetching, where the ORM collects the pending ids and issues one `WHERE id IN (...)` per batch — Hibernate's `@BatchSize` or `default_batch_fetch_size` — because it fixes the round trips without changing the shape of anything. Then a join fetch or entity graph when you always need the association. Then doing it by hand: one query for parents, collect the ids, one query for children, stitch in memory. That is what GraphQL's dataloader pattern is.\n\nSometimes the honest fix is that you needed the customer's name, not the customer object.",
+      "keyPoints": [
+        "One query for the list, then one per row from lazy loading",
+        "Invisible to slow query logs — each query is genuinely fast",
+        "The cost is round trips, and it scales linearly with result size",
+        "Measure queries per request, not query duration",
+        "Batch fetching, join fetch, or manual two-query stitching; sometimes a projection"
+      ],
+      "followUps": [
+        {
+          "q": "Why not just make every association eager?",
+          "a": "Because you invert the problem. Every query then loads the transitive closure of the object graph, so a simple lookup joins six tables and returns data nobody asked for. Eager fetching two collections at once also produces a cartesian product — Hibernate refuses outright with MultipleBagFetchException. Fetching strategy belongs to the use case, not the entity."
+        },
+        {
+          "q": "Is a giant IN list the safe answer then?",
+          "a": "Up to a point. Very large lists blow up planning time, and drivers hit parameter limits — the PostgreSQL wire protocol caps bind parameters at 65535. Chunk into batches of a few hundred to a thousand, or pass an array parameter and use `= ANY(?)`, which is one parameter regardless of size."
+        }
+      ],
+      "redFlags": [
+        "Recognising the name but not why the slow query log stays empty",
+        "Proposing a cache as the primary fix",
+        "Turning on global eager loading"
+      ],
+      "related": [
+        "database",
+        "cache"
+      ]
+    },
+    {
+      "id": "sp-03",
+      "level": "mid",
+      "type": "code",
+      "question": "This import loop takes forty minutes for a million rows. How do you speed it up?",
+      "answer": "Count the round trips and the commits before touching anything else. A loop doing one `INSERT` per row in autocommit pays two costs a million times over: a network round trip, and a commit that must flush the write-ahead log to disk before it returns. The fsync alone puts a floor of a few hundred microseconds on every iteration, and that floor is the forty minutes.\n\nSo there are two independent wins and they compound. Wrapping the whole loop — or chunks of it — in one transaction removes almost all the fsyncs. Batching the statements removes the round trips, either with multi-row `VALUES` or, in PostgreSQL, with `COPY`, which skips per-statement parse and plan overhead entirely and is the fastest bulk path by a wide margin.\n\nThe detail that catches people using JDBC: `addBatch`/`executeBatch` does not actually batch on the wire unless the driver rewrites it. MySQL needs `rewriteBatchedStatements=true` and PostgreSQL needs `reWriteBatchedInserts=true`; without them you have written batching code that sends one statement at a time and wondered why nothing improved.\n\nThe counter-pressure matters as much as the technique. One transaction for a million rows is now a long transaction, with everything that implies: held locks, a huge burst of WAL that replicas must catch up on, and vacuum unable to advance while it runs. Chunk it — a few thousand rows per transaction — and you get nearly all the speed without the operational damage. The same applies in reverse to deletes: `DELETE FROM events WHERE created_at < ?` removing ten million rows in one statement is the classic way to stall replication and bloat the table. Loop in chunks, or partition the table and drop the partition.",
+      "codeExample": {
+        "language": "sql",
+        "code": [
+          "-- one round trip and one fsync per row: the forty minutes",
+          "INSERT INTO events (id, kind, payload) VALUES (?, ?, ?);   -- x 1,000,000",
+          "",
+          "-- multi-row VALUES: one round trip per batch, portable",
+          "INSERT INTO events (id, kind, payload)",
+          "VALUES (?, ?, ?), (?, ?, ?), (?, ?, ?), ...;   -- ~1000 rows per statement",
+          "",
+          "-- PostgreSQL bulk path: no per-row statement overhead at all",
+          "COPY events (id, kind, payload) FROM STDIN WITH (FORMAT csv);",
+          "",
+          "-- bulk UPDATE without a statement per row",
+          "UPDATE events e",
+          "   SET kind = v.kind",
+          "  FROM (VALUES (1, 'a'), (2, 'b'), (3, 'c')) AS v(id, kind)",
+          " WHERE e.id = v.id;",
+          "",
+          "-- chunked delete: keeps the transaction, WAL and lock footprint bounded",
+          "DELETE FROM events",
+          " WHERE id IN (SELECT id FROM events",
+          "               WHERE created_at < now() - interval '90 days'",
+          "               LIMIT 10000);"
+        ]
+      },
+      "keyPoints": [
+        "Per-row inserts pay a round trip and an fsync each — the commit is usually the floor",
+        "One transaction removes the fsyncs; batching removes the round trips",
+        "COPY is the fastest bulk path in PostgreSQL; multi-row VALUES is the portable one",
+        "JDBC batching is inert without rewriteBatchedStatements / reWriteBatchedInserts",
+        "Chunk the batches — one giant transaction stalls vacuum and floods replication"
+      ],
+      "followUps": [
+        {
+          "q": "Should you drop the indexes first?",
+          "a": "For a large load into a table that is not being read concurrently, yes — building an index once over the finished data is much cheaper than maintaining it row by row, and the rebuild produces a denser, unfragmented index. It is the wrong move on a live table, where dropping an index makes every concurrent query slow and the rebuild takes a lock."
+        },
+        {
+          "q": "What batch size?",
+          "a": "Measure, but expect most of the win in the first few hundred rows and the curve to flatten after about a thousand. Beyond that you are holding more memory and lengthening the transaction for very little. Tune for the point where throughput stops improving, not for the largest number the driver accepts."
+        }
+      ],
+      "redFlags": [
+        "Batching without wrapping in a transaction, or vice versa, and claiming a full fix",
+        "Proposing one transaction for the entire load with no mention of the consequences",
+        "Not knowing the driver flag exists"
+      ],
+      "related": [
+        "database",
+        "replication"
+      ]
+    },
+    {
+      "id": "sp-04",
+      "level": "mid",
+      "type": "concept",
+      "question": "What are database statistics, and how does cardinality estimation go wrong?",
+      "answer": "The planner chooses a plan by estimating how many rows each step will produce. Nested loop or hash join, index scan or sequential scan — every one of those decisions is made from a row count guess, and the guess comes from statistics: per column, the fraction of nulls, the number of distinct values, a list of the most common values with their frequencies, and a histogram of the rest. `ANALYZE` builds them from a sample, not a full read, which is the root of several of the failure modes.\n\nThey go wrong in four recognisable ways. **Stale**: autovacuum only analyses after roughly ten percent of the table has changed, so on a very large table an enormous number of rows can change first, and a freshly bulk-loaded table may have no statistics at all when the first query hits it. **Correlated columns**: the planner multiplies selectivities as if columns were independent, so `city = 'Paris' AND country = 'France'` is estimated far too low because city already implies country. PostgreSQL's `CREATE STATISTICS` on the column pair fixes exactly this. **Invisible expressions**: `WHERE lower(email) = ?` has no statistics behind it and falls back to a fixed default guess — creating an expression index also creates statistics for the expression, which is often the larger benefit. **Skew**: a hundred histogram buckets cannot represent a tenant column where one customer owns most of the rows; raising the per-column statistics target gives it more resolution.\n\nThe reason a small error matters is that it compounds. A tenfold underestimate at the bottom of a join tree becomes a nested loop over millions of rows at the top. That is why the diagnostic is always the same: in `EXPLAIN ANALYZE`, find the deepest node where estimated and actual rows diverge, and start there.",
+      "keyPoints": [
+        "Plans are chosen from row estimates; estimates come from sampled statistics",
+        "Autovacuum's analyze threshold scales with table size — big tables go stale longer",
+        "Independence assumption breaks on correlated columns; extended statistics fix it",
+        "Expressions get default guesses unless an expression index gives them statistics",
+        "Errors compound up the join tree — diagnose at the deepest diverging node"
+      ],
+      "followUps": [
+        {
+          "q": "When would you run ANALYZE manually?",
+          "a": "At the end of any bulk load or large migration, before the new data is queried — otherwise the first users pay for plans built on the old distribution. Also after a major version upgrade in PostgreSQL, since `pg_upgrade` does not carry statistics across, and a cluster that looks mysteriously slow for an hour after an upgrade is usually this."
+        },
+        {
+          "q": "Can you make the planner ignore a bad estimate?",
+          "a": "PostgreSQL deliberately has no query hints, so the supported route is to fix the estimate — extended statistics, a higher statistics target, an expression index — or to restructure the query. The session-level `enable_*` switches exist for diagnosis, not production. Other engines do offer hints, and they carry the usual cost: a decision frozen against a data distribution that will change."
+        }
+      ],
+      "redFlags": [
+        "Not knowing statistics exist or where they come from",
+        "Treating ANALYZE and VACUUM as the same operation",
+        "Blaming the planner rather than the input it was given"
+      ],
+      "related": [
+        "database",
+        "big-o"
+      ]
+    },
+    {
+      "id": "sp-05",
+      "level": "mid",
+      "type": "tradeoff",
+      "question": "How do you size a connection pool?",
+      "answer": "Smaller than instinct suggests, and against the database's capacity rather than the application's concurrency.\n\nThe instinct when requests queue is to raise the pool. That is backwards. A database can execute only so many queries genuinely concurrently — the bound is CPU cores and disk parallelism. Past that point, extra connections add no throughput; they add context switching, lock contention and memory, and they convert a queue you can see, threads waiting for a pool slot, into a queue you cannot, every query running several times slower. Throughput stays flat and latency gets worse across the board.\n\nIn PostgreSQL each connection is an operating system process with its own memory, and `work_mem` is allocated per sort or hash node per query, so a few hundred connections running multi-node queries can in principle ask for far more memory than the machine has. The widely used starting point — roughly cores × 2 plus the effective number of disks — puts an eight-core server somewhere near twenty, not two hundred. It is a place to begin measuring from, not a law.\n\nThe constraint most often missed is that the pool is per instance. Twenty replicas holding fifty connections each is a thousand connections against a database configured for two hundred. Connections are a fleet-wide budget. When you genuinely need many clients, PgBouncer in transaction-pooling mode multiplexes them — with the caveat that transaction pooling breaks session state, so prepared statements, `SET`, advisory locks and `LISTEN/NOTIFY` need care.\n\nOne diagnostic settles most arguments: if pool wait time is high while database CPU is low, the bottleneck is locks or I/O, and a larger pool will make it worse.",
+      "keyPoints": [
+        "Size against database capacity — cores and disks — not application thread count",
+        "Beyond that point, more connections trade a visible queue for a slower system",
+        "PostgreSQL connections are processes, and work_mem is per node per query",
+        "The pool is per instance: budget connections across the whole fleet",
+        "High pool wait with low database CPU means locks or I/O, not too few connections"
+      ],
+      "followUps": [
+        {
+          "q": "What should the pool timeout be?",
+          "a": "Short enough to shed load. An unbounded wait turns a database slowdown into a full outage, because every request thread parks on the pool and the service stops answering anything, including health checks. A few seconds, failing fast with a clear error, keeps the failure contained. Pair it with a statement timeout so one runaway query cannot hold a connection indefinitely."
+        },
+        {
+          "q": "Do read replicas change the calculation?",
+          "a": "They add capacity for reads, so you can raise the total, but each replica has its own budget and its own pool. They do not help write contention at all, and routing reads to a replica introduces replication lag, so anything that reads its own write needs to stay on the primary."
+        }
+      ],
+      "redFlags": [
+        "Raising the pool as the first response to latency",
+        "Sizing per instance with no fleet-level total",
+        "No timeout, or an effectively unbounded one"
+      ],
+      "related": [
+        "database",
+        "scaling",
+        "replication"
+      ]
+    },
+    {
+      "id": "sp-06",
+      "level": "mid",
+      "type": "tradeoff",
+      "question": "Partitioning or sharding — what is the difference and when do you need each?",
+      "answer": "Partitioning splits one logical table into several physical ones inside a single database, by range, list or hash of a key. The engine routes queries and the application sees one table. Sharding splits the data across separate database servers, and something — the application or a proxy — has to decide which server holds which row.\n\nThey solve different problems, and conflating them is the mistake. Partitioning does not add capacity; everything still runs on one machine. What it buys is maintenance and pruning. The biggest single win is retention: dropping last month's partition is an instant metadata operation, where `DELETE FROM events WHERE created_at < ?` writes a dead version for every row, floods the WAL and leaves vacuum a mountain of work. Beyond that, each partition's indexes are smaller and can be vacuumed or rebuilt independently, and the planner can skip partitions that cannot match the query.\n\nIt is worth being clear about what partitioning does not do: it rarely speeds up a well-indexed point lookup, because a B-tree over a billion rows is only a level deeper than one over a million. And any query that omits the partition key touches every partition, so a bad key choice makes things slower.\n\nSharding is what you reach for when one machine cannot hold the data or absorb the writes. The price is severe — no cross-shard joins or transactions without a distributed layer, every query needs the shard key, and resharding is a project rather than a change.\n\nSo the ordering is: fix the indexes, archive old data, add a read replica, partition for maintenance, and shard only when a single primary is genuinely the ceiling. Most conversations that start at sharding should have stopped earlier.",
+      "keyPoints": [
+        "Partitioning is within one database; sharding is across machines",
+        "Partitioning buys pruning and cheap retention, not capacity",
+        "DROP PARTITION versus a mass DELETE is the clearest practical win",
+        "A query without the partition key touches every partition",
+        "Sharding costs cross-shard joins, transactions and resharding — go there last"
+      ],
+      "followUps": [
+        {
+          "q": "How do you pick a partition key?",
+          "a": "It has to appear in the predicates of the queries you care about, or pruning never happens. Time is the natural choice for event and log data because it matches both the access pattern and the retention policy. Tenant is tempting but produces badly uneven partitions when tenants vary by orders of magnitude, which is the same skew problem that bites hash-based sharding."
+        },
+        {
+          "q": "Any constraints that get awkward once partitioned?",
+          "a": "In PostgreSQL a unique constraint on a partitioned table must include the partition key, because uniqueness cannot be enforced across partitions without a global index. Foreign keys pointing at a partitioned table have similar restrictions. It is a common surprise when converting an existing table."
+        }
+      ],
+      "redFlags": [
+        "Using the terms interchangeably",
+        "Expecting partitioning to make point lookups faster",
+        "Proposing sharding before indexing, archival and replicas have been considered"
+      ],
+      "related": [
+        "sharding",
+        "scaling",
+        "database",
+        "replication"
+      ]
+    },
+    {
+      "id": "sp-07",
+      "level": "senior",
+      "type": "tradeoff",
+      "question": "When does rewriting a query beat adding an index?",
+      "answer": "An index reduces what it costs to reach a row. It cannot change how many rows the query asks for, or how many times it asks. When the problem is the shape of the work rather than the cost of access, no index helps, and the giveaway in a plan is a huge `loops` count or millions of rows removed by a filter.\n\nThe recurring cases. A non-sargable predicate — `WHERE date_trunc('month', created_at) = ?` — where rewriting to a half-open range makes an index you already have usable, and costs nothing. A correlated subquery in the select list, executed once per output row, which becomes a single pass as a join or a window function. `OR` across two columns, which no single index can serve, rewritten as `UNION ALL` of two index-friendly halves. `NOT IN` against a nullable subquery, replaced by `NOT EXISTS`, which is both null-safe and usually gets an anti-join plan.\n\nThe one with the largest payoff is join order against aggregation. Joining a ten-million-row fact table to five dimensions and then grouping does the join work on every fact row; aggregating the fact table first and joining the far smaller result gives the same answer with an order of magnitude less work. No index changes that, because the volume was never the access cost.\n\nAnd deep `OFFSET` pagination, where the discarding is the work and keyset removes it entirely.\n\nThe framing worth offering out loud: indexes are a constant-factor improvement on row access; rewrites change the algorithm. Reach for the rewrite when the plan shows the engine doing work it did not need to do at all — and note that a rewrite carries no ongoing write cost, while every index does.",
+      "keyPoints": [
+        "Indexes lower access cost; rewrites change how much work exists",
+        "Non-sargable predicates, correlated subqueries, OR conditions, NOT IN",
+        "Aggregate before joining when the fact table dwarfs the dimensions",
+        "Deep OFFSET is discarded work that no index can avoid",
+        "A rewrite has no ongoing write cost; an index does"
+      ],
+      "followUps": [
+        {
+          "q": "How do you decide which to try first?",
+          "a": "Read the plan. If the engine is fetching roughly the rows it needs and the time is in the access, an index is the answer. If it is producing rows only to throw them away, or executing a node hundreds of thousands of times, that is structural and an index will at best reduce the constant on work that should not happen."
+        },
+        {
+          "q": "Is a materialised view a rewrite or an index?",
+          "a": "Neither exactly — it is precomputation, and it trades freshness for latency. It is the right answer for a dashboard aggregate recomputed on a schedule, and the wrong one when callers need current data, because `REFRESH MATERIALIZED VIEW` takes a lock unless you use the concurrent form, which itself requires a unique index and is slower."
+        }
+      ],
+      "redFlags": [
+        "Treating every slow query as a missing index",
+        "Rewriting without reading the plan first",
+        "No awareness that indexes carry a permanent write cost"
+      ],
+      "related": [
+        "database",
+        "big-o",
+        "cache"
+      ]
+    },
+    {
+      "id": "sp-08",
+      "level": "senior",
+      "type": "scenario",
+      "question": "A report query that took 2 seconds now takes 4 minutes. Nothing was deployed. Walk me through it.",
+      "answer": "The SQL did not change, so either the data changed, the statistics changed, or the plan changed. One question orders the whole investigation: **is it the same plan doing more work, or a different plan?** Get `EXPLAIN (ANALYZE, BUFFERS)` now, and compare it with history from `auto_explain`, `pg_stat_statements` or Query Store. Before that, rule out the cheap alternatives — a whole-database slowdown, a cold cache after a restart, or the query simply being blocked, which `pg_stat_activity.wait_event` answers in seconds.\n\n**Same plan, more data.** The 2-second version had a sort that fit in `work_mem`. Five times the rows and it spills — `Sort Method: external merge Disk: 3GB` — or a hash join goes multi-batch. Evidence: unchanged plan shape, exploded buffer reads, a bigger table. Growth crossed a threshold; the fix is memory, an index, or pre-aggregation.\n\n**Plan flip.** The planner moved from a hash join to a nested loop, or from an index scan to a sequential one. Nested loop is cheap over fifty outer rows and ruinous over half a million, and the cost curves genuinely cross as data grows. Evidence: node types differ from the historical plan, and `loops=` is now enormous. On the estimates it had, the planner was right — the question is whether the estimates were.\n\n**Stale statistics.** Find the deepest node where estimated and actual rows diverge, then check `last_autoanalyze` and `n_mod_since_analyze`. A steadily growing table can evade the ten-percent threshold for a long time. Confirm by running `ANALYZE` and re-planning; if it returns to 2 seconds, that was it.\n\n**Parameter sniffing.** The tell is that the query is fast when you run it by hand and slow from the application — the cached plan was compiled for different parameter values. Pronounced in SQL Server; in PostgreSQL it is the generic plan chosen after five executions of a prepared statement. Confirm with `plan_cache_mode = force_generic_plan`.\n\nFour causes, four pieces of evidence, no guessing.",
+      "keyPoints": [
+        "First question: same plan doing more work, or a different plan? Compare against plan history",
+        "Rule out blocking and a cold cache before anything else — it costs seconds",
+        "Growth crosses thresholds: sorts spill to disk, hash joins go multi-batch, nested loops flip",
+        "Stale statistics show as estimated-versus-actual divergence; confirm by running ANALYZE",
+        "Fast by hand, slow from the app is the parameter-sniffing signature"
+      ],
+      "followUps": [
+        {
+          "q": "\"Nothing was deployed\" — what else could have changed?",
+          "a": "A configuration change to `work_mem` or autovacuum, a minor or major version upgrade, an index dropped or left INVALID by a failed `CREATE INDEX CONCURRENTLY` — the planner ignores those silently — a table bloated because a long transaction blocked vacuum, or a single large customer onboarded and shifted the distribution. Application code is not the only thing that changes."
+        },
+        {
+          "q": "How would you stop it recurring?",
+          "a": "Keep plan history, so this diagnosis is a diff rather than an archaeology exercise: `auto_explain` with a duration threshold, or Query Store. Then fix the specific cause — a lower autovacuum analyze scale factor on that table, extended statistics on the correlated columns, `plan_cache_mode` for the sniffed query — and alert on the query's p95 rather than waiting for someone to complain."
+        }
+      ],
+      "redFlags": [
+        "Adding indexes before looking at the plan",
+        "Restarting the database and declaring it fixed",
+        "Naming one cause confidently with no way to distinguish it from the others"
+      ],
+      "related": [
+        "database",
+        "scaling"
+      ]
+    }
+  ]
+}

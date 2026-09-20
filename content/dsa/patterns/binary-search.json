@@ -1,0 +1,348 @@
+{
+  "id": "binary-search",
+  "kind": "pattern",
+  "title": "Binary Search",
+  "group": "Binary Search",
+  "level": 2,
+  "difficulty": "beginner",
+  "estimatedMinutes": 35,
+  "summary": "Repeatedly halve a search space using a yes/no test that is monotonic — the answer space does not have to be an array.",
+  "prerequisites": [
+    "arrays",
+    "big-o"
+  ],
+  "tags": [
+    "binary-search",
+    "sorted",
+    "logarithmic",
+    "level-2"
+  ],
+  "analogy": {
+    "beginner": "Looking up 'Krishnan' in a phone book. You don't start at page 1. You open the middle, see 'M', and throw away the entire second half in one move. Then the middle of what's left, and again. A thousand pages take about ten opens. A million pages take twenty.",
+    "interview": "Binary search requires a monotonic predicate over an ordered search space: some prefix of the space answers false and the remaining suffix answers true (or vice versa). Each iteration halves the candidate range, giving O(log n) probes. The array is the common case, not the definition."
+  },
+  "intuition": "Everyone learns binary search as 'find a number in a sorted array'. That framing hides most of its power.\n\nThe real requirement is a **monotonic predicate**: a yes/no question about a candidate value whose answer, once it flips, never flips back.\n\n```\ncandidates:  1   2   3   4   5   6   7   8\npredicate:   N   N   N   N   Y   Y   Y   Y\n                             ^ find this boundary\n```\n\nIf you can build that picture, you can binary search — over array indices, yes, but equally over *answers*. 'What is the smallest eating speed that lets Koko finish the bananas in time?' has no sorted array anywhere in it, but `canFinish(speed)` is false for slow speeds and true for fast ones, and it never flips back. So you binary search the speed from 1 to max, and each probe simulates the scenario. That reframing — **binary search on the answer** — is one of the highest-leverage ideas in interview preparation.\n\nThe log₂ growth deserves a moment of respect: a billion items take 30 probes. Doubling the data adds exactly one step.",
+  "problemFirst": {
+    "motivatingProblem": "Find the index of a value in a sorted array of a million elements.",
+    "bruteForce": {
+      "idea": "Look at every element until you find it.",
+      "code": [
+        "for (int i = 0; i < nums.length; i++) {",
+        "    if (nums[i] == target) return i;",
+        "}",
+        "return -1;"
+      ],
+      "complexity": {
+        "time": "O(n)",
+        "space": "O(1)"
+      },
+      "whySlow": "It ignores sortedness completely. Comparing against `nums[500000]` tells you which half the target is in — a linear scan throws that information away every single step."
+    },
+    "observation": "One comparison against the middle element rules out half the array. Not one element — half.",
+    "leap": "Halve repeatedly. n → n/2 → n/4 → … → 1 takes log₂(n) steps: 20 for a million, 30 for a billion.",
+    "optimizedSketch": [
+      "int low = 0, high = nums.length - 1;",
+      "while (low <= high) {",
+      "    int mid = low + (high - low) / 2;",
+      "    if (nums[mid] == target) return mid;",
+      "    if (nums[mid] < target) low = mid + 1;",
+      "    else                    high = mid - 1;",
+      "}",
+      "return -1;"
+    ]
+  },
+  "howItWorks": [
+    "**Define the search space** — `[low, high]`. For an array that is `[0, n-1]`; for answer-space search it is `[minPossibleAnswer, maxPossibleAnswer]`.",
+    "**Compute the midpoint safely** — `low + (high - low) / 2`, never `(low + high) / 2`, which overflows for large indices.",
+    "**Evaluate the predicate** at `mid` and discard the half that cannot contain the answer.",
+    "**Shrink strictly** — every iteration must reduce the range, or the loop hangs. This is where almost all binary-search bugs live.",
+    "**Pick a template and keep it.** Exact match: `while (low <= high)`, moving to `mid ± 1`. Boundary search (first true / lower bound): `while (low < high)`, with `high = mid` and `low = mid + 1`; `low` is the answer on exit.",
+    "**Answer-space search** — replace `nums[mid]` with `isFeasible(mid)`, where the feasibility check is itself an O(n) simulation. Total cost O(n log(range))."
+  ],
+  "patternRecognition": {
+    "signals": [
+      "The input is **sorted**, or rotated-sorted, or the answer space is ordered",
+      "'Find the first/last/smallest/largest X such that…' — a boundary, not just a match",
+      "'Minimise the maximum' or 'maximise the minimum' — the classic answer-space phrasing",
+      "A feasibility check exists that is monotonic in the parameter",
+      "The constraints permit O(n log n) but not O(n²), and something in the problem is ordered"
+    ],
+    "antiSignals": [
+      "Unsorted data with no monotonic property — sorting first may cost more than the scan you are replacing",
+      "You need every match, not one (a scan is fine)",
+      "The predicate flips more than once — binary search can then land on any of the boundaries and is unsound"
+    ],
+    "decisionTreeId": "binary-search"
+  },
+  "visualizations": [
+    {
+      "id": "classic",
+      "title": "Classic binary search — watch half vanish each probe",
+      "engine": "binarySearch",
+      "input": {
+        "array": [
+          2,
+          5,
+          8,
+          12,
+          16,
+          23,
+          38,
+          56,
+          72,
+          91
+        ],
+        "target": 23
+      },
+      "code": [
+        "int low = 0, high = nums.length - 1;",
+        "while (low <= high) {",
+        "    int mid = low + (high - low) / 2;",
+        "    if (nums[mid] == target) return mid;",
+        "    if (nums[mid] < target) low = mid + 1;",
+        "    else                    high = mid - 1;",
+        "}",
+        "return -1;"
+      ]
+    },
+    {
+      "id": "boundary",
+      "title": "Lower bound — first index whose value is ≥ target",
+      "engine": "binarySearchBoundary",
+      "input": {
+        "array": [
+          1,
+          3,
+          3,
+          3,
+          5,
+          8,
+          8,
+          10
+        ],
+        "target": 3
+      },
+      "code": [
+        "int low = 0, high = nums.length;   // note: exclusive upper bound",
+        "while (low < high) {",
+        "    int mid = low + (high - low) / 2;",
+        "    if (nums[mid] < target) low = mid + 1;",
+        "    else                    high = mid;   // mid might BE the answer, so keep it",
+        "}",
+        "return low;"
+      ]
+    },
+    {
+      "id": "answer-space",
+      "title": "Binary search on the answer — minimum eating speed",
+      "engine": "binarySearchAnswer",
+      "input": {
+        "piles": [
+          30,
+          11,
+          23,
+          4,
+          20
+        ],
+        "hours": 6
+      },
+      "code": [
+        "int low = 1, high = max(piles);",
+        "while (low < high) {",
+        "    int mid = low + (high - low) / 2;",
+        "    if (hoursNeeded(piles, mid) <= h) high = mid;   // feasible: try slower",
+        "    else                              low = mid + 1; // too slow",
+        "}",
+        "return low;"
+      ]
+    }
+  ],
+  "implementations": [
+    {
+      "label": "Simple",
+      "language": "java",
+      "explanation": "The exact-match template. Two details matter: overflow-safe midpoint, and `mid ± 1` so the range always shrinks.",
+      "code": [
+        "/** Index of target in a sorted array, or -1. O(log n) time, O(1) space. */",
+        "public static int binarySearch(int[] nums, int target) {",
+        "    int low = 0;",
+        "    int high = nums.length - 1;",
+        "",
+        "    while (low <= high) {",
+        "        int mid = low + (high - low) / 2;   // avoids int overflow",
+        "",
+        "        if (nums[mid] == target) {",
+        "            return mid;",
+        "        } else if (nums[mid] < target) {",
+        "            low = mid + 1;                 // target is strictly right of mid",
+        "        } else {",
+        "            high = mid - 1;                // target is strictly left of mid",
+        "        }",
+        "    }",
+        "    return -1;",
+        "}"
+      ]
+    },
+    {
+      "label": "Optimized",
+      "language": "java",
+      "explanation": "The boundary template is strictly more useful — it answers 'first index satisfying P', which subsumes exact match, insertion point, and count-of-occurrences. Below it, the same template applied to an answer space rather than an array.",
+      "code": [
+        "/** First index where predicate becomes true; nums.length if never. O(log n). */",
+        "public static int lowerBound(int[] nums, int target) {",
+        "    int low = 0, high = nums.length;        // half-open [low, high)",
+        "    while (low < high) {",
+        "        int mid = low + (high - low) / 2;",
+        "        if (nums[mid] < target) low = mid + 1;",
+        "        else                    high = mid;  // keep mid: it may be the boundary",
+        "    }",
+        "    return low;",
+        "}",
+        "",
+        "/** Binary search on the ANSWER: slowest speed that still finishes in h hours. */",
+        "public static int minEatingSpeed(int[] piles, int h) {",
+        "    int low = 1, high = Arrays.stream(piles).max().orElseThrow();",
+        "    while (low < high) {",
+        "        int mid = low + (high - low) / 2;",
+        "        if (hoursNeeded(piles, mid) <= h) high = mid;",
+        "        else                              low  = mid + 1;",
+        "    }",
+        "    return low;",
+        "}",
+        "",
+        "private static long hoursNeeded(int[] piles, int speed) {",
+        "    long hours = 0;",
+        "    for (int pile : piles) {",
+        "        hours += (pile + speed - 1) / speed;   // ceiling division",
+        "    }",
+        "    return hours;",
+        "}"
+      ]
+    }
+  ],
+  "complexity": {
+    "time": "O(log n) for array search; O(n log(range)) when each probe runs an O(n) feasibility check",
+    "space": "O(1) iterative, O(log n) recursive (call stack)",
+    "why": "The range shrinks by half every iteration: n, n/2, n/4 … 1. The number of halvings to reach 1 is log₂ n by definition — about 20 for a million, 30 for a billion. Note that `Arrays.sort` + `binarySearch` is O(n log n) overall, so for a *single* lookup on unsorted data a plain O(n) scan is faster. Sorting pays off only when you will search many times."
+  },
+  "commonMistakes": [
+    {
+      "mistake": "`int mid = (low + high) / 2;`",
+      "fix": "Overflows when both are near Integer.MAX_VALUE. This was a real bug in the JDK's own binarySearch for nine years. Use `low + (high - low) / 2`."
+    },
+    {
+      "mistake": "Infinite loop from `low = mid` or `high = mid` in the `<=` template",
+      "fix": "If the range does not strictly shrink, the loop hangs. Match the template exactly: `<=` goes with `mid ± 1`; `<` goes with `high = mid` and `low = mid + 1`."
+    },
+    {
+      "mistake": "Mixing the two templates",
+      "fix": "Pick one for exact match and one for boundaries, and write them the same way every time. Improvising mid-interview is how off-by-one bugs happen."
+    },
+    {
+      "mistake": "Assuming the input is sorted",
+      "fix": "Binary search on unsorted data silently returns wrong answers rather than failing loudly. Verify the precondition."
+    },
+    {
+      "mistake": "Forgetting that duplicates make plain binary search return *an* index, not the first",
+      "fix": "Use lower bound when the problem says 'first occurrence'."
+    },
+    {
+      "mistake": "Overflow in the feasibility function during answer-space search",
+      "fix": "Accumulate in `long` — sums over large ranges overflow `int` easily."
+    }
+  ],
+  "realWorldUses": [
+    "Database B-tree index traversal is binary search generalised to higher fan-out.",
+    "`git bisect` binary searches your commit history for the commit that introduced a bug — the predicate is 'is it broken here?'.",
+    "Capacity planning and autoscaling: find the smallest instance count that keeps p99 latency under target.",
+    "Version control and package managers resolve 'earliest version satisfying constraints'.",
+    "Rate limiter and load balancer weighted selection use binary search over cumulative weights."
+  ],
+  "interviewNotes": [
+    "If the input is sorted and you propose an O(n) scan, the interviewer is waiting for binary search.",
+    "'Minimise the maximum' / 'maximise the minimum' is a near-certain signal for binary search on the answer. Naming the technique earns credit immediately.",
+    "State the monotonic predicate explicitly: 'canFinish(speed) is false below the answer and true at or above it.' That is the proof the search is valid.",
+    "Test your implementation on n = 0, n = 1, target smaller than everything, and target larger than everything."
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "complexity",
+      "question": "How many probes does binary search need in the worst case over 1,000,000 sorted elements?",
+      "options": [
+        "About 10",
+        "About 20",
+        "About 1,000",
+        "1,000,000"
+      ],
+      "answerIndex": 1,
+      "explanation": "log₂(1,000,000) ≈ 19.9, so 20 probes. Each one discards half the remaining range."
+    },
+    {
+      "id": "q2",
+      "type": "mcq",
+      "question": "Why is `mid = low + (high - low) / 2` preferred over `mid = (low + high) / 2`?",
+      "options": [
+        "It is faster",
+        "It avoids integer overflow when low + high exceeds Integer.MAX_VALUE",
+        "It handles empty arrays",
+        "There is no difference"
+      ],
+      "answerIndex": 1,
+      "explanation": "For large indices the sum overflows to a negative number and the index goes out of bounds. The subtraction form stays within range — a famous bug that sat in java.util.Arrays for years."
+    },
+    {
+      "id": "q3",
+      "type": "identify-pattern",
+      "question": "'Given piles of bananas and h hours, find the minimum eating speed to finish in time.' Which pattern?",
+      "options": [
+        "Sliding Window",
+        "Binary search on the answer",
+        "Two Pointers",
+        "Dynamic Programming"
+      ],
+      "answerIndex": 1,
+      "explanation": "'Minimum X such that a condition holds' plus a monotonic feasibility check — faster is always still feasible — is binary search over the answer range, not over an array."
+    },
+    {
+      "id": "q4",
+      "type": "mcq",
+      "question": "Your binary search loop never terminates. What is the most likely cause?",
+      "options": [
+        "The array is too large",
+        "The range does not strictly shrink — e.g. `low = mid` inside a `while (low <= high)` loop",
+        "The target is not present",
+        "You used long instead of int"
+      ],
+      "answerIndex": 1,
+      "explanation": "If mid can equal low and you then assign `low = mid`, nothing changes and the loop spins forever. Every iteration must reduce the range."
+    },
+    {
+      "id": "q5",
+      "type": "mcq",
+      "question": "You need one lookup in an unsorted array of a million elements. Sort then binary search, or scan?",
+      "options": [
+        "Sort then binary search — O(log n) beats O(n)",
+        "Scan — O(n) beats the O(n log n) sort",
+        "Identical",
+        "Depends on the value"
+      ],
+      "answerIndex": 1,
+      "explanation": "The sort dominates: O(n log n) + O(log n) is worse than a single O(n) pass. Sorting pays off only when the cost is amortised over many searches."
+    }
+  ],
+  "practiceProblems": [
+    "binary-search-basic",
+    "first-bad-version",
+    "search-rotated-array",
+    "find-min-rotated-array",
+    "search-2d-matrix",
+    "koko-eating-bananas",
+    "median-two-sorted-arrays"
+  ],
+  "related": [
+    "two-pointers",
+    "arrays",
+    "big-o"
+  ]
+}

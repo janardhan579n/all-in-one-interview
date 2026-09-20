@@ -1,0 +1,307 @@
+{
+  "id": "java-spring-core",
+  "trackId": "java",
+  "topic": "spring-core",
+  "title": "Spring Core",
+  "summary": "The container, the proxies it wraps your beans in, and why your transaction did not do what you thought.",
+  "questions": [
+    {
+      "id": "jsc-01",
+      "level": "junior",
+      "type": "concept",
+      "question": "What does dependency injection actually buy you, and why is constructor injection preferred over field injection?",
+      "answer": "Dependency injection is not about the container. It is about a class declaring what it needs instead of going and fetching it. A class that calls `new PaymentGateway()` or a static `getInstance()` has hard-wired one implementation into itself: you cannot substitute a fake in a test, you cannot swap a sandbox gateway in staging, and the class silently owns a lifecycle it has no business owning. Take the collaborator as a parameter and all three problems disappear — Spring is simply the thing that wires it up for you at startup.\n\nConstructor injection is preferred for reasons that are mostly about the class, not about Spring:\n\n```java\n@Service\npublic class OrderService {\n    private final PaymentGateway gateway;   // final: cannot be reassigned or left null\n    private final OrderRepository orders;\n\n    public OrderService(PaymentGateway gateway, OrderRepository orders) {\n        this.gateway = gateway;\n        this.orders = orders;\n    }\n}\n```\n\nThe fields can be `final`, so the object is immutable and safe to publish across threads. The object is **impossible to construct in an invalid state** — there is no window where it exists with a null dependency. In a unit test you call the constructor with mocks and need no Spring context and no reflection at all, whereas field injection forces `@InjectMocks` or `ReflectionTestUtils` to reach into private fields. And the constructor signature is honest: when it grows to eight parameters, that ugliness is the design telling you the class does too much. Field injection hides exactly that signal. Since Spring 4.3 a single constructor needs no `@Autowired` annotation.",
+      "keyPoints": [
+        "DI is about declaring dependencies, not about the container",
+        "Constructor injection allows `final` fields and a genuinely immutable object",
+        "The object can never exist in a half-wired state",
+        "Tests construct it directly with mocks — no Spring, no reflection",
+        "A bloated constructor is a design smell that field injection conceals"
+      ],
+      "followUps": [
+        {
+          "q": "When is setter injection the right choice?",
+          "a": "For genuinely optional dependencies, or something that must be reconfigurable after construction — a pluggable metrics recorder that defaults to a no-op, for instance. It is rare. Most 'optional' dependencies are better modelled as a default implementation injected by the constructor, so the collaborator is never null."
+        },
+        {
+          "q": "What happens when two beans implement the same interface?",
+          "a": "Injection fails at startup with `NoUniqueBeanDefinitionException`, which is the container doing you a favour by failing at boot rather than at 3am. Resolve it with `@Primary` for a sensible default, `@Qualifier` at the injection point, or by injecting `List<Strategy>` or `Map<String, Strategy>` when you actually want all of them."
+        }
+      ],
+      "redFlags": [
+        "\"DI means Spring creates my objects\" with no notion of testability or coupling",
+        "Defending `@Autowired` on private fields because it is less typing",
+        "Not knowing that a `final` field is impossible with field injection"
+      ]
+    },
+    {
+      "id": "jsc-02",
+      "level": "junior",
+      "type": "concept",
+      "question": "Walk me through the lifecycle of a Spring bean. Where would you hook in to run start-up work?",
+      "answer": "For a singleton, the container does this during context refresh: it instantiates the bean (calling the constructor, which is where constructor-injected dependencies arrive), populates any remaining setter and field dependencies, invokes the `Aware` callbacks such as `BeanNameAware` and `ApplicationContextAware`, then runs every `BeanPostProcessor`'s `postProcessBeforeInitialization`, then your initialisation callbacks — `@PostConstruct` first, then `InitializingBean.afterPropertiesSet()`, then any `initMethod` on `@Bean` — and finally `postProcessAfterInitialization`. On shutdown it runs `@PreDestroy`, then `DisposableBean.destroy()`, then the `destroyMethod`.\n\nThe detail that matters is **where proxies are created**: AOP proxies, including the one `@Transactional` and `@Async` rely on, are applied in `postProcessAfterInitialization` — *after* your `@PostConstruct`. So a `@PostConstruct` method is running on the raw target object, and any `@Transactional` or `@Async` annotation on the method it calls on `this` does nothing. Warming a cache from the database in `@PostConstruct` is a classic way to discover this.\n\nFor real start-up work, prefer something that runs after the context is fully built: an `ApplicationRunner` or `CommandLineRunner` bean, or `@EventListener(ApplicationReadyEvent.class)`. `@PostConstruct` is for cheap, local initialisation of that one bean — validating configuration, building an immutable lookup table — not for anything that touches other beans' proxied behaviour. Note also that in Spring Boot 3 these annotations come from `jakarta.annotation`, and that **prototype-scoped beans never receive destruction callbacks** because the container does not retain a reference to them.",
+      "keyPoints": [
+        "Construct, populate, Aware callbacks, BeanPostProcessors, init callbacks, destroy callbacks",
+        "AOP proxies are applied after `@PostConstruct`, so `@Transactional` there is inert",
+        "Use ApplicationRunner or ApplicationReadyEvent for real start-up work",
+        "`jakarta.annotation` in Spring Boot 3, not `javax`",
+        "Prototype beans get no destruction callback"
+      ],
+      "followUps": [
+        {
+          "q": "What is a BeanPostProcessor actually for?",
+          "a": "It is the extension point Spring itself uses: `AutowiredAnnotationBeanPostProcessor` does injection, `AnnotationAwareAspectJAutoProxyCreator` wraps beans in AOP proxies, `ConfigurationPropertiesBindingPostProcessor` binds properties. You rarely write one, but knowing they exist explains how `@Transactional` gets applied at all."
+        },
+        {
+          "q": "Does `@PreDestroy` always run?",
+          "a": "Only on an orderly shutdown where the JVM's shutdown hook fires — `SIGTERM`, or the context being closed. A `SIGKILL` or a hard container kill skips it entirely, so a `@PreDestroy` is never a correctness mechanism for durable state. It is for releasing resources politely, not for flushing data you cannot lose."
+        }
+      ],
+      "redFlags": [
+        "Only knowing `@PostConstruct` with no idea what runs before or after it",
+        "Putting transactional or async work in `@PostConstruct`",
+        "Treating `@PreDestroy` as a guarantee"
+      ]
+    },
+    {
+      "id": "jsc-03",
+      "level": "mid",
+      "type": "concept",
+      "question": "What bean scopes does Spring offer, and what goes wrong when a singleton depends on a prototype?",
+      "answer": "`singleton` is the default — one instance per application context, not per JVM and not per classloader. `prototype` gives a new instance on every lookup. In a web application you also get `request`, `session`, `application` and `websocket`.\n\nThe trap is that **injection happens once**. A singleton is created once at start-up, and its prototype dependency is resolved exactly once at that moment. The field then holds a single prototype instance forever, and every call uses the same object. Your \"prototype\" is a singleton with extra annotations — which is fine until the object carries per-call state, at which point requests start seeing each other's data.\n\nThe fixes, roughly in order of preference:\n\n```java\n@Service\npublic class ReportService {\n    private final ObjectProvider<ReportBuilder> builders;  // ask per call\n\n    public Report build(Spec spec) {\n        return builders.getObject().build(spec);           // fresh instance each time\n    }\n}\n```\n\n`ObjectProvider` (or `ObjectFactory`) is explicit and testable. `@Lookup` on an abstract method has Spring generate the lookup for you. A scoped proxy — `@Scope(value = \"prototype\", proxyMode = ScopedProxyMode.TARGET_CLASS)` — makes the injected reference a proxy that fetches a new target per invocation, which is what `request` and `session` scoped beans always need since they must be injectable into singletons.\n\nThe question behind the question is usually simpler: if the object holds per-call state, it probably should not be a bean at all. Construct it with `new` inside the method and pass its collaborators in. Also remember the container does not track prototypes after handing them out, so a prototype holding a resource will never have its `@PreDestroy` called.",
+      "keyPoints": [
+        "Singleton is per context, not per JVM",
+        "A prototype injected into a singleton is resolved once and then frozen",
+        "ObjectProvider, `@Lookup`, or a scoped proxy get a fresh instance per call",
+        "Request/session beans always need a scoped proxy to live in a singleton",
+        "Prototypes receive no destruction callback"
+      ],
+      "followUps": [
+        {
+          "q": "How does a scoped proxy actually deliver the right request-scoped bean?",
+          "a": "The injected object is a CGLIB subclass that holds no state. On each method call it resolves the real target from the current scope, which for request scope means a thread-bound `RequestAttributes`. That thread binding is why request-scoped beans do not work on a thread you spawned yourself unless you propagate the context."
+        },
+        {
+          "q": "Is a singleton bean thread-safe?",
+          "a": "The container gives you no thread safety whatsoever. One instance is shared by every request thread, so any mutable instance field on a `@Service` is a data race. Stateless singletons with all state in method parameters and local variables are the norm precisely because of this."
+        }
+      ],
+      "redFlags": [
+        "\"Prototype means a new object every time\" with no mention of the injection-point trap",
+        "Putting mutable per-request state in a singleton field",
+        "Reaching for `ApplicationContextAware` and `getBean()` as the first answer"
+      ]
+    },
+    {
+      "id": "jsc-04",
+      "level": "mid",
+      "type": "concept",
+      "question": "How does `@Transactional` actually work under the hood?",
+      "answer": "It is proxy-based AOP, and almost every surprising `@Transactional` behaviour falls out of that one fact.\n\nAt start-up, a `BeanPostProcessor` notices the annotation and replaces your bean in the container with a **proxy** — a CGLIB subclass by default in Spring Boot, or a JDK dynamic proxy if you configure `proxyTargetClass=false` and the class implements an interface. Everything injected elsewhere receives the proxy, not your object. When a call arrives, the `TransactionInterceptor` in the proxy runs first: it asks the `PlatformTransactionManager` for a transaction, which obtains a `Connection`, sets `autoCommit(false)`, and binds that connection to the current thread in `TransactionSynchronizationManager`. Your method then runs, and any repository call on the same thread finds the bound connection instead of taking a fresh one from the pool. On a normal return the interceptor commits; on an exception it consults the rollback rules and either rolls back or commits, then releases the connection.\n\nThree consequences follow directly:\n\n- **Only calls that go through the proxy are advised.** A call on `this` bypasses the interceptor entirely.\n- **Only public methods are advised** with the default proxy setup. `@Transactional` on a private or package-private method is silently ignored — no error, no transaction.\n- The transaction is **thread-bound**. Work you hand to another thread, an `@Async` method or a `CompletableFuture`, is outside it and will take its own connection.\n\nIt also explains why the annotation is not magic: it is an interceptor, and an interceptor you never pass through does nothing.",
+      "keyPoints": [
+        "A proxy wraps the bean; the TransactionInterceptor runs before your method",
+        "The connection is bound to the thread, which is how repositories join it",
+        "Only external, public calls are intercepted",
+        "Silent no-op on non-public methods and on self-invocation",
+        "A new thread means a new transaction, or none at all"
+      ],
+      "followUps": [
+        {
+          "q": "CGLIB or JDK dynamic proxy — does it matter?",
+          "a": "Spring Boot defaults to CGLIB so proxying works whether or not there is an interface. CGLIB subclasses your class, so it cannot proxy a `final` class or intercept a `final` or `private` method — those simply lose their advice with no warning. It also means the proxy's constructor runs, which occasionally surprises people with side-effecting constructors."
+        },
+        {
+          "q": "How can you prove at runtime that a transaction is actually active?",
+          "a": "`TransactionSynchronizationManager.isActualTransactionActive()` returns the truth, and it is worth asserting in a test for critical paths. Turning on `logging.level.org.springframework.transaction.interceptor=TRACE` shows every begin, commit and rollback with the method name, which settles most arguments in about a minute."
+        }
+      ],
+      "redFlags": [
+        "\"Spring just handles it\" with no mention of proxies",
+        "Not knowing the transaction is bound to the thread",
+        "Believing `@Transactional` works on private methods"
+      ],
+      "related": [
+        "database"
+      ]
+    },
+    {
+      "id": "jsc-05",
+      "level": "mid",
+      "type": "code",
+      "question": "Why does this code run with no transaction at all, and how would you fix it?",
+      "answer": "Because `processAll` calls `processOne` on `this`. `this` is the raw target object, not the proxy the container handed to everyone else, so the call never passes through the `TransactionInterceptor`. The annotation on `processOne` is inert. Each `save` therefore runs in its own implicit auto-commit transaction, and a failure on item 400 leaves 399 rows committed — which is exactly the partial-write bug you did not think you could have.\n\nThis is the single most common Spring transaction bug, and it fails silently: no exception, no warning, just no transaction.\n\nThe fixes, best first:\n\n**Move the method to another bean.** `processOne` belongs on a collaborator that `processAll` injects. The call then goes through that bean's proxy and behaves as written. This is not a workaround — it usually improves the design, because the per-item unit of work is a genuinely separate responsibility.\n\n**Self-inject a proxy reference** when splitting the class is disproportionate:\n\n```java\n@Autowired @Lazy private OrderService self;   // the proxy, not `this`\n// ...\nself.processOne(item);\n```\n\n`@Lazy` avoids the start-up circular reference. It works, but it is a signpost that something is off, and reviewers rightly frown at it.\n\n`AopContext.currentProxy()` also works but requires `@EnableAspectJAutoProxy(exposeProxy = true)` and couples your code to Spring's AOP internals. Switching to AspectJ load-time weaving removes the limitation entirely because the advice is woven into the bytecode rather than applied by a proxy — a real solution, but a heavy one for a single call site. The same rule applies to `@Async`, `@Cacheable` and `@Retryable`: all of them are proxies, and all of them vanish on self-invocation.",
+      "codeExample": {
+        "language": "java",
+        "code": [
+          "@Service",
+          "public class OrderService {",
+          "",
+          "    private final OrderRepository repository;",
+          "",
+          "    public OrderService(OrderRepository repository) {",
+          "        this.repository = repository;",
+          "    }",
+          "",
+          "    public void processAll(List<Order> batch) {",
+          "        for (Order order : batch) {",
+          "            processOne(order);      // internal call — bypasses the proxy",
+          "        }",
+          "    }",
+          "",
+          "    @Transactional",
+          "    public void processOne(Order order) {",
+          "        repository.save(order);",
+          "        repository.save(order.auditEntry());",
+          "    }",
+          "}"
+        ]
+      },
+      "keyPoints": [
+        "`this` is the target object, not the proxy, so the interceptor is skipped",
+        "It fails silently — no transaction, no error",
+        "Extracting the method into a second bean is the clean fix",
+        "`@Lazy` self-injection works but signals a design problem",
+        "The same trap applies to `@Async`, `@Cacheable` and `@Retryable`"
+      ],
+      "followUps": [
+        {
+          "q": "Would annotating `processAll` instead solve it?",
+          "a": "It would give you a transaction, but a different one: a single transaction around the whole batch. That may be what you want, or it may mean one bad row rolls back ten thousand good ones and holds a connection and its locks for minutes. Per-item and whole-batch are different semantics, so choose deliberately rather than by accident."
+        },
+        {
+          "q": "How would you catch this in a test?",
+          "a": "Assert on behaviour rather than annotations: run the batch against a real database with an item engineered to fail halfway, and assert nothing was persisted. A unit test with mocks will happily pass while the transaction is missing, which is why these bugs reach production."
+        }
+      ],
+      "redFlags": [
+        "Not spotting that the internal call is the problem",
+        "\"The annotation is there, so there is a transaction\"",
+        "Proposing `AopContext.currentProxy()` before considering extracting the method"
+      ]
+    },
+    {
+      "id": "jsc-06",
+      "level": "mid",
+      "type": "scenario",
+      "question": "You need an audit row written even when the business transaction rolls back. Explain REQUIRED, REQUIRES_NEW and NESTED and pick one.",
+      "answer": "`REQUIRED` is the default: join the caller's transaction if one exists, otherwise start one. Crucially there is only ever **one physical transaction** — an inner `REQUIRED` method that throws does not roll back independently; it marks the shared transaction rollback-only, and the outer commit then fails with `UnexpectedRollbackException`.\n\n`REQUIRES_NEW` suspends the caller's transaction and starts a genuinely independent one on a **second connection**, committing or rolling back on its own.\n\n`NESTED` stays on the same connection and takes a **JDBC savepoint**. An inner failure rolls back to the savepoint and the outer transaction survives — but if the outer rolls back, the nested work goes with it. It requires a resource-local transaction manager with savepoint support; JTA does not offer it.\n\nFor audit logging the requirement is \"the record survives the business rollback\", so `REQUIRES_NEW` is the only one of the three that delivers it:\n\n```java\n@Transactional(propagation = Propagation.REQUIRES_NEW)\npublic void record(AuditEvent event) { auditRepository.save(event); }\n```\n\nWith the costs stated honestly. It holds **two pool connections simultaneously** for the duration, so a pool sized for N concurrent requests now needs headroom or you deadlock the pool against itself. The inner transaction cannot see the outer's uncommitted rows — it is a different connection — so the audit row must carry data passed in, not read back from the database. And if it touches rows the outer transaction has locked, the two deadlock and the database kills one of them.\n\nWhen those costs bite, the better design is usually to stop using the transaction manager for this at all: publish the audit event and write it outside the transaction, or append it to an outbox table in the same transaction and ship it asynchronously.",
+      "keyPoints": [
+        "REQUIRED joins — one physical transaction, and an inner failure poisons it",
+        "REQUIRES_NEW is a second connection and commits independently",
+        "NESTED is a savepoint: survives inner failure, dies with the outer",
+        "REQUIRES_NEW costs two connections and cannot read uncommitted outer rows",
+        "Self-deadlock on locked rows is the failure mode to watch for"
+      ],
+      "followUps": [
+        {
+          "q": "Where does `UnexpectedRollbackException` come from?",
+          "a": "An inner `REQUIRED` method threw, the interceptor marked the shared transaction rollback-only, and the outer method caught the exception and carried on as if all were well. At commit time the manager refuses and throws. The message 'Transaction rolled back because it has been marked as rollback-only' means exactly this: someone swallowed an exception that had already condemned the transaction."
+        },
+        {
+          "q": "Why is an outbox often better than REQUIRES_NEW here?",
+          "a": "The outbox row is written in the same transaction as the business change, so the two are atomic — you can never have one without the other, in either direction. A separate poller publishes it afterwards. You trade immediate delivery for the guarantee, and you stop paying for a second connection per request."
+        }
+      ],
+      "redFlags": [
+        "Thinking an inner REQUIRED method rolls back on its own",
+        "Choosing REQUIRES_NEW with no awareness of the second connection",
+        "Claiming NESTED works everywhere"
+      ],
+      "related": [
+        "database",
+        "message-queue"
+      ]
+    },
+    {
+      "id": "jsc-07",
+      "level": "mid",
+      "type": "concept",
+      "question": "When do you use `@Component` versus `@Bean`, and what does `proxyBeanMethods` do?",
+      "answer": "`@Component` — and its stereotypes `@Service`, `@Repository`, `@Controller` — marks a class you own so component scanning registers it. Spring constructs it, so you get no say in how. `@Bean` marks a factory method inside a configuration class, and you write the construction code yourself. Use `@Bean` when you cannot annotate the class because you do not own it (an `ObjectMapper`, a `RestClient`, a third-party client), when construction needs logic, or when one class needs to be registered several times under different names with different configuration. The stereotypes are not merely decorative either: `@Repository` enables exception translation from vendor-specific `SQLException`s into Spring's `DataAccessException` hierarchy.\n\n`@Configuration` is itself a `@Component`, but with one extra behaviour controlled by `proxyBeanMethods`, which defaults to `true`:\n\n```java\n@Configuration                       // proxyBeanMethods = true, \"full\" mode\npublic class AppConfig {\n    @Bean ObjectMapper mapper() { return new ObjectMapper(); }\n    @Bean Renderer renderer() { return new Renderer(mapper()); }   // returns the singleton\n}\n```\n\nIn full mode Spring CGLIB-proxies the configuration class and intercepts every `@Bean` method call, so the call to `mapper()` inside `renderer()` returns the container's singleton rather than constructing a second one. Set `proxyBeanMethods = false` — \"lite\" mode — and that interception disappears: `mapper()` is a plain Java call and you get **two** `ObjectMapper` instances, one of them unmanaged. In lite mode you must declare the dependency as a method parameter, `Renderer renderer(ObjectMapper mapper)`, which Spring resolves from the container.\n\nLite mode exists because the CGLIB subclass costs class generation at start-up. Spring Boot's own auto-configurations all use `proxyBeanMethods = false` for precisely that reason, and it is also required for GraalVM native images. It is a fine default for your own configuration as long as you take dependencies as parameters.",
+      "keyPoints": [
+        "`@Component` for classes you own, `@Bean` for ones you do not or for custom construction",
+        "`@Repository` adds persistence exception translation",
+        "Full mode CGLIB-proxies the class so inter-bean calls return the singleton",
+        "`proxyBeanMethods = false` turns `@Bean` calls into ordinary Java calls — duplicate instances",
+        "In lite mode, take dependencies as method parameters"
+      ],
+      "followUps": [
+        {
+          "q": "What happens if you put `@Bean` methods in a plain `@Component`?",
+          "a": "They are registered, but the class runs in lite mode, so inter-bean method calls create new instances. It works if you take parameters and never call a `@Bean` method directly, and it is exactly the trap people fall into when they move a `@Bean` method out of a `@Configuration` to 'tidy up'."
+        },
+        {
+          "q": "Why does GraalVM native image care?",
+          "a": "CGLIB generates subclasses at runtime, which a closed-world native image cannot do. Lite-mode configuration needs no runtime class generation, so it works under native compilation. The same pressure is why proxy-free approaches are increasingly favoured in Spring 6."
+        }
+      ],
+      "redFlags": [
+        "\"They are the same thing\"",
+        "Not knowing a `@Bean` method call inside `@Configuration` is intercepted",
+        "Setting `proxyBeanMethods = false` and still calling `@Bean` methods directly"
+      ]
+    },
+    {
+      "id": "jsc-08",
+      "level": "senior",
+      "type": "tradeoff",
+      "question": "Spring Boot fails at start-up with a circular reference. How do you fix it, and what is it telling you?",
+      "answer": "Mechanically: `A` needs `B` in its constructor and `B` needs `A` in its constructor, so neither can be built first. This one is unsolvable in principle, not just by Spring. With field or setter injection Spring historically resolved cycles by exposing a half-built `A` from its early-reference cache, but since Spring Boot 2.6 circular references are **rejected by default** and you get a start-up failure naming the cycle. That default is deliberate: the previous behaviour let a bean observe a collaborator that was not fully initialised yet, and it let cycles accumulate unnoticed.\n\nThe quick escapes exist and are mostly wrong. `spring.main.allow-circular-references=true` restores the old behaviour and preserves the problem. `@Lazy` on one injection point injects a proxy that resolves the real bean on first use, which breaks the construction cycle without removing the design cycle — legitimate as a stopgap, not as an answer.\n\nThe design reading is what the interviewer wants. A cycle means `A` and `B` are not two things; they are one thing wearing two names. The usual causes and their fixes:\n\n- **A shared responsibility**. Both need the same logic, so each reaches for the other. Extract it into a third collaborator that both depend on, and the cycle becomes a tree.\n- **A backward notification**. `A` calls down into `B`, and `B` needs to tell `A` something happened. Invert it: `B` publishes an `ApplicationEvent` or calls an interface it owns and `A` implements. The compile-time dependency now points one way.\n- **A god service** that has grown until everything depends on it and it depends on everything. Split it along its actual seams.\n\nThe practical tell is that a codebase with one cycle usually has several, and they make everything downstream harder — start-up ordering, testing a component in isolation, and reasoning about what initialises when.",
+      "keyPoints": [
+        "Constructor cycles are logically unsolvable, not a Spring limitation",
+        "Boot 2.6+ rejects circular references by default, and that is correct",
+        "`allow-circular-references` and `@Lazy` hide the cycle rather than fix it",
+        "Extract a third collaborator, or invert the backward call with an event or interface",
+        "A cycle means the responsibility split is wrong"
+      ],
+      "followUps": [
+        {
+          "q": "What exactly does `@Lazy` inject?",
+          "a": "A proxy of the declared type that holds no target. On the first method call it resolves the real bean from the context and delegates. That defers the cycle from construction time to first use, which is enough to start up — and it means any start-up failure in that bean now surfaces on the first request instead of at boot, which is a worse place to find it."
+        },
+        {
+          "q": "Are there cycles you would genuinely accept?",
+          "a": "Occasionally, in legacy code where the correct refactor is large and the risk is real — take `@Lazy`, add a comment explaining the cycle, and put it in the backlog. What is not acceptable is flipping the global `allow-circular-references` flag, because that disables the detector for the entire application and you will never see the next one."
+        }
+      ],
+      "redFlags": [
+        "Setting `allow-circular-references=true` and calling it fixed",
+        "Reaching for `@Lazy` with no diagnosis of why the cycle exists",
+        "Not recognising that a constructor cycle cannot be resolved at all"
+      ]
+    },
+    {
+      "id": "jsc-09",
+      "level": "senior",
+      "type": "scenario",
+      "question": "A `@Transactional` service method reports success, but nothing was rolled back after a failure and the database is left half-updated. Diagnose it.",
+      "answer": "Half-written data with no error has a small set of causes, and they separate quickly. Turn on `logging.level.org.springframework.transaction.interceptor=TRACE` and replay the failure: the log says whether a transaction was begun at all, and whether it ended in commit or rollback. That splits the space in two.\n\n**No transaction was begun.** Then it is the proxy: the method was called on `this` from inside the same class, or it is not public, or the caller is not a Spring bean, or the class is `final` so CGLIB could not subclass it. Check which object actually holds the annotation.\n\n**A transaction was begun and then committed.** The interceptor saw no reason to roll back, and there are two causes:\n\n*The exception was caught inside the method.* `try { ... } catch (Exception e) { log.error(...); }` around the failing call means nothing propagates out, so the interceptor sees a normal return and commits everything written before the failure. The log says the operation failed; the database says it succeeded.\n\n*The exception was checked.* Spring's default rollback rule is `RuntimeException` and `Error` only — a checked exception **commits**. The fix is explicit:\n\n```java\n@Transactional(rollbackFor = Exception.class)\n```\n\nA variant worth naming: an inner `REQUIRED` method threw, the interceptor marked the shared transaction rollback-only, and the outer method caught it. Here the rollback does happen, but the outer method believes it succeeded and the commit fails with `UnexpectedRollbackException` — a confusing exception at the very end rather than at the point of failure.\n\nThe durable fixes are policy, not patches. Do not catch inside a transactional method unless you intend to commit what came before; if you must, rethrow or call `TransactionAspectSupport.currentTransactionStatus().setRollbackOnly()`. Set `rollbackFor` if you use checked exceptions. And cover the rollback path with an integration test asserting the table is empty, because mocks cannot see any of this.",
+      "keyPoints": [
+        "First establish whether a transaction was begun at all — the interceptor log settles it",
+        "No transaction: self-invocation, non-public method, or an unproxied class",
+        "Committed anyway: the exception was swallowed, or it was checked",
+        "Default rollback rules cover RuntimeException and Error only",
+        "An integration test asserting rollback is the only test that catches this"
+      ],
+      "followUps": [
+        {
+          "q": "Is catching inside a transactional method always wrong?",
+          "a": "No — sometimes you genuinely want to commit the work done so far and record the failure. The bug is doing it unintentionally. When it is deliberate, make it obvious: catch a narrow type, comment why the partial result is acceptable, and if it is not acceptable, call `setRollbackOnly()` so the intent is in the code rather than in someone's head."
+        },
+        {
+          "q": "Why does Spring default to not rolling back on checked exceptions?",
+          "a": "It follows the EJB convention, where a checked exception models an expected business outcome — 'insufficient funds' — that the caller is meant to handle, while a runtime exception models a failure. The distinction is defensible in theory and almost never matches how teams actually use checked exceptions, which is why `rollbackFor = Exception.class` is such a common project-wide convention."
+        }
+      ],
+      "redFlags": [
+        "Guessing rather than checking whether a transaction was started",
+        "Not knowing checked exceptions do not trigger rollback by default",
+        "Testing rollback behaviour only with mocks"
+      ],
+      "related": [
+        "database",
+        "sql-querying"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,239 @@
+{
+  "id": "load-balancer",
+  "title": "Load Balancer",
+  "group": "Performance",
+  "level": 1,
+  "estimatedMinutes": 25,
+  "summary": "One address in front of many servers, spreading requests and routing around the ones that are unhealthy.",
+  "analogy": "The person at the front of a bank who directs you to the next free teller. You queue once instead of guessing which line moves fastest; if a teller goes on break, new customers simply stop being sent to them, and nobody in the queue notices.",
+  "explanation": {
+    "beginner": "One server can only handle so many requests. So you run several identical ones and put a load balancer in front. Everyone connects to the load balancer's address, and it passes each request to whichever server is free and healthy. If a server crashes, the load balancer stops sending traffic there, and users never see the failure — that is often more valuable than the extra capacity.",
+    "interview": "A reverse proxy distributing traffic across a pool of backends, with active or passive health checking. Layer 4 balancers forward TCP connections and are extremely fast; Layer 7 balancers parse HTTP and can route by path, host or header, terminate TLS, and retry idempotent requests. Algorithms range from round-robin to least-connections to consistent hashing. Backends must be stateless — or the balancer must provide sticky sessions, which undermines even distribution and complicates deployments."
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "client",
+        "label": "Clients",
+        "type": "client",
+        "x": 110,
+        "y": 300
+      },
+      {
+        "id": "lb",
+        "label": "Load Balancer",
+        "type": "lb",
+        "x": 400,
+        "y": 300,
+        "note": "Health checks every few seconds; removes failing backends from rotation automatically.",
+        "why": {
+          "without": [
+            "One server is both your capacity ceiling and your single point of failure",
+            "A crash is a full outage",
+            "Deploys mean downtime"
+          ],
+          "with": [
+            "Capacity scales by adding instances",
+            "A dead instance is routed around within seconds",
+            "Rolling deploys become invisible to users"
+          ],
+          "conclusion": "Availability is usually the bigger win. Capacity is the one people remember."
+        }
+      },
+      {
+        "id": "app1",
+        "label": "App 1",
+        "type": "server",
+        "x": 740,
+        "y": 170
+      },
+      {
+        "id": "app2",
+        "label": "App 2",
+        "type": "server",
+        "x": 740,
+        "y": 300
+      },
+      {
+        "id": "app3",
+        "label": "App 3 (unhealthy)",
+        "type": "server",
+        "x": 740,
+        "y": 430,
+        "note": "Failing its health check, so it receives no traffic until it recovers."
+      },
+      {
+        "id": "db",
+        "label": "Database",
+        "type": "db",
+        "x": 960,
+        "y": 300,
+        "note": "Shared state lives here — which is exactly what lets any app instance serve any request."
+      }
+    ],
+    "edges": [
+      {
+        "from": "client",
+        "to": "lb"
+      },
+      {
+        "from": "lb",
+        "to": "app1"
+      },
+      {
+        "from": "lb",
+        "to": "app2"
+      },
+      {
+        "from": "lb",
+        "to": "app3",
+        "label": "no traffic",
+        "dashed": true
+      },
+      {
+        "from": "app1",
+        "to": "db"
+      },
+      {
+        "from": "app2",
+        "to": "db"
+      }
+    ]
+  },
+  "why": {
+    "without": [
+      "Capacity is capped by the biggest machine you can buy",
+      "Any single failure is a total outage",
+      "Every deploy causes downtime"
+    ],
+    "with": [
+      "Add instances to add capacity",
+      "Failures are detected and routed around in seconds",
+      "Rolling deploys, canaries and zero-downtime releases become possible"
+    ],
+    "conclusion": "A load balancer buys throughput, but its real value is that no single machine's death is visible to users."
+  },
+  "whenToUse": [
+    "More than one instance of anything",
+    "You need zero-downtime deploys",
+    "You want failures handled automatically rather than by a pager"
+  ],
+  "whenNotToUse": [
+    "A single instance where the balancer itself would be the new single point of failure (unless it is a managed, redundant service)",
+    "Genuinely stateful long-lived connections that cannot be moved — though even then, balance the connection setup"
+  ],
+  "tradeoffs": [
+    {
+      "option": "Layer 4 (TCP)",
+      "pros": [
+        "Extremely fast, minimal processing",
+        "Protocol-agnostic"
+      ],
+      "cons": [
+        "Cannot route on URL, host or header",
+        "Cannot retry a failed HTTP request",
+        "No TLS termination"
+      ]
+    },
+    {
+      "option": "Layer 7 (HTTP)",
+      "pros": [
+        "Route by path or header, terminate TLS, retry idempotent requests, rewrite and compress"
+      ],
+      "cons": [
+        "More CPU per request, slightly higher latency",
+        "Must understand the protocol"
+      ]
+    },
+    {
+      "option": "Round-robin",
+      "pros": [
+        "Trivial, no state"
+      ],
+      "cons": [
+        "Ignores that requests differ wildly in cost; a slow backend still gets its share"
+      ]
+    },
+    {
+      "option": "Least connections",
+      "pros": [
+        "Adapts to uneven request costs automatically"
+      ],
+      "cons": [
+        "Requires tracking state per backend"
+      ]
+    },
+    {
+      "option": "Consistent hashing",
+      "pros": [
+        "The same key reliably lands on the same backend, which makes local caches effective"
+      ],
+      "cons": [
+        "Uneven distribution with skewed keys; needs virtual nodes to smooth out"
+      ]
+    }
+  ],
+  "keyNumbers": [
+    {
+      "label": "Typical health check interval",
+      "value": "2–10 s"
+    },
+    {
+      "label": "Time to evict a dead backend",
+      "value": "Interval × unhealthy threshold, commonly 10–30 s"
+    },
+    {
+      "label": "L7 added latency",
+      "value": "~1 ms"
+    }
+  ],
+  "interactive": "load-balancer-sim",
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "architecture",
+      "question": "Users are randomly logged out after you add a second app server. What is the most likely cause?",
+      "options": [
+        "The load balancer is misconfigured",
+        "Session state is stored in each server's memory, so a request routed to the other server does not find it",
+        "The database is too slow",
+        "TLS is failing"
+      ],
+      "answerIndex": 1,
+      "explanation": "The classic symptom of stateful app servers. Fix it by externalising sessions to Redis or using signed tokens — sticky sessions work but undermine even balancing and make deploys messier."
+    },
+    {
+      "id": "q2",
+      "type": "mcq",
+      "question": "Why do health checks matter more than the load-spreading itself for small systems?",
+      "options": [
+        "They do not",
+        "Because automatic removal of a failed instance converts a total outage into an invisible blip",
+        "Because they reduce latency",
+        "Because they encrypt traffic"
+      ],
+      "answerIndex": 1,
+      "explanation": "At small scale one server may well have enough capacity. The reason to run two behind a balancer is that one of them will eventually die at 3am."
+    },
+    {
+      "id": "q3",
+      "type": "architecture",
+      "question": "Your backends keep a local in-memory cache and hit rates are poor behind a round-robin balancer. What routing helps?",
+      "options": [
+        "Least connections",
+        "Consistent hashing on the cache key, so the same key lands on the same backend",
+        "Random",
+        "Weighted round-robin"
+      ],
+      "answerIndex": 1,
+      "explanation": "Round-robin scatters requests for the same key across all backends, so each caches everything. Consistent hashing gives each backend a stable slice of the key space."
+    }
+  ],
+  "related": [
+    "proxy",
+    "scaling",
+    "api-gateway",
+    "consistent-hashing",
+    "cache"
+  ]
+}

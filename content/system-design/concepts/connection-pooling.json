@@ -1,0 +1,260 @@
+{
+  "id": "connection-pooling",
+  "title": "Connection Pooling",
+  "group": "Data",
+  "level": 1,
+  "estimatedMinutes": 22,
+  "summary": "Keep a small set of database connections open and lend them out, instead of dialling a new one per request. The counter-intuitive part is sizing: past the point where the database is saturated, a bigger pool makes things slower, not faster.",
+  "analogy": "A taxi rank outside a station. Cabs wait with the engine running, so a passenger steps in and leaves immediately instead of waiting for one to be summoned, drive over and warm up. But the rank is not the bottleneck — the road is. Doubling the number of cabs on the rank does not move more passengers per hour through a one-lane road; it just moves the queue from the pavement, where the station manager can see it, into the traffic jam, where nobody can.",
+  "explanation": {
+    "beginner": "Talking to a database over the network requires setting up a connection first: the two machines exchange a few messages to agree they are talking, a few more to set up encryption, and a few more for the database to check your username and password. That is several round trips across the network before you have asked for a single row — often more time than the query itself takes. On top of that, some databases start a whole new operating-system process for each connection, which costs memory. A connection pool solves this by opening a fixed number of connections once, when the application starts, and handing them out to requests that need one. A request borrows a connection, runs its query, and gives it back for the next request to use.",
+    "interview": "Connection establishment is a multi-round-trip handshake — TCP, then TLS, then the database's own authentication exchange — so it costs several RTTs before the first query, and on a process-per-connection server like PostgreSQL each backend also costs single-digit megabytes of memory. A pool amortises that by keeping N live sessions and lending them under a checkout/return protocol with a bounded wait queue. Sizing is the real lesson and it is not intuitive: the database can only execute as many queries in parallel as it has cores and I/O capacity, so once the pool exceeds that, extra connections do not add throughput — they add context switching, lock contention and queueing inside the database, where your metrics cannot see it. A common starting point is roughly (2 × cores) + effective disk count, then measure. Failure modes to name: pool exhaustion, which presents as requests timing out on checkout while the database itself looks idle; connection leaks from handles never returned on an error path, which look identical but never recover; and multiplication — N pods × pool size is the number the database actually sees, which is how a well-behaved service with a pool of 10 blows past max_connections at 30 replicas. Serverless functions are the extreme case, since each instance is its own pool of one or more, so an external pooler such as PgBouncer in transaction mode is used to multiplex many client sessions onto far fewer server sessions."
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "client",
+        "label": "Clients",
+        "type": "client",
+        "x": 110,
+        "y": 300,
+        "note": "Concurrent requests. Each needs a database connection for a few milliseconds, not for its whole lifetime."
+      },
+      {
+        "id": "app",
+        "label": "App instance",
+        "type": "server",
+        "x": 370,
+        "y": 300,
+        "note": "Handles many requests at once. Borrow late, return early — hold a connection only around the query, never across an HTTP call."
+      },
+      {
+        "id": "pool",
+        "label": "Connection pool",
+        "type": "queue",
+        "x": 640,
+        "y": 150,
+        "note": "A fixed set of live connections plus a bounded wait queue. When all are lent out, the next borrower waits, then times out.",
+        "why": {
+          "without": [
+            "Every request pays TCP + TLS + authentication — several round trips before the first row is read",
+            "A 2 ms query can sit behind 5 ms of connection setup, so most of the request is spent connecting",
+            "On a process-per-connection database, a traffic spike forks hundreds of backends and the server runs out of memory"
+          ],
+          "with": [
+            "Connection setup is paid once at startup and amortised over every request that follows",
+            "The number of concurrent sessions the database sees is bounded and predictable",
+            "Overload queues in your application, where you can see and time it out, rather than inside the database"
+          ],
+          "conclusion": "A pool converts a per-request cost into a startup cost and puts a ceiling on database concurrency — but only if you size that ceiling to what the database can actually execute in parallel."
+        }
+      },
+      {
+        "id": "pooler",
+        "label": "PgBouncer",
+        "type": "proxy",
+        "x": 640,
+        "y": 440,
+        "note": "External pooler. Multiplexes many client sessions onto far fewer server sessions — the answer to N pods × pool size and to serverless."
+      },
+      {
+        "id": "db",
+        "label": "Database",
+        "type": "db",
+        "x": 920,
+        "y": 300,
+        "note": "Finite cores and disks. Past saturation, more connections add context switching and lock contention, not throughput."
+      }
+    ],
+    "edges": [
+      {
+        "from": "client",
+        "to": "app",
+        "label": "1. requests"
+      },
+      {
+        "from": "app",
+        "to": "pool",
+        "label": "2. borrow (or wait)"
+      },
+      {
+        "from": "pool",
+        "to": "db",
+        "label": "3. reuse live session"
+      },
+      {
+        "from": "app",
+        "to": "pooler",
+        "label": "many pods' pools",
+        "dashed": true
+      },
+      {
+        "from": "pooler",
+        "to": "db",
+        "label": "few server sessions",
+        "dashed": true
+      },
+      {
+        "from": "pool",
+        "to": "app",
+        "label": "4. return",
+        "dashed": true
+      }
+    ]
+  },
+  "why": {
+    "without": [
+      "Every request pays a TCP handshake, a TLS handshake and a database authentication exchange — several round trips before a single row is read",
+      "On a 2 ms query, 5 ms of setup means the majority of the request is spent connecting, and p99 is dominated by handshake variance",
+      "A process-per-connection database forks a backend per request and a spike exhausts its memory, which takes the whole database down rather than just slowing it",
+      "Nothing bounds concurrency: 5,000 in-flight requests means 5,000 attempted connections, and the database falls over instead of queueing"
+    ],
+    "with": [
+      "Handshake cost is paid at startup and amortised across every request the connection serves",
+      "Database concurrency has a hard, chosen ceiling instead of whatever traffic happens to be",
+      "Excess load waits in your application's queue, where you can measure it and fail fast with a timeout",
+      "Connection health checks and recycling let you survive a database failover without restarting the app"
+    ],
+    "conclusion": "Pooling is not optional for any service with real traffic. The design work is choosing the size, and the right size is the database's parallel capacity — not the application's concurrency."
+  },
+  "whenToUse": [
+    "Any long-running service making frequent short queries against a database",
+    "Databases that fork a process per connection, where uncontrolled connections are a memory-exhaustion risk",
+    "When connection setup involves TLS and authentication, which is to say almost always in production",
+    "When you need a deliberate ceiling on how much concurrency the database is exposed to",
+    "Many application replicas or serverless instances — which need an external pooler in front, not just a bigger local pool"
+  ],
+  "whenNotToUse": [
+    "Very low traffic — a job that runs once an hour and makes three queries gains nothing from a pool, and an idle pool holds server-side resources around the clock for no benefit",
+    "Long-running analytical queries that hold a connection for minutes: a pool of 10 is fully occupied by 10 reports, and every OLTP request behind them times out on checkout. Those belong on a separate pool, a read replica, or an async job with its own budget",
+    "A short-lived CLI or migration script — one connection opened and closed directly is simpler, and a pool just adds a shutdown path you will forget to call",
+    "Per-request transient state on the session (temporary tables, SET LOCAL-style settings, prepared statements) when using a transaction-mode pooler, because the next borrower may get a different underlying session and inherit or lose that state",
+    "As a fix for a slow query — a bigger pool moves the queue, it does not make the database faster, and it usually makes the symptoms harder to diagnose"
+  ],
+  "tradeoffs": [
+    {
+      "option": "Small pool (sized near the database's parallel capacity)",
+      "pros": [
+        "The database runs at its throughput peak instead of thrashing between too many concurrent sessions",
+        "Queueing happens in your application where it is visible, timeable and sheddable",
+        "Leaves headroom for other clients, migrations and your own admin connections"
+      ],
+      "cons": [
+        "Checkout waits appear under bursts and look like slowness even though the database is at capacity",
+        "Needs a real timeout and a fail-fast path, or waits turn into a pile-up",
+        "One slow query type can monopolise the pool and starve everything else"
+      ]
+    },
+    {
+      "option": "Large pool",
+      "pros": [
+        "Bursts rarely wait for a connection",
+        "Fewer checkout timeouts in the application's own metrics"
+      ],
+      "cons": [
+        "Past saturation it adds no throughput — the work queues inside the database instead, where your dashboards cannot see it",
+        "More concurrent sessions mean more context switching and more lock contention, so p99 gets worse, not better",
+        "Multiplied across replicas it is how services exhaust max_connections and lock out even the admin console"
+      ]
+    },
+    {
+      "option": "Per-instance pools only",
+      "pros": [
+        "No extra component to run, monitor or fail over",
+        "One less network hop, and full session semantics are preserved"
+      ],
+      "cons": [
+        "Total connections are N instances × pool size, so autoscaling silently multiplies load on the database",
+        "Each instance's pool is idle-but-reserved while another instance is starved",
+        "Serverless makes this unworkable: instances are numerous, short-lived, and each brings its own connections"
+      ]
+    },
+    {
+      "option": "External pooler (e.g. PgBouncer in transaction mode)",
+      "pros": [
+        "Multiplexes many client sessions onto a small number of server sessions, so pod count stops mattering",
+        "Gives one place to set the global ceiling and to observe waiting",
+        "Makes serverless and high-replica deployments viable against a single database"
+      ],
+      "cons": [
+        "Transaction mode breaks session-scoped features: session-level prepared statements, advisory locks, LISTEN/NOTIFY and temp tables",
+        "Another process in the hot path that must be made highly available, or it becomes the single point of failure",
+        "Adds a hop of latency and a second place where connections can be exhausted"
+      ]
+    }
+  ],
+  "keyNumbers": [
+    {
+      "label": "Round trips before the first query on a new TLS connection",
+      "value": "roughly 3–5 (TCP + TLS + auth)"
+    },
+    {
+      "label": "Connection setup on a same-region link",
+      "value": "a few milliseconds — often longer than the query"
+    },
+    {
+      "label": "Memory per backend on a process-per-connection database",
+      "value": "single-digit MB"
+    },
+    {
+      "label": "Common pool-size starting point",
+      "value": "~(2 × CPU cores) + effective disk count, then measure"
+    },
+    {
+      "label": "PostgreSQL default max_connections",
+      "value": "100"
+    },
+    {
+      "label": "What the database actually sees",
+      "value": "N instances × pool size (30 pods × 10 = 300)"
+    }
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "architecture",
+      "question": "Under load, requests start failing with 'timed out waiting for a connection'. Database CPU is at 15%, disk is idle, and active queries are few. What is happening?",
+      "options": [
+        "The database is overloaded; add a read replica",
+        "The pool is exhausted — connections are being held but not used, typically a leak on an error path or work done while holding a connection; find who is holding and for how long",
+        "Network packet loss between app and database",
+        "The query planner picked a bad plan"
+      ],
+      "answerIndex": 1,
+      "explanation": "An idle database plus checkout timeouts is the signature of pool exhaustion, not database overload. The connections exist but are not doing database work. The usual causes are a leak (a handle not returned because an exception skipped the close, so the pool shrinks permanently until restart) or holding a connection across something slow that is not a query — an HTTP call, a file upload, a long transaction left open while waiting on the user. Instrument checkout wait time and connection hold time; a leak shows as a monotonic decline in available connections that never recovers, while contention recovers when traffic drops."
+    },
+    {
+      "id": "q2",
+      "type": "mcq",
+      "question": "Your database has 8 cores and a pool of 20 per instance. p99 is bad under load, so someone proposes raising the pool to 200. What is the most likely result?",
+      "options": [
+        "Roughly 10× the throughput, since 10× more queries run at once",
+        "No throughput gain and worse p99 — the database still executes about as many queries in parallel as it has cores, so the extra load becomes queueing, context switching and lock contention inside the database",
+        "Throughput is unchanged and latency is unchanged; the pool size is irrelevant",
+        "Better p99, because fewer requests wait for a connection"
+      ],
+      "answerIndex": 1,
+      "explanation": "A pool does not create database capacity. Once the database is saturated, adding connections just moves the queue from your application — where it is measured and can be timed out — into the database, where it also brings context-switching overhead and more contention on the same locks and buffers. The waits vanish from your dashboard and reappear as worse tail latency. If checkout waits are the symptom, the fix is faster or fewer queries, caching, or more database capacity — not a bigger pool."
+    },
+    {
+      "id": "q3",
+      "type": "architecture",
+      "question": "A serverless function with a conservative pool of 5 starts refusing connections in production. Nothing about the code changed — traffic simply grew. What is the cleanest fix?",
+      "options": [
+        "Reduce each function's pool to 1 and accept the handshake cost per invocation",
+        "Put a transaction-mode pooler such as PgBouncer in front, so hundreds of short-lived client sessions multiplex onto a small number of server sessions",
+        "Raise max_connections until it stops erroring",
+        "Cache query results in the function's memory"
+      ],
+      "answerIndex": 1,
+      "explanation": "Concurrent function instances each carry their own pool, so the database sees instances × pool size — 100 concurrent instances at 5 is 500 connections against a default limit of 100. Raising max_connections trades one failure for another, since each backend costs memory and the server degrades before the new limit. A pooler is the structural answer: it decouples client-side connection count from server-side connection count. Note the cost — transaction mode gives up session-scoped features such as session-level prepared statements, advisory locks and temporary tables."
+    }
+  ],
+  "related": [
+    "database",
+    "indexing",
+    "scaling",
+    "circuit-breaker",
+    "observability"
+  ]
+}

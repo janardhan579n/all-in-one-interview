@@ -1,0 +1,281 @@
+{
+  "id": "saga",
+  "title": "Sagas and Distributed Transactions",
+  "group": "Distributed",
+  "level": 3,
+  "estimatedMinutes": 32,
+  "summary": "Once the data lives in separate services there is no shared transaction to roll back. A saga replaces atomicity with a sequence of local commits, each paired with a compensating action that semantically undoes it — and the system is visibly half-finished in between.",
+  "analogy": "Booking a holiday across three separate websites: flight, hotel, car. Each booking is final the moment you click, and there is no button that unbooks all three. If the car falls through you do not rewind time — you cancel the hotel, which may keep a fee, and you email the airline for a refund that arrives next week. In between, you genuinely have a flight and no car, and anyone looking at your calendar sees that half-finished state.",
+  "explanation": {
+    "beginner": "Inside one database, a transaction gives you all-or-nothing for free: either every change happens or none does. Split your data across an order service, a payment service and an inventory service, and that guarantee disappears — each one commits to its own database, and there is no shared undo. A saga is the workaround. You run the steps one at a time, and for each step you write a second operation that undoes it in business terms: if payment succeeded but stock ran out, you issue a refund. The refund is not a rollback — the charge really happened and the customer really saw it — but the end state is correct.",
+    "interview": "The loss is atomicity across service boundaries. Two-phase commit restores it with prepare/commit, but participants hold locks for the whole round trip and a coordinator crash after prepare leaves them blocked with no way to decide — 2PC buys atomicity with availability, which most systems refuse. A saga is instead a sequence of local ACID transactions T1..Tn with compensations C1..Cn-1; on failure at step k you run Ck-1..C1 in reverse. Consequences to name: no isolation, so intermediate states are readable (dirty reads, lost updates — mitigated with semantic locks or status flags); compensations are semantic, not inverse; every step must be idempotent because retries are guaranteed at-least-once; compensations must be idempotent and must not fail, so they retry forever into a dead-letter queue. Coordinate by choreography (events) or orchestration (a coordinator). The dual-write problem — commit plus publish — is solved with a transactional outbox."
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "client",
+        "label": "Client",
+        "type": "client",
+        "x": 110,
+        "y": 300,
+        "note": "Gets a fast 'order accepted' — not 'order complete'. The saga is still running, and the UI has to be honest about that."
+      },
+      {
+        "id": "orchestrator",
+        "label": "Saga orchestrator",
+        "type": "server",
+        "x": 380,
+        "y": 300,
+        "note": "Holds the saga's state machine: which step we are on, what to do on success, what to compensate on failure.",
+        "why": {
+          "without": [
+            "Three services each commit to their own database with no shared transaction",
+            "Step 3 fails after steps 1 and 2 committed: the customer is charged for an order that cannot ship",
+            "With no component tracking the sequence, nobody knows a half-finished order exists until a customer complains"
+          ],
+          "with": [
+            "Each step is a local ACID transaction that either commits or does not",
+            "A recorded saga state means a failure at step 3 triggers compensations for steps 2 and 1, in reverse",
+            "The whole flow is one readable state machine you can log, replay and debug"
+          ],
+          "conclusion": "You trade atomicity for eventual correctness plus an explicit, inspectable flow — the intermediate half-finished state becomes visible by design rather than by accident."
+        }
+      },
+      {
+        "id": "order",
+        "label": "Order service",
+        "type": "server",
+        "x": 700,
+        "y": 100,
+        "note": "T1: create order in PENDING. Compensation C1: mark it CANCELLED — a status change, not a delete, because the record is evidence."
+      },
+      {
+        "id": "payment",
+        "label": "Payment service",
+        "type": "server",
+        "x": 700,
+        "y": 290,
+        "note": "T2: charge the card. Compensation C2: issue a refund. The original charge still appears on the customer's statement — this is why a compensation is not a rollback."
+      },
+      {
+        "id": "inventory",
+        "label": "Inventory service",
+        "type": "server",
+        "x": 700,
+        "y": 480,
+        "note": "T3: reserve stock. Fails here when the item sold out between the order and the reservation."
+      },
+      {
+        "id": "outbox",
+        "label": "Outbox + relay",
+        "type": "queue",
+        "x": 380,
+        "y": 560,
+        "note": "Each service writes its event into an outbox table in the same local transaction as its state change; a relay reads the table and publishes. Commit and publish can no longer half-happen."
+      }
+    ],
+    "edges": [
+      {
+        "from": "client",
+        "to": "orchestrator",
+        "label": "place order"
+      },
+      {
+        "from": "orchestrator",
+        "to": "order",
+        "label": "T1 create"
+      },
+      {
+        "from": "orchestrator",
+        "to": "payment",
+        "label": "T2 charge"
+      },
+      {
+        "from": "orchestrator",
+        "to": "inventory",
+        "label": "T3 reserve — fails"
+      },
+      {
+        "from": "orchestrator",
+        "to": "payment",
+        "label": "C2 refund",
+        "dashed": true
+      },
+      {
+        "from": "orchestrator",
+        "to": "order",
+        "label": "C1 cancel",
+        "dashed": true
+      },
+      {
+        "from": "order",
+        "to": "outbox",
+        "label": "event, same txn",
+        "dashed": true
+      },
+      {
+        "from": "outbox",
+        "to": "orchestrator",
+        "label": "published",
+        "dashed": true
+      }
+    ]
+  },
+  "why": {
+    "without": [
+      "Three services each commit locally, so a failure at the third leaves the first two committed: the customer is charged for an order that will never ship",
+      "There is no shared transaction to roll back and no component that knows the order was half-created, so the inconsistency is discovered by a customer, not by the system",
+      "Ad-hoc cleanup code appears in every caller, each handling a different subset of the failure cases and none of them handling a crash midway",
+      "Reaching for a distributed transaction instead couples the services' lifetimes together — if payment is down, orders cannot commit at all"
+    ],
+    "with": [
+      "Each step is a local ACID transaction that either commits or does not; no locks are held across services",
+      "A failure triggers compensations in reverse order, returning the system to a business-correct state",
+      "The saga's state is recorded, so a crash mid-flow resumes rather than losing the order",
+      "Services stay independently deployable and independently available"
+    ],
+    "conclusion": "A saga gives up atomicity and isolation to keep availability and independence — the system is briefly, visibly half-finished, and the design work is deciding what that looks like to a user."
+  },
+  "whenToUse": [
+    "A business process spans several services that each own their own database",
+    "The steps have meaningful compensations — a refund, a cancellation, a release of a reservation",
+    "Availability matters more than momentary consistency: it is better to accept the order and sort payment out than to refuse while payment is slow",
+    "Long-running flows where holding any lock for the duration would be absurd (a step waits on a human, a bank or a courier)"
+  ],
+  "whenNotToUse": [
+    "The data is all in one database — use a plain transaction; a saga there is pure cost and strictly weaker",
+    "A step genuinely cannot be compensated: you cannot un-send the email, un-ship the box or un-publish the public post, and 'we'll send an apology' is not an acceptable outcome for the case at hand",
+    "Intermediate states are unacceptable to read: if another process seeing a charged-but-unconfirmed order causes a second charge, you need real isolation, not semantic locks bolted on later",
+    "A two-step flow between services you control and could merge — the operational weight of a saga (state store, retries, dead letters, compensation tests) outweighs a boundary you drew arbitrarily",
+    "The team has no way to observe it: a saga you cannot trace end to end is an order that silently stops at step 3 forever"
+  ],
+  "tradeoffs": [
+    {
+      "option": "Two-phase commit (2PC)",
+      "pros": [
+        "Real atomicity across participants: all commit or all abort",
+        "No compensation logic to write, test or reason about",
+        "Familiar transactional semantics for developers"
+      ],
+      "cons": [
+        "Participants hold locks from prepare until commit — the whole cross-service round trip, not one local commit",
+        "If the coordinator dies after prepare, participants are blocked holding locks with no way to decide alone",
+        "Availability is the product of all participants': any one being down blocks everyone",
+        "Needs XA-style support that most modern datastores and queues simply do not offer"
+      ]
+    },
+    {
+      "option": "Saga with choreography (services react to events)",
+      "pros": [
+        "No central component to build, deploy or scale",
+        "Services stay loosely coupled — each only knows the events it emits and consumes",
+        "Adding a participant to a simple flow can mean just subscribing to an event"
+      ],
+      "cons": [
+        "The flow exists nowhere as written-down logic; you reconstruct it by reading every service's handlers",
+        "Past roughly four or five steps it becomes genuinely hard to answer 'what happens next?' or 'where did this order stop?'",
+        "Cyclic dependencies creep in as services start listening to each other's events",
+        "Compensation ordering is implicit, so a missed case is invisible until it fires in production"
+      ]
+    },
+    {
+      "option": "Saga with orchestration (a coordinator drives the steps)",
+      "pros": [
+        "The flow is one explicit state machine you can read, diagram, test and step through",
+        "Failure and compensation paths are written down in one place",
+        "Easy to answer 'where is order 12345?' — the saga state says so",
+        "Participants stay simple: they expose a command and its compensation and know nothing about the flow"
+      ],
+      "cons": [
+        "A new component that knows about every participant — a coupling point and a thing to keep available",
+        "Business logic drifts into the orchestrator until the services are anaemic",
+        "The orchestrator's own state must be durable and recoverable, or a crash strands sagas mid-flight"
+      ]
+    },
+    {
+      "option": "Accept the inconsistency and reconcile in batch",
+      "pros": [
+        "Almost no runtime machinery — a nightly job finds charged-but-unshipped orders and fixes them",
+        "Often the honest answer for low-volume, low-value flows"
+      ],
+      "cons": [
+        "The inconsistency is visible to users for hours, and they will contact support before the job runs",
+        "Reconciliation logic rots quietly because nothing exercises it until it is wrong"
+      ]
+    }
+  ],
+  "keyNumbers": [
+    {
+      "label": "Local ACID transaction",
+      "value": "~1–10 ms — the thing you are giving up"
+    },
+    {
+      "label": "Typical saga completion, healthy path",
+      "value": "tens to hundreds of ms — the sum of every step, not the slowest"
+    },
+    {
+      "label": "Compensation window (charge to refund issued)",
+      "value": "seconds to minutes in the system; the refund itself may take days to clear at the bank"
+    },
+    {
+      "label": "Choreography comprehension limit",
+      "value": "roughly 4–5 steps before nobody can follow the flow"
+    },
+    {
+      "label": "Outbox relay lag",
+      "value": "sub-second with polling in the ~100 ms–1 s range; near-immediate with log tailing"
+    },
+    {
+      "label": "Delivery guarantee every step must survive",
+      "value": "at-least-once — assume every message arrives twice"
+    }
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "mcq",
+      "question": "Why is two-phase commit rarely chosen for a microservice flow, despite giving true atomicity?",
+      "options": [
+        "It cannot handle more than two participants",
+        "It holds locks across services for the whole round trip, and a coordinator crash after prepare leaves participants blocked with no way to decide",
+        "It is slower than a saga by roughly an order of magnitude on the happy path",
+        "It requires all participants to share one database"
+      ],
+      "answerIndex": 1,
+      "explanation": "The blocking case is the killer. After a participant votes to prepare it has promised it can commit and must hold its locks until told which way — if the coordinator dies, it cannot decide alone, so it waits, holding locks, while unrelated traffic queues behind them. Raw latency is not the objection; availability is. 2PC makes your system's uptime the product of every participant's."
+    },
+    {
+      "id": "q2",
+      "type": "architecture",
+      "question": "Your payment service commits the charge to its database and then publishes a PaymentCompleted event. The process crashes between the two. What is this problem called and what is the standard fix?",
+      "options": [
+        "Split brain; use a consensus cluster to elect one publisher",
+        "The dual-write problem; use a transactional outbox — write the event into an outbox table in the same local transaction as the state change, and let a separate relay publish from that table",
+        "A lost update; wrap the publish in a retry loop",
+        "Head-of-line blocking; move the publish to a separate partition"
+      ],
+      "answerIndex": 1,
+      "explanation": "Writing to your database and publishing to a broker are two independent operations, so they can partially fail in either direction — money taken but nobody told, or an event for a charge that rolled back. A retry loop does not help; the crash is the point. The outbox makes the event part of the same atomic commit, and the relay's at-least-once publishing is fine precisely because every consumer is already idempotent."
+    },
+    {
+      "id": "q3",
+      "type": "architecture",
+      "question": "Step 3 of a saga fails, so the orchestrator issues the compensation for step 2: refund the card. That refund call times out and is retried, and the compensation itself then fails permanently. What are the two design rules this scenario is testing?",
+      "options": [
+        "Compensations must run in the original order, and only the last step needs a compensation",
+        "Compensations must be idempotent so a retried refund does not pay out twice, and they must be built never to fail permanently — retry with backoff and land in a dead-letter queue for a human, because there is no compensation for a compensation",
+        "Compensations should be skipped if the forward step has already been acknowledged",
+        "Compensations must hold a lock on the payment record until the saga completes"
+      ],
+      "answerIndex": 1,
+      "explanation": "A timeout does not tell you whether the refund happened, so it will be retried — without idempotency (a key on the refund request), the customer is paid twice. And nothing exists downstream of a compensation to clean it up: if C2 can fail and be forgotten, the money is simply gone. The working pattern is infinite retry with backoff plus a dead-letter queue and an alert, so a person resolves what the system cannot. Compensations run in reverse order, and every completed step needs one."
+    }
+  ],
+  "related": [
+    "microservices",
+    "message-queue",
+    "idempotency",
+    "event-driven",
+    "cap-theorem"
+  ]
+}

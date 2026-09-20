@@ -1,0 +1,145 @@
+{
+  "id": "redundant-connection",
+  "title": "Redundant Connection",
+  "patternId": "union-find",
+  "difficulty": "intermediate",
+  "tags": [
+    "graph",
+    "union-find",
+    "cycle-detection",
+    "tree"
+  ],
+  "statement": "A tree with n nodes labelled 1..n has exactly n-1 edges and no cycle. You are given a graph that started as such a tree, with one extra edge added between two existing nodes — so it has n nodes and n edges, and exactly one cycle. Return the edge that can be removed to leave a tree. If more than one answer exists, return the one that appears last in the input.",
+  "realWorld": "Network topology validation: a switch fabric is meant to be loop-free, and one miscabled link creates a broadcast storm. The link to disable is the one that closed the loop — the last cable added between two segments that could already reach each other. Spanning tree protocols solve exactly this.",
+  "examples": [
+    {
+      "input": "edges = [[1,2],[1,3],[2,3]]",
+      "output": "[2,3]",
+      "explanation": "After [1,2] and [1,3], nodes 2 and 3 already reach each other through 1. The edge [2,3] closes the cycle, so removing it leaves a tree."
+    },
+    {
+      "input": "edges = [[1,2],[2,3],[3,4],[1,4],[1,5]]",
+      "output": "[1,4]",
+      "explanation": "The cycle is 1-2-3-4-1. Processing in order, [1,4] is the first edge whose endpoints are already connected, and it is the last edge of the cycle in input order."
+    }
+  ],
+  "constraints": [
+    "n == edges.length",
+    "3 <= n <= 1000",
+    "edges[i].length == 2",
+    "1 <= ai < bi <= edges.length",
+    "ai != bi, there are no repeated edges, and the graph is connected"
+  ],
+  "bruteForce": {
+    "idea": "Try removing each edge, starting from the last, and check whether what remains is a tree — connected and acyclic — with a DFS over the remaining n-1 edges.",
+    "code": [
+      "for (int skip = edges.length - 1; skip >= 0; skip--) {",
+      "    List<List<Integer>> graph = buildGraphExcluding(edges, skip);   // O(n) rebuild",
+      "    boolean[] seen = new boolean[edges.length + 1];",
+      "    dfs(graph, edges[0][0] == skip ? 1 : edges[0][0], seen);",
+      "    int reached = 0;",
+      "    for (int node = 1; node <= edges.length; node++) if (seen[node]) reached++;",
+      "    if (reached == edges.length) return edges[skip];   // connected with n-1 edges is a tree",
+      "}",
+      "return new int[0];"
+    ],
+    "complexity": {
+      "time": "O(n^2)",
+      "space": "O(n) for the rebuilt adjacency list and the visited array"
+    },
+    "whySlow": "Every candidate removal rebuilds the graph and re-runs a full traversal, so n traversals of O(n) work each. Worse, it asks a whole-graph question ('is this still a tree?') to learn something local: whether one edge joins two nodes that were already connected."
+  },
+  "patternIdentification": "The edge to remove is the one whose endpoints could already reach each other before it was added. That is a connectivity question over edges arriving in order, with no interest in the path — the definition of union-find. Process the edges left to right; the first `union` that finds both endpoints already sharing a root is the answer, and because there is exactly one cycle, that first failure is also the last cycle edge in input order.",
+  "optimized": {
+    "idea": "Union the endpoints of each edge in input order. A union whose two endpoints already share a root adds nothing — the nodes were connected by an earlier path, so this edge closes the cycle. Return it immediately. The union that does nothing is the answer.",
+    "code": [
+      "public static int[] findRedundantConnection(int[][] edges) {",
+      "    int n = edges.length;                       // n nodes, labelled 1..n",
+      "    int[] parent = new int[n + 1];",
+      "    int[] rank = new int[n + 1];",
+      "    for (int i = 0; i <= n; i++) parent[i] = i;",
+      "",
+      "    for (int[] edge : edges) {",
+      "        int rootA = find(parent, edge[0]);",
+      "        int rootB = find(parent, edge[1]);",
+      "        if (rootA == rootB) {",
+      "            return edge;                        // both ends already connected: the cycle edge",
+      "        }",
+      "        if (rank[rootA] < rank[rootB]) { int t = rootA; rootA = rootB; rootB = t; }",
+      "        parent[rootB] = rootA;",
+      "        if (rank[rootA] == rank[rootB]) rank[rootA]++;",
+      "    }",
+      "    return new int[0];                          // unreachable given the constraints",
+      "}",
+      "",
+      "private static int find(int[] parent, int x) {",
+      "    while (parent[x] != x) {",
+      "        parent[x] = parent[parent[x]];          // path halving",
+      "        x = parent[x];",
+      "    }",
+      "    return x;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n · α(n)) — one pass over the edges, effectively linear",
+      "space": "O(n) for the parent and rank arrays"
+    }
+  },
+  "visualization": {
+    "engine": "unionFind",
+    "input": {
+      "size": 4,
+      "operations": [
+        {
+          "op": "union",
+          "a": 1,
+          "b": 2
+        },
+        {
+          "op": "union",
+          "a": 1,
+          "b": 3
+        },
+        {
+          "op": "union",
+          "a": 2,
+          "b": 3
+        }
+      ]
+    },
+    "code": [
+      "int[] parent = new int[n + 1];   // nodes 1..n, each its own root",
+      "int[] rank   = new int[n + 1];   // an upper bound on each tree's height",
+      "",
+      "int root = x; while (parent[root] != root) root = parent[root];          // climb to the root",
+      "while (parent[x] != root) { int next = parent[x]; parent[x] = root; x = next; }  // path compression",
+      "return root;                                                             // find(x)",
+      "",
+      "if (find(a) == find(b)) return edge;   // already connected — THIS edge closes the cycle",
+      "int ra = find(a), rb = find(b); if (rank[ra] < rank[rb]) { int t = ra; ra = rb; rb = t; }",
+      "parent[rb] = ra; if (rank[ra] == rank[rb]) rank[ra]++;                   // union by rank"
+    ]
+  },
+  "commonMistakes": [
+    "Sizing the arrays as `new int[n]` when nodes are labelled 1..n — index n is then out of bounds. Allocate n+1 and ignore slot 0.",
+    "Returning the first edge of the cycle rather than the edge that closed it. Processing in input order and returning on the first failed union gives the last-appearing edge automatically; no extra bookkeeping is needed.",
+    "Collecting every edge that fails the union and returning the last one. With exactly one extra edge there is only ever one failure, and scanning on wastes the early exit.",
+    "Applying this to a *directed* graph problem such as Redundant Connection II. Union-find has no notion of direction, so it cannot tell a node with two parents from a genuine cycle; that variant needs a separate parent check first.",
+    "Unioning the nodes instead of their roots (`parent[b] = a`), which detaches b's existing subtree and silently corrupts later queries."
+  ],
+  "similar": [
+    "number-of-provinces",
+    "accounts-merge",
+    "course-schedule",
+    "number-of-islands"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 684,
+      "slug": "redundant-connection",
+      "title": "Redundant Connection",
+      "url": "https://leetcode.com/problems/redundant-connection/",
+      "premium": false
+    }
+  }
+}

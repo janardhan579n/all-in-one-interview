@@ -1,0 +1,157 @@
+{
+  "id": "is-graph-bipartite",
+  "title": "Is Graph Bipartite",
+  "patternId": "graphs",
+  "difficulty": "intermediate",
+  "tags": [
+    "graphs",
+    "bfs",
+    "dfs",
+    "graph-colouring"
+  ],
+  "statement": "An undirected graph on n nodes is given as an adjacency list, where graph[u] holds the neighbours of node u. Return true if the nodes can be split into two sets such that every edge joins a node in one set to a node in the other. The graph may be disconnected and may contain nodes with no edges at all.",
+  "realWorld": "Two-way conflict partitioning: a set of jobs with 'these two must not run in the same batch' constraints can be split into two batches exactly when the conflict graph is bipartite. The same test decides whether a set of mutual-exclusion constraints is satisfiable with two resources, and it is the trivially-decidable corner of graph colouring that register allocators and exam timetablers check first before reaching for anything expensive.",
+  "examples": [
+    {
+      "input": "graph = [[1,3],[0,2],[1,3],[0,2]]  (graph[i] lists node i's neighbours)",
+      "output": "true",
+      "explanation": "A four-cycle 0-1-2-3-0. Split it {0,2} and {1,3}: every edge crosses. Even-length cycles are always bipartite."
+    },
+    {
+      "input": "graph = [[1,2,3],[0,2],[0,1,3],[0,2]]",
+      "output": "false",
+      "explanation": "Nodes 0, 1 and 2 form a triangle. A cycle of odd length forces some edge to join two nodes on the same side, no matter which side you start from."
+    },
+    {
+      "input": "graph = [[],[3],[],[1]]",
+      "output": "true",
+      "explanation": "Three components: two isolated nodes and one edge. The isolated nodes are trivially placeable, but the search has to visit every node to find the component holding 1 and 3 at all."
+    }
+  ],
+  "constraints": [
+    "graph.length == n and 1 <= n <= 100",
+    "0 <= graph[u].length < n",
+    "The graph is undirected: v appears in graph[u] exactly when u appears in graph[v]",
+    "There are no self-loops and no repeated edges"
+  ],
+  "bruteForce": {
+    "idea": "Try every possible split. Enumerate all 2^n assignments of nodes to the two sides, and for each one check that no edge has both ends on the same side.",
+    "code": [
+      "for (int mask = 0; mask < (1 << n); mask++) {",
+      "    boolean ok = true;",
+      "    for (int u = 0; u < n && ok; u++) {",
+      "        for (int v : graph[u]) {",
+      "            int sideU = (mask >> u) & 1, sideV = (mask >> v) & 1;",
+      "            if (sideU == sideV) { ok = false; break; }",
+      "        }",
+      "    }",
+      "    if (ok) return true;",
+      "}",
+      "return false;"
+    ],
+    "complexity": {
+      "time": "O(2^n * (n + E))",
+      "space": "O(1)"
+    },
+    "whySlow": "It searches where nothing needs searching. Once one node's side is chosen, every neighbour's side is forced, and so is every neighbour of a neighbour — a connected component has exactly two valid labellings and they are mirror images. The enumeration ignores all of that: it re-tries billions of assignments that a single edge already ruled out, and it makes the same free choice independently for nodes that a path has already tied together. At n = 100 that is 2^100 candidates for a question two traversals answer."
+  },
+  "patternIdentification": "The constraint is local and it propagates: fixing one node's side forces every neighbour's. Whenever a choice at one node determines its neighbours, you do not search the space of choices — you make one arbitrary choice, push it along a traversal, and look for a contradiction. That is graph colouring, and with two colours it collapses to alternating as you go. It is worth seeing why a contradiction means what it means: BFS assigns colours by level parity, so two adjacent nodes ending up the same colour means there is a path between them of even length plus the edge itself, that is, a cycle of odd length. 'Bipartite' and 'no odd cycle' are the same statement, which is why one traversal is a proof and not just a failed attempt.",
+  "optimized": {
+    "idea": "Colour with BFS. Keep one int array where 0 means uncoloured and 1 and -1 are the two sides. Loop over every node as a potential seed, skipping ones already coloured, so that disconnected components each get their own arbitrary start. Inside a component, give each newly discovered neighbour the opposite colour, and the moment a neighbour already carries the same colour as the node being expanded, report false — that edge is the odd cycle closing. DFS works identically; the only difference is the order in which the contradiction is found.",
+    "code": [
+      "public static boolean isBipartite(int[][] graph) {",
+      "    int n = graph.length;",
+      "    int[] colour = new int[n];   // 0 = uncoloured, 1 and -1 are the two sides",
+      "",
+      "    for (int start = 0; start < n; start++) {",
+      "        if (colour[start] != 0) continue;   // every component needs its own seed",
+      "        colour[start] = 1;",
+      "        Queue<Integer> queue = new ArrayDeque<>();",
+      "        queue.offer(start);",
+      "",
+      "        while (!queue.isEmpty()) {",
+      "            int node = queue.poll();",
+      "            for (int next : graph[node]) {",
+      "                if (colour[next] == colour[node]) return false;   // same side as its neighbour: an odd cycle",
+      "                if (colour[next] == 0) {",
+      "                    colour[next] = -colour[node];",
+      "                    queue.offer(next);",
+      "                }",
+      "            }",
+      "        }",
+      "    }",
+      "    return true;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n + E)",
+      "space": "O(n)"
+    }
+  },
+  "visualization": {
+    "engine": "graphBfs",
+    "input": {
+      "nodes": [
+        "0",
+        "1",
+        "2",
+        "3"
+      ],
+      "edges": [
+        [
+          "0",
+          "1"
+        ],
+        [
+          "1",
+          "2"
+        ],
+        [
+          "2",
+          "3"
+        ],
+        [
+          "3",
+          "0"
+        ]
+      ],
+      "start": "0",
+      "target": "2"
+    },
+    "code": [
+      "colour[start] = 1;",
+      "queue.offer(start);",
+      "while (!queue.isEmpty()) {",
+      "    int node = queue.poll();",
+      "    for (int next : graph[node]) {",
+      "        if (colour[next] == colour[node]) return false;",
+      "        if (colour[next] == 0) {",
+      "            colour[next] = -colour[node];   // the opposite side",
+      "            queue.offer(next);",
+      "        }",
+      "    }",
+      "}",
+      "return true;"
+    ]
+  },
+  "commonMistakes": [
+    "Seeding the traversal only at node 0 instead of looping over every node — a graph whose only odd cycle lives in a second component is never visited at all, so the method returns true for an input that is plainly not bipartite; example 3's structure is the shape that exposes it.",
+    "Keeping a separate visited set and checking it before the colour comparison — an already-coloured neighbour is then skipped without ever comparing colours, so no conflict is ever found and every graph returns true, including the triangle in example 2.",
+    "Using 0 and 1 as the two colours in an int array that defaults to 0 — uncoloured is then indistinguishable from side 0, so the seed's neighbours are immediately read as conflicts and example 1 returns false."
+  ],
+  "similar": [
+    "clone-graph",
+    "graph-valid-tree",
+    "course-schedule",
+    "number-of-provinces"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 785,
+      "slug": "is-graph-bipartite",
+      "title": "Is Graph Bipartite?",
+      "url": "https://leetcode.com/problems/is-graph-bipartite/",
+      "premium": false
+    }
+  }
+}

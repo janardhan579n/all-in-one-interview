@@ -1,0 +1,118 @@
+{
+  "id": "pacific-atlantic-water-flow",
+  "title": "Pacific Atlantic Water Flow",
+  "patternId": "dfs",
+  "difficulty": "advanced",
+  "tags": [
+    "dfs",
+    "grid",
+    "multi-source",
+    "reverse-graph"
+  ],
+  "statement": "Given an m x n matrix of cell heights, the Pacific ocean touches the top and left edges of the matrix and the Atlantic ocean touches the bottom and right edges. Water flows from a cell to any of its four neighbours whose height is less than or equal to the current cell's height, and flows into an ocean from any cell on that ocean's edge. Return the coordinates of every cell from which water can reach both oceans.",
+  "realWorld": "Watershed analysis on a digital elevation model: given terrain heights on a grid, mark the cells that drain into two different river systems — the continental divide problem, solved exactly this way in GIS software. The underlying move, computing reachability from a set of sinks by searching the reversed edges, is also how a linker decides which symbols are live: instead of asking of each function 'can it reach an entry point', it walks outward from the entry points.",
+  "examples": [
+    {
+      "input": "heights = [[1,2,2,3,5],[3,2,3,4,4],[2,4,5,3,1],[6,7,1,4,5],[5,1,1,2,4]]  (rows of heights; output as [row,col] pairs)",
+      "output": "[[0,4],[1,3],[1,4],[2,2],[3,0],[3,1],[4,0]]",
+      "explanation": "Cells on the anti-diagonal ridge can shed water in both directions. (0,4) is a corner touching both the top (Pacific) and right (Atlantic) edges, so it qualifies with no flow at all."
+    },
+    {
+      "input": "heights = [[1,2,3],[8,9,4],[7,6,5]]",
+      "output": "[[0,2],[1,0],[1,1],[1,2],[2,0],[2,1],[2,2]]",
+      "explanation": "A spiral ramp. Every cell qualifies except (0,0) and (0,1), which sit in the low corner and can only drain toward the Pacific."
+    },
+    {
+      "input": "heights = [[1]]",
+      "output": "[[0,0]]",
+      "explanation": "A single cell is on all four edges at once, so it touches both oceans with no flow. The degenerate case that catches code assuming at least one move must happen."
+    }
+  ],
+  "constraints": [
+    "m == heights.length, n == heights[i].length",
+    "1 <= m, n <= 200",
+    "0 <= heights[i][j] <= 10^5"
+  ],
+  "bruteForce": {
+    "idea": "Ask the question literally, per cell: from each cell, search downhill (to neighbours of height less than or equal to the current one) and record which ocean edges the search touches. Keep the cells that touch both.",
+    "code": [
+      "List<List<Integer>> result = new ArrayList<>();",
+      "for (int r = 0; r < rows; r++) {",
+      "    for (int c = 0; c < cols; c++) {",
+      "        boolean[] oceans = new boolean[2];",
+      "        flowDownhill(heights, r, c, new boolean[rows][cols], oceans);   // a whole search, per cell",
+      "        if (oceans[0] && oceans[1]) result.add(List.of(r, c));",
+      "    }",
+      "}",
+      "return result;"
+    ],
+    "complexity": {
+      "time": "O((m * n)^2)",
+      "space": "O(m * n) for the visited grid allocated per cell"
+    },
+    "whySlow": "There are m*n starting cells and each downhill search can cover the whole grid, which on a 200x200 input is 40,000 searches over 40,000 cells — 1.6 billion visits. Name the waste precisely: 'this cell drains to the Atlantic' is discovered once per cell upstream of it, and nothing is remembered between searches, so a long valley floor is re-walked by every cell on the slopes above it. Each search also allocates and discards its own visited grid, which is 40,000 grid allocations doing no algorithmic work at all."
+  },
+  "patternIdentification": "Reverse the edges. Water flows from high to low, so 'cell c can reach the Pacific' is the same statement as 'the Pacific edge can reach c by walking uphill'. Once it is phrased that way, the starts are no longer m*n individual cells but two small fixed sets — the top-and-left border and the bottom-and-right border — and each of the two searches marks every cell it can reach in a single sweep. Two sweeps, one boolean grid each, then intersect: O(m*n) instead of O((m*n)^2), because each cell is entered at most once per ocean rather than once per upstream neighbour. The general signal is a reachability question asked of every node about a small set of targets: flip the direction, seed at the targets, and let one traversal answer for everybody. Note that this is the same inversion as surrounded-regions, where 'enclosed' is answered by searching inward from the border instead of outward from each cell.",
+  "optimized": {
+    "idea": "Two DFS floods over the same heights, each with its own boolean grid. Seed the Pacific flood from every cell of the top row and left column, the Atlantic flood from every cell of the bottom row and right column, and in both climb to a neighbour only when its height is greater than or equal to the height of the cell you are standing on — the reverse of the flow rule. Then scan once and emit the cells marked in both grids. Each ocean needs its own visited grid, because a cell reachable by one ocean must not stop the other's search.",
+    "code": [
+      "public static List<List<Integer>> pacificAtlantic(int[][] heights) {",
+      "    List<List<Integer>> result = new ArrayList<>();",
+      "    if (heights == null || heights.length == 0) return result;",
+      "    int rows = heights.length, cols = heights[0].length;",
+      "    boolean[][] pacific = new boolean[rows][cols];",
+      "    boolean[][] atlantic = new boolean[rows][cols];",
+      "",
+      "    for (int r = 0; r < rows; r++) {",
+      "        climb(heights, pacific, r, 0, heights[r][0]);",
+      "        climb(heights, atlantic, r, cols - 1, heights[r][cols - 1]);",
+      "    }",
+      "    for (int c = 0; c < cols; c++) {",
+      "        climb(heights, pacific, 0, c, heights[0][c]);",
+      "        climb(heights, atlantic, rows - 1, c, heights[rows - 1][c]);",
+      "    }",
+      "",
+      "    for (int r = 0; r < rows; r++) {",
+      "        for (int c = 0; c < cols; c++) {",
+      "            if (pacific[r][c] && atlantic[r][c]) result.add(List.of(r, c));",
+      "        }",
+      "    }",
+      "    return result;",
+      "}",
+      "",
+      "private static void climb(int[][] heights, boolean[][] reached, int r, int c, int previous) {",
+      "    if (r < 0 || r >= heights.length || c < 0 || c >= heights[0].length) return;",
+      "    if (reached[r][c] || heights[r][c] < previous) return;   // uphill only: the reverse of the flow rule",
+      "    reached[r][c] = true;",
+      "    climb(heights, reached, r + 1, c, heights[r][c]);",
+      "    climb(heights, reached, r - 1, c, heights[r][c]);",
+      "    climb(heights, reached, r, c + 1, heights[r][c]);",
+      "    climb(heights, reached, r, c - 1, heights[r][c]);",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(m * n)",
+      "space": "O(m * n) for the two boolean grids and the recursion depth"
+    }
+  },
+  "commonMistakes": [
+    "Comparing each new cell against the height where the search started instead of against the cell it just came from — the climb is then allowed to dip in the middle of a route, so any cell at or above the ocean's edge height is marked reachable; example 1 returns all 25 cells instead of the 7 that really drain both ways.",
+    "Sharing one visited grid between the two oceans — the second search stops at every cell the first already marked, so almost nothing ends up in both grids and the intersection collapses; example 1 returns an empty list.",
+    "Writing the climb condition as heights[r][c] > previous instead of >= — water is allowed to move across equal heights, so every plateau blocks the search, and a grid where all heights are equal returns just the corner cells instead of every cell."
+  ],
+  "similar": [
+    "surrounded-regions",
+    "max-area-of-island",
+    "walls-and-gates",
+    "number-of-islands"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 417,
+      "slug": "pacific-atlantic-water-flow",
+      "title": "Pacific Atlantic Water Flow",
+      "url": "https://leetcode.com/problems/pacific-atlantic-water-flow/",
+      "premium": false
+    }
+  }
+}

@@ -1,0 +1,115 @@
+{
+  "id": "min-height-trees",
+  "title": "Minimum Height Trees",
+  "patternId": "graphs",
+  "difficulty": "advanced",
+  "tags": [
+    "graphs",
+    "tree",
+    "topological-sort",
+    "bfs"
+  ],
+  "statement": "A tree is given as n nodes labelled 0 to n-1 and n-1 undirected edges. Choosing any node as the root produces a rooted tree with some height, where height is the number of edges on the longest downward path from the root. Return the labels of all nodes that, used as the root, give the minimum possible height. The answers may be returned in any order.",
+  "realWorld": "Placing a coordinator to minimise worst-case hop count: the broadcast root in a tree-shaped network, the rendezvous node in a spanning tree, or the target in a build dependency tree whose depth sets the critical path. The same computation, the centre of a tree, is the canonical first step in tree isomorphism hashing, because rooting two trees at their centres makes their canonical forms comparable.",
+  "examples": [
+    {
+      "input": "n = 4, edges = [[1,0],[1,2],[1,3]]  (each pair is one undirected edge)",
+      "output": "[1]",
+      "explanation": "Rooted at 1 the height is 1. Rooted at any leaf it is 2. A star always has exactly one centre."
+    },
+    {
+      "input": "n = 6, edges = [[3,0],[3,1],[3,2],[3,4],[5,4]]",
+      "output": "[3,4]",
+      "explanation": "Both give height 2 and nothing gives 1. Two answers, and they are always adjacent — this is the even case, where the longest path has an even number of edges between its ends."
+    },
+    {
+      "input": "n = 1, edges = []",
+      "output": "[0]",
+      "explanation": "A single node is a tree of height 0 and is its own centre. It has no leaves by the degree-1 definition, so a peeling loop written without a guard returns an empty list here."
+    }
+  ],
+  "constraints": [
+    "1 <= n <= 20000",
+    "edges.length == n - 1",
+    "0 <= u, v < n and the input is guaranteed to be a tree"
+  ],
+  "bruteForce": {
+    "idea": "Compute the height for every possible root: run a BFS (or DFS) from each node, record the deepest level reached, and keep the nodes whose height ties the smallest value found.",
+    "code": [
+      "int best = Integer.MAX_VALUE;",
+      "List<Integer> answer = new ArrayList<>();",
+      "for (int root = 0; root < n; root++) {",
+      "    int height = bfsHeight(adjacency, root, n);   // a full traversal of the tree, per root",
+      "    if (height < best) { best = height; answer = new ArrayList<>(); }",
+      "    if (height == best) answer.add(root);",
+      "}",
+      "return answer;"
+    ],
+    "complexity": {
+      "time": "O(n^2)",
+      "space": "O(n)"
+    },
+    "whySlow": "n traversals, each covering all n nodes — at n = 20,000 that is 400 million node visits for an answer that is at most two labels long. The waste is that these n heights are almost entirely redundant: the height from a node and the height from its neighbour differ by at most one, and every single one of those traversals walks the same longest path from a slightly different starting point. The answer depends only on where that longest path's midpoint lies, so n-2 of the runs contribute nothing but a confirmation that moving away from the centre made things worse."
+  },
+  "patternIdentification": "The root that minimises the deepest path is the centre of the tree, and the centre is what is left when you strip the boundary away. So stop evaluating nodes one at a time and peel instead: remove all current leaves simultaneously, which shortens every root-to-leaf path by exactly one, and repeat. This is Kahn's topological sort with the threshold changed from in-degree 0 to degree 1, which is a useful way to remember it — the same queue-of-ready-nodes machinery, a different readiness test. Two things make the peeling safe to stop. A tree's centre is one node or two adjacent nodes and never more, because the centre sits at the midpoint of the longest path and a path has one middle node if its edge count is even and two if it is odd. So peel while more than two nodes remain, and whatever survives is the answer. The transferable signal: when every node's value is a function of its distance from the boundary, process the boundary and shrink inward rather than evaluating nodes independently.",
+  "optimized": {
+    "idea": "Build the adjacency list and a degree array, collect every node of degree 1 as the first layer of leaves, then repeatedly remove the current leaves and promote to the next layer any neighbour whose degree drops to exactly 1. Track how many nodes remain and stop as soon as two or fewer are left; those are the centres. Each edge is decremented once in total, so the whole peel is a single linear pass, and the n = 1 case has to be answered before the loop because a lone node has degree 0 and is therefore never a leaf.",
+    "code": [
+      "public static List<Integer> findMinHeightTrees(int n, int[][] edges) {",
+      "    if (n == 1) return List.of(0);   // no node has degree 1, so the peel would never start",
+      "",
+      "    List<List<Integer>> adjacency = new ArrayList<>();",
+      "    for (int i = 0; i < n; i++) adjacency.add(new ArrayList<>());",
+      "    int[] degree = new int[n];",
+      "    for (int[] edge : edges) {",
+      "        adjacency.get(edge[0]).add(edge[1]);",
+      "        adjacency.get(edge[1]).add(edge[0]);",
+      "        degree[edge[0]]++;",
+      "        degree[edge[1]]++;",
+      "    }",
+      "",
+      "    List<Integer> leaves = new ArrayList<>();",
+      "    for (int i = 0; i < n; i++) {",
+      "        if (degree[i] == 1) leaves.add(i);",
+      "    }",
+      "",
+      "    int remaining = n;",
+      "    while (remaining > 2) {   // stop at the centre: a tree has one or two, never more",
+      "        remaining -= leaves.size();",
+      "        List<Integer> nextLeaves = new ArrayList<>();",
+      "        for (int leaf : leaves) {",
+      "            for (int neighbour : adjacency.get(leaf)) {",
+      "                if (--degree[neighbour] == 1) nextLeaves.add(neighbour);   // exactly 1, so it is added once",
+      "            }",
+      "        }",
+      "        leaves = nextLeaves;",
+      "    }",
+      "    return leaves;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(n)"
+    }
+  },
+  "commonMistakes": [
+    "Omitting the n == 1 guard — the single node has degree 0, so the initial leaf list is empty, the loop body never runs because only one node remains, and the method returns [] instead of [0].",
+    "Looping while more than one node remains instead of more than two — the two centres of example 2 are themselves peeled in one final round, each knocking the other's degree down, and the result comes back empty rather than [3,4].",
+    "Adding a neighbour to the next layer whenever its degree is decremented rather than only when it hits exactly 1 — the centre of the star in example 1 is pushed once for every decrement that leaves it with a positive degree, so the answer comes back as [1, 1] instead of [1], and on larger trees the duplicates also make the remaining count drop too fast."
+  ],
+  "similar": [
+    "graph-valid-tree",
+    "course-schedule",
+    "course-schedule-ii",
+    "redundant-connection"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 310,
+      "slug": "minimum-height-trees",
+      "title": "Minimum Height Trees",
+      "url": "https://leetcode.com/problems/minimum-height-trees/",
+      "premium": false
+    }
+  }
+}

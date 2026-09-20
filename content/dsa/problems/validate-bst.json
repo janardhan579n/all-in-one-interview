@@ -1,0 +1,142 @@
+{
+  "id": "validate-bst",
+  "title": "Validate Binary Search Tree",
+  "patternId": "trees",
+  "difficulty": "intermediate",
+  "tags": [
+    "tree",
+    "bst",
+    "recursion",
+    "traversal"
+  ],
+  "statement": "Given the root of a binary tree, determine whether it is a valid binary search tree. The rule is about whole subtrees, not about neighbours: every value in a node's left subtree must be strictly less than the node, and every value in its right subtree strictly greater.",
+  "realWorld": "Asserting the invariant of an index. A search-tree index is only correct because of this ordering property, and a bug in a rebalance, a bad concurrent insert, or a corrupted page can break it without anything crashing — every lookup afterwards quietly misses rows that are physically present. Index verification tools (`REINDEX`-style consistency checks, `amcheck` in Postgres) do this walk.",
+  "examples": [
+    {
+      "input": "root = [2,1,3]",
+      "output": "true",
+      "explanation": "Level-order notation: values level by level, left to right, null for a missing child. 1 < 2 < 3, and each subtree is a single node, so there is nothing deeper to violate."
+    },
+    {
+      "input": "root = [10,5,15,null,null,6,20]",
+      "output": "false",
+      "explanation": "The trap case. Every individual parent-child pair is legal: 5 < 10 < 15 at the root, and 6 < 15 < 20 at node 15. But 6 lives in 10's right subtree while 6 < 10. Search for 6: you start at 10, see 6 < 10, turn left into the subtree {5}, and report not-found for a value that is in the tree. That failure is exactly what the BST property exists to prevent, and it is why the rule is about subtrees rather than children."
+    },
+    {
+      "input": "root = [2,2]",
+      "output": "false",
+      "explanation": "Two equal values. The rule is strict — left < node, not left <= node — so duplicates make the tree invalid. If your variant allows duplicates you have to state which side they go on and enforce it, because otherwise a search finds them only by luck."
+    }
+  ],
+  "constraints": [
+    "1 <= number of nodes <= 10^4",
+    "-2^31 <= node.val <= 2^31 - 1 — the extremes are legal values, which rules out using them as sentinels",
+    "Values are compared strictly: duplicates make the tree invalid"
+  ],
+  "bruteForce": {
+    "idea": "Check the rule locally at every node: my left child is smaller than me, my right child is bigger than me, and then recurse into both children.",
+    "code": [
+      "public static boolean isValidBST(TreeNode node) {",
+      "    if (node == null) return true;",
+      "    if (node.left  != null && node.left.val  >= node.val) return false;",
+      "    if (node.right != null && node.right.val <= node.val) return false;",
+      "    return isValidBST(node.left) && isValidBST(node.right);",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(h)"
+    },
+    "whySlow": "This one is not slow — it is wrong, which is worse, because it is fast and confident. It accepts [10,5,15,null,null,6,20], where every parent-child comparison passes and 6 still sits on the wrong side of the root. The waste is informational rather than computational: each call throws away everything its ancestors already established. By the time the recursion is standing at 15 it has passed through 10 going right, so it knows that every value in this entire region must exceed 10 — and the local check discards that fact and puts nothing in its place, so the work it does can never add up to the property it is trying to verify."
+  },
+  "patternIdentification": "A property stated about a whole subtree ('everything below me is greater than X') cannot be checked by a comparison between neighbours. There are exactly two standard repairs, and both are worth owning. Either push the accumulated constraint down the recursion as parameters — here the open interval (low, high) that every value in this subtree must fall inside, tightened by one bound at each step — or flatten the tree into the order that makes the property linear, which for a BST is inorder, and then check a one-dimensional condition on the sequence. 'Carry the constraint down' and 'traverse in the order where the property becomes obvious' cover almost every check that involves ancestors.",
+  "optimized": {
+    "idea": "Give each node the window it must fall inside. The root may be anything; going left tightens the upper bound to the parent's value, going right tightens the lower bound. A node outside its window fails immediately. Using boxed Integer for 'no bound yet' keeps Integer.MIN_VALUE and MAX_VALUE available as ordinary data. The inorder variant is included because it is the version to reach for once you have seen binary-tree-inorder-traversal: on a BST, inorder is sorted, so validity is just 'strictly increasing'.",
+    "code": [
+      "public static boolean isValidBST(TreeNode root) {",
+      "    return valid(root, null, null);   // null bound means 'unconstrained on that side'",
+      "}",
+      "",
+      "/** Every value in this subtree must lie strictly inside (low, high). */",
+      "private static boolean valid(TreeNode node, Integer low, Integer high) {",
+      "    if (node == null) return true;",
+      "    if (low  != null && node.val <= low)  return false;",
+      "    if (high != null && node.val >= high) return false;",
+      "    // going left tightens the ceiling, going right tightens the floor",
+      "    return valid(node.left, low, node.val) && valid(node.right, node.val, high);",
+      "}",
+      "",
+      "/** Same answer via inorder: on a BST the sequence must be strictly increasing. */",
+      "public static boolean isValidBSTInorder(TreeNode root) {",
+      "    Deque<TreeNode> stack = new ArrayDeque<>();",
+      "    TreeNode node = root;",
+      "    Integer previous = null;",
+      "    while (node != null || !stack.isEmpty()) {",
+      "        while (node != null) {",
+      "            stack.push(node);",
+      "            node = node.left;",
+      "        }",
+      "        node = stack.pop();",
+      "        if (previous != null && node.val <= previous) return false;",
+      "        previous = node.val;",
+      "        node = node.right;",
+      "    }",
+      "    return true;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n) — and it stops at the first violation",
+      "space": "O(h)"
+    }
+  },
+  "visualization": {
+    "engine": "treeTraversal",
+    "input": {
+      "tree": {
+        "value": 10,
+        "left": {
+          "value": 5
+        },
+        "right": {
+          "value": 15,
+          "left": {
+            "value": 6
+          },
+          "right": {
+            "value": 20
+          }
+        }
+      },
+      "order": "inorder"
+    },
+    "code": [
+      "void inorder(TreeNode node) {",
+      "    if (node == null) return;",
+      "    inorder(node.left);",
+      "    check(node.val > previous);",
+      "    inorder(node.right);",
+      "}"
+    ]
+  },
+  "commonMistakes": [
+    "Checking only that left.val < node.val < right.val at each node. [10,5,15,null,null,6,20] passes every one of those local checks and is not a BST — 6 is in 10's right subtree but 6 < 10. The symptom is a validator that certifies a tree in which searching for a value that is present returns not-found, so the corruption is discovered much later by a query, not by the check that was supposed to catch it.",
+    "Seeding the range with Integer.MIN_VALUE and Integer.MAX_VALUE instead of nulls. A single-node tree holding Integer.MIN_VALUE then fails the strict `val > low` comparison, so a perfectly valid tree is reported invalid — one input out of four billion, and it is always in the test suite. Use boxed nulls, or widen the bounds to long.",
+    "Writing the inorder check as `if (node.val < previous) return false;` instead of `<=`. Equal values slip through, so [2,2] reports valid and a later insert of that duplicate lands on whichever side the code happens to take."
+  ],
+  "similar": [
+    "binary-tree-inorder-traversal",
+    "kth-smallest-in-bst",
+    "lowest-common-ancestor-bst",
+    "balanced-binary-tree",
+    "serialize-deserialize-tree"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 98,
+      "slug": "validate-binary-search-tree",
+      "title": "Validate Binary Search Tree",
+      "url": "https://leetcode.com/problems/validate-binary-search-tree/",
+      "premium": false
+    }
+  }
+}

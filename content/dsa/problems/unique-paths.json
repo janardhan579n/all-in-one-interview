@@ -1,0 +1,113 @@
+{
+  "id": "unique-paths",
+  "title": "Unique Paths",
+  "patternId": "dynamic-programming-basics",
+  "difficulty": "intermediate",
+  "tags": [
+    "dp",
+    "grid",
+    "combinatorics"
+  ],
+  "statement": "A robot starts at the top-left of an m x n grid and may only move right or down. How many distinct paths reach the bottom-right corner?",
+  "realWorld": "Counting routes through a street grid, or the number of distinct orderings of two interleaved task types — the same combinatorial object appears in scheduling and in lattice-path problems.",
+  "examples": [
+    {
+      "input": "m = 3, n = 7",
+      "output": "28",
+      "explanation": ""
+    },
+    {
+      "input": "m = 3, n = 2",
+      "output": "3",
+      "explanation": "RDD, DRD, DDR."
+    }
+  ],
+  "constraints": [
+    "1 <= m, n <= 100",
+    "The answer fits in a 32-bit signed integer"
+  ],
+  "bruteForce": {
+    "idea": "Recurse: from each cell, branch right and down, counting the paths that reach the corner.",
+    "code": [
+      "int paths(int r, int c, int m, int n) {",
+      "    if (r >= m || c >= n) return 0;      // fell off the grid",
+      "    if (r == m - 1 && c == n - 1) return 1;",
+      "    return paths(r + 1, c, m, n) + paths(r, c + 1, m, n);",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(2^(m+n))",
+      "space": "O(m + n)"
+    },
+    "whySlow": "The cell (5,5) is reached by many different prefixes, and its subtree is recomputed for each one. For a 100x100 grid this never finishes."
+  },
+  "patternIdentification": "The number of ways to reach a cell depends only on the cell, not on the route taken to it — the definition of an overlapping subproblem. 2-D grid DP.",
+  "optimized": {
+    "idea": "dp[r][c] = dp[r-1][c] + dp[r][c-1]: every path into a cell arrives from above or from the left. The first row and first column are all 1, since there is only one way along an edge. Because each row depends only on the row above, one 1-D array can be reused.",
+    "code": [
+      "/** O(m*n) time, O(n) space — one rolling row. */",
+      "public static int uniquePaths(int m, int n) {",
+      "    int[] row = new int[n];",
+      "    Arrays.fill(row, 1);                 // the top row: exactly one path each",
+      "",
+      "    for (int r = 1; r < m; r++) {",
+      "        for (int c = 1; c < n; c++) {",
+      "            row[c] = row[c] + row[c - 1];  // from above  +  from the left",
+      "        }",
+      "    }",
+      "    return row[n - 1];",
+      "}",
+      "",
+      "/** Full table, easier to read first. */",
+      "public static int uniquePathsTable(int m, int n) {",
+      "    int[][] dp = new int[m][n];",
+      "    for (int r = 0; r < m; r++) {",
+      "        for (int c = 0; c < n; c++) {",
+      "            if (r == 0 || c == 0) dp[r][c] = 1;",
+      "            else dp[r][c] = dp[r - 1][c] + dp[r][c - 1];",
+      "        }",
+      "    }",
+      "    return dp[m - 1][n - 1];",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(m * n)",
+      "space": "O(n) rolling, O(m*n) tabulated"
+    }
+  },
+  "visualization": {
+    "engine": "dpGrid",
+    "input": {
+      "rows": 4,
+      "cols": 5
+    },
+    "code": [
+      "int[][] dp = new int[rows][cols];",
+      "for (int r = 0; r < rows; r++) {",
+      "    for (int c = 0; c < cols; c++) {",
+      "        if (r == 0 || c == 0) dp[r][c] = 1;",
+      "        else dp[r][c] = dp[r-1][c] + dp[r][c-1];",
+      "    }",
+      "}",
+      "return dp[rows-1][cols-1];"
+    ]
+  },
+  "commonMistakes": [
+    "Forgetting to initialise the first row and column to 1.",
+    "In the rolling-array version, reading row[c-1] after it has been updated — that is intentional here (it IS the left neighbour of the current row), but the same trick is wrong in problems where you need the previous row's value; be explicit about which you want.",
+    "Overflow for large grids if the constraints were relaxed; the closed form C(m+n-2, m-1) has the same issue and needs care."
+  ],
+  "similar": [
+    "climbing-stairs",
+    "coin-change"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 62,
+      "slug": "unique-paths",
+      "title": "Unique Paths",
+      "url": "https://leetcode.com/problems/unique-paths/",
+      "premium": false
+    }
+  }
+}

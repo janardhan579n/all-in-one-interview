@@ -1,0 +1,265 @@
+{
+  "id": "websockets",
+  "title": "Real-Time Transport",
+  "group": "Foundations",
+  "level": 1,
+  "estimatedMinutes": 26,
+  "summary": "How a server tells a client something happened, when HTTP was designed for the client to do all the asking. The answer evolves — short polling, long polling, Server-Sent Events, WebSockets — and each step exists because the previous one broke under a specific load.",
+  "analogy": "Ringing the post office every five minutes to ask whether post has arrived. Most calls are wasted, so instead you stay on the line and they speak when something comes — but now the line is held open, and if either of you says nothing for a while someone hangs up assuming the other left. Keeping the line open is cheaper than calling constantly, right up until ten thousand people are holding lines and the switchboard has to remember which operator each of them is talking to.",
+  "explanation": {
+    "beginner": "Normal web requests only go one way to start with: the browser asks, the server answers, and the connection closes. That is fine for loading a page, but it means the server has no way to say 'a new message arrived' on its own. The oldest fix is to ask over and over — polling. A better fix is to ask once and let the server hold the question until it has an answer. Better still, the server can keep a one-way stream open and push updates down it. A WebSocket goes furthest: it starts as a normal HTTP request, then both sides agree to upgrade the same connection into a two-way channel that stays open, and either side can send at any time.",
+    "interview": "Four transports, each one solving the previous one's failure. Short polling: a request on a fixed interval; simple and stateless, but cost scales with clients divided by interval regardless of whether anything changed, and latency is bounded below by that interval. Long polling: the server holds the request until data exists or a timeout fires; latency drops to near-zero but every waiting client still occupies a connection, and every message costs a full request/response cycle with headers. Server-Sent Events: one long-lived HTTP response streaming text frames, with automatic reconnect and Last-Event-ID replay built into the browser — but it is server-to-client only and, over HTTP/1.1, competes for the roughly six connections per origin a browser allows. WebSockets: an HTTP GET with Upgrade: websocket and Sec-WebSocket-Key, answered with 101 Switching Protocols, after which the same TCP connection carries framed binary or text in both directions with 2–14 bytes of framing rather than hundreds of bytes of headers. The cost is statefulness: a connection lives on one server process, so delivery requires sticky routing or a pub/sub backplane to fan a message to whichever node holds the recipient; load balancer idle timeouts terminate quiet connections, so you need application-level pings; and every drop needs reconnect with exponential backoff plus jitter and a cursor-based replay so messages sent during the gap are not lost."
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "client",
+        "label": "Client",
+        "type": "client",
+        "x": 80,
+        "y": 300,
+        "note": "Opens one connection and keeps it. Must reconnect with backoff and ask for anything missed while it was gone."
+      },
+      {
+        "id": "lb",
+        "label": "Load balancer",
+        "type": "lb",
+        "x": 330,
+        "y": 300,
+        "note": "Must pass the Upgrade handshake through, and its idle timeout — commonly 60 s — will close a quiet connection unless heartbeats keep it warm."
+      },
+      {
+        "id": "ws1",
+        "label": "WS server A",
+        "type": "server",
+        "x": 600,
+        "y": 160,
+        "note": "Holds this user's live connection in memory. That state is why the routing problem exists.",
+        "why": {
+          "without": [
+            "At a 5-second poll interval, 100,000 clients generate 20,000 requests/s that are almost all empty",
+            "Every one of those carries full HTTP headers — hundreds of bytes to say 'nothing new'",
+            "A change still waits up to a full interval before anyone sees it"
+          ],
+          "with": [
+            "One open connection per client; frames cost 2–14 bytes of overhead",
+            "Delivery latency is one network trip, not one poll interval",
+            "Traffic scales with events, not with clients times polling frequency"
+          ],
+          "conclusion": "You trade a stateless, trivially scalable request pattern for a stateful connection that pins a user to a process — and everything hard about WebSockets follows from that one sentence."
+        }
+      },
+      {
+        "id": "ws2",
+        "label": "WS server B",
+        "type": "server",
+        "x": 600,
+        "y": 440,
+        "note": "Holds a different set of connections. It has no idea who is connected to server A."
+      },
+      {
+        "id": "bus",
+        "label": "Pub/sub backplane",
+        "type": "queue",
+        "x": 880,
+        "y": 290,
+        "note": "Every node subscribes to the channels its connected users care about, so a publisher does not need to know which node holds whom."
+      },
+      {
+        "id": "publisher",
+        "label": "App / worker",
+        "type": "worker",
+        "x": 880,
+        "y": 540,
+        "note": "Publishes an event once. Fan-out to the right connections is the backplane's job, not the publisher's."
+      }
+    ],
+    "edges": [
+      {
+        "from": "client",
+        "to": "lb",
+        "label": "1. GET + Upgrade"
+      },
+      {
+        "from": "lb",
+        "to": "ws1",
+        "label": "2. 101, then frames both ways"
+      },
+      {
+        "from": "publisher",
+        "to": "bus",
+        "label": "3. publish event"
+      },
+      {
+        "from": "bus",
+        "to": "ws1",
+        "label": "4a. deliver",
+        "dashed": true
+      },
+      {
+        "from": "bus",
+        "to": "ws2",
+        "label": "4b. deliver",
+        "dashed": true
+      }
+    ]
+  },
+  "why": {
+    "without": [
+      "The server can never speak first, so anything it learns waits until the client next asks",
+      "Short polling at a 5-second interval with 100,000 connected clients is 20,000 requests/s, and on a quiet day essentially all of them return nothing",
+      "Each empty poll still carries request and response headers — commonly several hundred bytes each way to communicate 'no change'",
+      "Lowering the interval to improve freshness multiplies the wasted traffic linearly; you are buying latency with load"
+    ],
+    "with": [
+      "One connection carries many messages; per-message overhead falls from hundreds of bytes to a 2–14 byte frame header",
+      "Delivery latency is a single network trip after the event happens, not up to one polling interval",
+      "Traffic volume tracks how much actually happens rather than how many clients exist times how often they ask",
+      "The channel is bidirectional, so client-originated events (typing indicators, cursor positions, acknowledgements) ride the same connection"
+    ],
+    "conclusion": "Real-time transport is a ladder, and you should climb only as far as the problem forces you. Each rung buys latency and efficiency and pays for it in connection state — and connection state is what turns a simple stateless service into one that needs sticky routing, heartbeats, a backplane and a replay story."
+  },
+  "whenToUse": [
+    "Updates are frequent and their freshness is the product — chat, collaborative editing, live presence, trading or telemetry dashboards",
+    "Both directions matter: the client sends as well as receives, and you would otherwise need a socket plus a separate POST path",
+    "Sub-second delivery is a requirement you would have to defend, not a nice-to-have",
+    "Many small messages, where per-message HTTP header overhead would dominate the payload",
+    "Many clients care about the same event, so one publish fans out rather than each client polling independently"
+  ],
+  "whenNotToUse": [
+    "Updates are infrequent — a handful of events per user per hour. You would hold an idle connection, a heartbeat timer and a slot in a routing table for hours to deliver almost nothing; polling every 30 seconds is cheaper and cannot break in a way that needs a reconnection strategy",
+    "The client only ever sends, never receives — form submissions, event ingestion, analytics beacons. A plain HTTP POST is simpler, retries cleanly, needs no connection state and works through every proxy you will ever meet",
+    "The server only ever sends, never receives, and the payload is text — Server-Sent Events gives you that with automatic browser reconnect and Last-Event-ID replay for free, and none of the WebSocket routing problems",
+    "The data is a request/response question with an answer ('what is this user's profile?'). Wrapping request/response in a persistent socket means rebuilding correlation ids, timeouts and error semantics that HTTP already has",
+    "Corporate proxies or network middleboxes in your client population strip or mishandle the Upgrade handshake, and you have no fallback path — you have traded a working slow system for a broken fast one"
+  ],
+  "tradeoffs": [
+    {
+      "option": "Short polling",
+      "pros": [
+        "Trivially simple; ordinary stateless HTTP requests that any client, proxy and load balancer already handles",
+        "No connection state, so any server can answer any request and scaling is just adding servers",
+        "Fails gracefully — a missed poll is corrected by the next one"
+      ],
+      "cons": [
+        "Cost is clients divided by interval, independent of how much actually changes: 100,000 clients at 5 s is 20,000 req/s of mostly empty responses",
+        "Latency is bounded below by the interval, so freshness can only be bought with proportionally more load",
+        "Header overhead dwarfs the payload when the answer is 'nothing new'"
+      ]
+    },
+    {
+      "option": "Long polling",
+      "pros": [
+        "Near-real-time delivery using nothing but ordinary HTTP requests",
+        "Works through essentially every proxy and firewall, because it looks like a slow response",
+        "No protocol upgrade, so existing routing, auth and logging all still apply unchanged"
+      ],
+      "cons": [
+        "A held request still occupies a connection and, on thread-per-request servers, a thread — the resource saving over polling is smaller than it looks",
+        "Every delivered message costs a full request/response cycle plus a reconnect, so under heavy traffic it degrades toward the cost of polling",
+        "A race window exists between the response returning and the next request being issued, so the server must buffer or the client must send a cursor"
+      ]
+    },
+    {
+      "option": "Server-Sent Events",
+      "pros": [
+        "One long-lived HTTP response streaming events; no upgrade, no new protocol, plain text frames",
+        "Automatic reconnection and Last-Event-ID replay are built into the browser, so the hardest part of real-time is handled for you",
+        "Still ordinary HTTP, so compression, auth headers and existing proxy configuration keep working"
+      ],
+      "cons": [
+        "One direction only — anything the client wants to send needs a separate request path",
+        "Text only; binary payloads must be encoded, costing roughly a third more bytes in base64",
+        "Over HTTP/1.1 it consumes one of the browser's roughly six connections per origin, which several open tabs will exhaust — HTTP/2 multiplexing removes this, but only if every hop speaks it"
+      ]
+    },
+    {
+      "option": "WebSockets",
+      "pros": [
+        "Full duplex over one connection: either side sends at any time with 2–14 bytes of framing",
+        "Lowest per-message overhead and lowest delivery latency of the four",
+        "Carries binary natively, and one connection serves every channel a client subscribes to"
+      ],
+      "cons": [
+        "Stateful: a connection lives on one process, so you need sticky routing or a pub/sub backplane before a second server exists",
+        "Load balancer and proxy idle timeouts close quiet connections, so you must implement pings and reconnect with backoff and jitter — otherwise every restart produces a synchronised reconnect storm",
+        "You inherit responsibilities HTTP handled: message ordering, acknowledgement, replay of anything sent during a disconnect, and per-connection auth expiry",
+        "Idle connections are not free — each costs kernel socket buffers plus application state, so capacity planning becomes memory and file descriptors rather than requests per second"
+      ]
+    }
+  ],
+  "keyNumbers": [
+    {
+      "label": "Short polling cost: 100,000 clients at a 5 s interval",
+      "value": "20,000 req/s, almost all returning nothing"
+    },
+    {
+      "label": "Per-message overhead: HTTP headers vs WebSocket frame",
+      "value": "several hundred bytes vs 2–14 bytes"
+    },
+    {
+      "label": "Memory per idle WebSocket connection",
+      "value": "~10–50 KB, socket buffers plus application state"
+    },
+    {
+      "label": "Common load balancer idle timeout",
+      "value": "60 s — heartbeat well inside it, typically every 20–30 s"
+    },
+    {
+      "label": "Browser connection limit per origin over HTTP/1.1",
+      "value": "about 6, which caps concurrent SSE streams"
+    },
+    {
+      "label": "Handshake response that switches protocols",
+      "value": "HTTP 101 Switching Protocols, on the same TCP connection"
+    }
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "architecture",
+      "question": "Your chat service works perfectly on one server. You add a second server behind a load balancer and users start missing messages: Alice on server A sends to Bob, who is connected to server B, and nothing arrives. What broke and what is the standard fix?",
+      "options": [
+        "The load balancer is not passing the Upgrade header; enable WebSocket support on it",
+        "A WebSocket connection is state held in one process, so server A has no way to reach a socket owned by server B. Publish the message to a pub/sub backplane that every node subscribes to, so whichever node holds Bob delivers it",
+        "TLS is being terminated twice; terminate it only at the load balancer",
+        "Bob's client needs to poll as well as hold the socket, to catch messages the socket missed"
+      ],
+      "answerIndex": 1,
+      "explanation": "This is the single consequence that makes WebSockets harder than HTTP. A stateless HTTP request can be answered by any server, so horizontal scaling is free; a live socket exists in exactly one process's memory, so the sender's server must somehow reach the recipient's. Sticky routing does not solve it either — it keeps a client pinned to a server, which is necessary, but says nothing about how a message crosses between servers. The backplane (Redis pub/sub, a message broker, or a dedicated routing tier) is what decouples 'who publishes' from 'who holds the connection'. Note the second half of the problem too: Bob may be offline entirely, so durable storage plus replay on reconnect is still required."
+    },
+    {
+      "id": "q2",
+      "type": "mcq",
+      "question": "A dashboard streams server-to-client metric updates as JSON, and the client never needs to send anything over the same channel. Which transport is the best fit and why?",
+      "options": [
+        "WebSockets, because they are the lowest-latency option available",
+        "Server-Sent Events, because it is one-directional text streaming and the browser gives you automatic reconnection and Last-Event-ID replay for free",
+        "Short polling, because dashboards do not need real-time data",
+        "Long polling, because it is the only option that works through corporate proxies"
+      ],
+      "answerIndex": 1,
+      "explanation": "Picking the most capable transport is not the same as picking the right one. SSE is plain HTTP, so your existing auth, compression and proxy configuration keep working, and the two hardest parts of any real-time client — reconnecting sensibly and not losing events during the gap — are implemented in the browser rather than by you. Choosing WebSockets here means writing your own reconnect, backoff, heartbeat and replay logic to gain a duplex channel you will never use in one direction. The honest limits of SSE are text-only payloads and the roughly six-connection-per-origin cap on HTTP/1.1, and neither bites a single dashboard tab."
+    },
+    {
+      "id": "q3",
+      "type": "architecture",
+      "question": "Connections to your WebSocket service drop reliably after about a minute of inactivity, and when they do, clients reconnect instantly and in unison, briefly overwhelming the service. Name both causes.",
+      "options": [
+        "TCP keepalive is disabled, and the client retry loop is too slow",
+        "An idle timeout at the load balancer or proxy closes quiet connections — fix with application-level pings inside that window — and reconnecting without exponential backoff and jitter synchronises every client into a thundering herd",
+        "The server is running out of file descriptors, and the clients are caching the old address",
+        "The Upgrade handshake is expiring and must be re-sent periodically"
+      ],
+      "answerIndex": 1,
+      "explanation": "Two separate bugs that always appear together. Intermediaries close connections that carry no bytes — 60 seconds is a common default — and TCP keepalive usually does not help because its defaults are measured in hours and middleboxes may ignore it anyway; an application-level ping every 20–30 seconds does. The second bug is the reconnect: if every client retries immediately, a single blip re-establishes tens of thousands of connections in the same instant, which is exactly the load the service is least able to absorb while recovering. Exponential backoff with random jitter spreads them out, and the reconnect should carry a cursor or last-received id so the server can replay what was missed rather than leaving a silent gap."
+    }
+  ],
+  "related": [
+    "http",
+    "load-balancer",
+    "message-queue",
+    "chat-application",
+    "notification-system"
+  ]
+}

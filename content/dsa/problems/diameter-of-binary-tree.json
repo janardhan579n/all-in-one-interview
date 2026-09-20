@@ -1,0 +1,136 @@
+{
+  "id": "diameter-of-binary-tree",
+  "title": "Diameter of Binary Tree",
+  "patternId": "trees",
+  "difficulty": "intermediate",
+  "tags": [
+    "tree",
+    "recursion",
+    "dfs"
+  ],
+  "statement": "Given the root of a binary tree, return its diameter: the length of the longest path between any two nodes, measured in edges. The path does not have to pass through the root.",
+  "realWorld": "The diameter of a network is the worst-case hop count between any two machines, and it is the number that bounds how long a broadcast or a gossip round takes to reach everyone. When the topology is a tree — a spanning tree of a cluster, a CDN fan-out, a replication chain — computing it is exactly this.",
+  "examples": [
+    {
+      "input": "root = [1,2,3,4,5]",
+      "output": "3",
+      "explanation": "Level-order notation: values level by level, left to right, null for a missing child. The longest path is 4 to 2 to 1 to 3, which crosses 3 edges. Here the best path does happen to pass through the root."
+    },
+    {
+      "input": "root = [1,2,null,4,5,6,null,null,7]",
+      "output": "4",
+      "explanation": "The tree is 1 with a single left child 2; 2 has children 4 and 5; 4 has a left child 6; 5 has a right child 7. The longest path is 6 to 4 to 2 to 5 to 7 — four edges — and it never touches the root. The best path from the root downwards is only 1 to 2 to 4 to 6, three edges, so any solution that computes the diameter 'through the root' reports 3 and is wrong."
+    },
+    {
+      "input": "root = [1]",
+      "output": "0",
+      "explanation": "A single node. Measured in edges the answer is 0, not 1 — which is exactly the off-by-one that the node-count convention introduces if you mix the two."
+    }
+  ],
+  "constraints": [
+    "1 <= number of nodes <= 10^4",
+    "-100 <= node.val <= 100",
+    "The length is counted in edges, so a two-node tree has diameter 1"
+  ],
+  "bruteForce": {
+    "idea": "For each node, the longest path that bends at that node is height(left) + height(right). Compute that at every node and take the maximum, with height as its own helper.",
+    "code": [
+      "int best = 0;",
+      "",
+      "void walk(TreeNode node) {",
+      "    if (node == null) return;",
+      "    best = Math.max(best, height(node.left) + height(node.right));",
+      "    walk(node.left);",
+      "    walk(node.right);",
+      "}",
+      "",
+      "int height(TreeNode node) {",
+      "    if (node == null) return 0;",
+      "    return 1 + Math.max(height(node.left), height(node.right));",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n^2)",
+      "space": "O(h)"
+    },
+    "whySlow": "`height` is invoked once per node, and each invocation re-walks the whole subtree beneath that node — so a node at depth d is visited by d + 1 separate height computations. On a chain of n nodes that is roughly n^2 / 2 node visits to learn n heights. Nothing new is discovered by the repeats: the height of every subtree is computed correctly the first time `walk` descends into it and is then discarded, because `walk` returns nothing. The tree is traversed twice over, once to move and once to measure, when a single post-order pass already has both numbers in hand at the moment it needs them."
+  },
+  "patternIdentification": "The shape to learn here is a recursive helper that returns one thing and updates another. The parent needs its child's height, because height is what composes upward — my height is one more than the taller of my children's. The answer you actually want, the best diameter seen anywhere, does not compose that way: a parent cannot assemble it from its children's diameters plus its own information, because the winning path may lie entirely inside one child. So height is the return value and the best-so-far lives in a variable every call may improve. Return what composes; accumulate what does not. Once you can see it, the same shape is maximum path sum, longest univalue path, counting good nodes, and the -1 sentinel trick in balanced-binary-tree.",
+  "optimized": {
+    "idea": "One post-order walk. Each call computes its own height and, before returning it, checks whether the path that turns around at this node — down into the left subtree and back up and down into the right — beats the best seen so far. Heights are counted in edges, so null is -1 and a leaf is 0; the path bending at a node is then left + right + 2.",
+    "code": [
+      "public static int diameterOfBinaryTree(TreeNode root) {",
+      "    int[] best = {0};        // a one-element array so the recursion can write to it",
+      "    height(root, best);",
+      "    return best[0];",
+      "}",
+      "",
+      "/** Returns this subtree's height in edges; updates best with the path that bends here. */",
+      "private static int height(TreeNode node, int[] best) {",
+      "    if (node == null) return -1;                        // -1 edges, so a leaf comes out as 0",
+      "    int left  = height(node.left,  best);",
+      "    int right = height(node.right, best);",
+      "    best[0] = Math.max(best[0], left + right + 2);      // the path that turns around here",
+      "    return 1 + Math.max(left, right);                   // what the parent actually needs",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(h)"
+    }
+  },
+  "visualization": {
+    "engine": "treeTraversal",
+    "input": {
+      "tree": {
+        "value": 1,
+        "left": {
+          "value": 2,
+          "left": {
+            "value": 4,
+            "left": {
+              "value": 6
+            }
+          },
+          "right": {
+            "value": 5,
+            "right": {
+              "value": 7
+            }
+          }
+        }
+      },
+      "order": "postorder"
+    },
+    "code": [
+      "int height(TreeNode node) {",
+      "    if (node == null) return -1;",
+      "    int left = height(node.left);",
+      "    int right = height(node.right);",
+      "    best = Math.max(best, left + right + 2);",
+      "    return 1 + Math.max(left, right);",
+      "}"
+    ]
+  },
+  "commonMistakes": [
+    "Computing the diameter only through the root — `height(root.left) + height(root.right)` and nothing else. On [1,2,null,4,5,6,null,null,7] that gives 3 while the answer is 4, because the longest path bends at node 2 and never reaches the root. Every symmetric test tree hides this, which is why it survives review.",
+    "Returning the best-so-far from the helper instead of the height. The parent then treats a diameter as if it were a height and adds two of them together, so the number grows on the way up and the final answer is far larger than the number of nodes in the tree.",
+    "Mixing the two conventions — counting the path in nodes while returning heights in edges, or the reverse. Every answer is off by exactly one, on every input, which reads like an indexing slip and is really a definitions slip. Pick edges or nodes, write the choice in a comment next to the base case, and never switch."
+  ],
+  "similar": [
+    "balanced-binary-tree",
+    "max-depth-binary-tree",
+    "invert-binary-tree",
+    "binary-tree-level-order",
+    "path-sum"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 543,
+      "slug": "diameter-of-binary-tree",
+      "title": "Diameter of Binary Tree",
+      "url": "https://leetcode.com/problems/diameter-of-binary-tree/",
+      "premium": false
+    }
+  }
+}

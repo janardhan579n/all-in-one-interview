@@ -1,0 +1,352 @@
+{
+  "id": "graphs",
+  "kind": "data-structure",
+  "title": "Graphs — The Basics",
+  "group": "Graphs",
+  "level": 3,
+  "difficulty": "intermediate",
+  "estimatedMinutes": 35,
+  "summary": "Nodes connected by edges, with no rules about shape — the most general structure there is, and the right model whenever things relate to other things.",
+  "prerequisites": [
+    "trees",
+    "queue",
+    "stack"
+  ],
+  "tags": [
+    "graph",
+    "adjacency-list",
+    "level-3"
+  ],
+  "analogy": {
+    "beginner": "A map of cities joined by roads. Cities are nodes, roads are edges. Some roads are one-way (a directed graph), some have tolls (weights), and unlike a family tree you can absolutely drive in a circle and end up where you started. That last part — cycles — is the only real difference from a tree, and it is why graph algorithms must remember where they have been.",
+    "interview": "A graph G = (V, E) is a set of vertices and a set of edges, optionally directed and/or weighted, with no constraints on connectivity or acyclicity. Representation is the first design decision: an adjacency list is O(V + E) space and O(degree) neighbour iteration; an adjacency matrix is O(V²) space with O(1) edge lookup."
+  },
+  "intuition": "A tree is a graph with rules: one root, no cycles, exactly n-1 edges. Take those rules away and you have a graph — which means every tree algorithm still applies, but with one addition that changes everything: **a `visited` set**.\n\nWithout it, a cycle makes your traversal loop forever. With it, BFS and DFS work unchanged. That single line of difference is most of what separates tree code from graph code.\n\nThe other thing worth internalising early is that the hard part of graph problems is usually *modelling*, not traversing. 'Can I finish these courses given prerequisites?' does not mention graphs at all, but courses are nodes, prerequisites are directed edges, and the question is 'does this digraph have a cycle?'. Once you have seen the modelling step a dozen times, the algorithms are the easy half.",
+  "problemFirst": {
+    "motivatingProblem": "Given a social network, find the shortest chain of friendships connecting two people.",
+    "bruteForce": {
+      "idea": "Enumerate every possible path from A to B and keep the shortest.",
+      "code": [
+        "// Enumerate all simple paths — correct, catastrophic",
+        "void allPaths(int node, int target, List<Integer> path, Set<Integer> onPath) {",
+        "    if (node == target) { record(path); return; }",
+        "    for (int next : neighbours(node)) {",
+        "        if (onPath.add(next)) {",
+        "            path.add(next);",
+        "            allPaths(next, target, path, onPath);",
+        "            path.remove(path.size() - 1);",
+        "            onPath.remove(next);",
+        "        }",
+        "    }",
+        "}"
+      ],
+      "complexity": {
+        "time": "O(V!) in the worst case",
+        "space": "O(V)"
+      },
+      "whySlow": "The number of simple paths in a dense graph grows factorially. For a network of even 20 people this is already hopeless — and social graphs have billions of nodes."
+    },
+    "observation": "We do not need every path. We need the shortest one. And if we expand outwards in rings — everyone 1 hop away, then everyone 2 hops away — the first time we meet the target, we are provably on a shortest path.",
+    "leap": "Breadth-first search with a queue and a visited set. O(V + E): each node is enqueued once, each edge examined once. This is exactly how 'degrees of separation' features are actually computed."
+  },
+  "howItWorks": [
+    "**Vocabulary**: vertex/node, edge, neighbour, degree, path, cycle, connected component, directed vs undirected, weighted vs unweighted.",
+    "**Adjacency list** — `Map<Node, List<Node>>` or `List<Integer>[]`. O(V + E) space. The default choice: real graphs are sparse.",
+    "**Adjacency matrix** — `boolean[V][V]`. O(V²) space, O(1) 'is there an edge?'. Use only for small or dense graphs.",
+    "**Edge list** — `[(u,v,weight)]`. Compact; what Kruskal's MST algorithm consumes.",
+    "**Implicit graphs** — a grid where neighbours are the four adjacent cells, or a word ladder where neighbours differ by one letter. You never build the graph; you generate neighbours on demand. Half of all interview graph problems are implicit.",
+    "**Traverse with BFS** (queue → shortest path in hops) or **DFS** (stack/recursion → reachability, cycles, topological order).",
+    "**Always keep a `visited` set**, and mark nodes visited when you *enqueue* them, not when you dequeue them."
+  ],
+  "patternRecognition": {
+    "signals": [
+      "Things connected to other things: friends, roads, prerequisites, dependencies, web links",
+      "A grid or matrix where you can move between adjacent cells",
+      "'Shortest path', 'is it reachable', 'how many islands/groups', 'is there a cycle'",
+      "'Can this ordering be satisfied?' → topological sort on a DAG"
+    ],
+    "antiSignals": [
+      "Strict hierarchy with a single parent — that is a tree, and you can skip the visited set",
+      "No relationships between elements at all"
+    ],
+    "decisionTreeId": "graph-algorithm"
+  },
+  "visualizations": [
+    {
+      "id": "representations",
+      "title": "The same graph as a picture, an adjacency list and a matrix",
+      "engine": "graphRepresentation",
+      "input": {
+        "nodes": [
+          "A",
+          "B",
+          "C",
+          "D",
+          "E"
+        ],
+        "edges": [
+          [
+            "A",
+            "B"
+          ],
+          [
+            "A",
+            "C"
+          ],
+          [
+            "B",
+            "D"
+          ],
+          [
+            "C",
+            "D"
+          ],
+          [
+            "D",
+            "E"
+          ]
+        ],
+        "directed": false
+      },
+      "code": [
+        "// Adjacency list — O(V + E) space, the usual choice",
+        "Map<String, List<String>> adj = new HashMap<>();",
+        "adj.computeIfAbsent(\"A\", k -> new ArrayList<>()).add(\"B\");",
+        "",
+        "// Adjacency matrix — O(V^2) space, O(1) edge lookup",
+        "boolean[][] matrix = new boolean[V][V];",
+        "matrix[a][b] = matrix[b][a] = true;   // undirected"
+      ]
+    },
+    {
+      "id": "components",
+      "title": "Counting connected components",
+      "engine": "connectedComponents",
+      "input": {
+        "nodes": [
+          "A",
+          "B",
+          "C",
+          "D",
+          "E",
+          "F",
+          "G"
+        ],
+        "edges": [
+          [
+            "A",
+            "B"
+          ],
+          [
+            "B",
+            "C"
+          ],
+          [
+            "D",
+            "E"
+          ],
+          [
+            "F",
+            "G"
+          ]
+        ],
+        "directed": false
+      },
+      "code": [
+        "int components = 0;",
+        "Set<String> visited = new HashSet<>();",
+        "for (String node : allNodes) {",
+        "    if (!visited.contains(node)) {",
+        "        components++;          // a node we have never reached = a new component",
+        "        dfs(node, visited);    // absorb everything reachable from it",
+        "    }",
+        "}",
+        "return components;"
+      ]
+    }
+  ],
+  "implementations": [
+    {
+      "label": "Simple",
+      "language": "java",
+      "explanation": "Building an adjacency list and walking it. Note `computeIfAbsent` — it is the idiomatic way to build a multi-map, and adding both directions is what makes the graph undirected.",
+      "code": [
+        "class Graph {",
+        "    private final Map<Integer, List<Integer>> adj = new HashMap<>();",
+        "",
+        "    void addEdge(int u, int v) {",
+        "        adj.computeIfAbsent(u, k -> new ArrayList<>()).add(v);",
+        "        adj.computeIfAbsent(v, k -> new ArrayList<>()).add(u);  // drop for directed",
+        "    }",
+        "",
+        "    List<Integer> neighbours(int u) {",
+        "        return adj.getOrDefault(u, List.of());",
+        "    }",
+        "}",
+        "",
+        "// Shortest path in hops — BFS",
+        "int shortestHops(Graph g, int start, int target) {",
+        "    Queue<Integer> q = new ArrayDeque<>();",
+        "    Set<Integer> visited = new HashSet<>();",
+        "    q.offer(start);",
+        "    visited.add(start);",
+        "    int distance = 0;",
+        "    while (!q.isEmpty()) {",
+        "        int levelSize = q.size();",
+        "        for (int i = 0; i < levelSize; i++) {",
+        "            int node = q.poll();",
+        "            if (node == target) return distance;",
+        "            for (int next : g.neighbours(node)) {",
+        "                if (visited.add(next)) q.offer(next);   // mark on ENQUEUE",
+        "            }",
+        "        }",
+        "        distance++;",
+        "    }",
+        "    return -1;   // unreachable",
+        "}"
+      ]
+    },
+    {
+      "label": "Optimized",
+      "language": "java",
+      "explanation": "For dense integer-labelled graphs, arrays beat maps: no boxing, no hashing, contiguous memory. And the grid pattern below is worth memorising — an enormous number of 'matrix' problems are just BFS/DFS on an implicit graph.",
+      "code": [
+        "// Array-backed adjacency list for vertices 0..V-1",
+        "List<Integer>[] adj = new List[V];",
+        "for (int i = 0; i < V; i++) adj[i] = new ArrayList<>();",
+        "boolean[] visited = new boolean[V];   // faster than a HashSet",
+        "",
+        "// Implicit graph: a grid, where neighbours are the 4 adjacent cells",
+        "static final int[][] DIRS = {{1,0},{-1,0},{0,1},{0,-1}};",
+        "",
+        "void bfsGrid(char[][] grid, int startRow, int startCol) {",
+        "    int rows = grid.length, cols = grid[0].length;",
+        "    boolean[][] seen = new boolean[rows][cols];",
+        "    Queue<int[]> q = new ArrayDeque<>();",
+        "    q.offer(new int[]{startRow, startCol});",
+        "    seen[startRow][startCol] = true;",
+        "    while (!q.isEmpty()) {",
+        "        int[] cell = q.poll();",
+        "        for (int[] d : DIRS) {",
+        "            int r = cell[0] + d[0], c = cell[1] + d[1];",
+        "            if (r < 0 || r >= rows || c < 0 || c >= cols) continue;",
+        "            if (seen[r][c] || grid[r][c] == '0') continue;",
+        "            seen[r][c] = true;",
+        "            q.offer(new int[]{r, c});",
+        "        }",
+        "    }",
+        "}"
+      ]
+    }
+  ],
+  "complexity": {
+    "time": "BFS and DFS are both O(V + E) with an adjacency list; O(V²) with a matrix",
+    "space": "Adjacency list O(V + E) · matrix O(V²) · traversal O(V) for visited plus the queue or stack",
+    "why": "Each vertex is processed once and each edge examined once (twice in an undirected graph), giving V + E. With a matrix you must scan an entire row of V entries to find a vertex's neighbours, so traversal degrades to O(V²) even if the graph has three edges. Choose the representation from the density: a social graph with a billion users and a few hundred friends each is catastrophically sparse, so a matrix would need 10¹⁸ cells to store 10¹¹ edges."
+  },
+  "commonMistakes": [
+    {
+      "mistake": "No visited set",
+      "fix": "Any cycle makes the traversal run forever. This is the single defining difference from tree traversal."
+    },
+    {
+      "mistake": "Marking visited on dequeue instead of enqueue",
+      "fix": "The same node gets queued many times before it is processed — memory blows up and complexity degrades. Mark it when you add it."
+    },
+    {
+      "mistake": "Using BFS for shortest path on a *weighted* graph",
+      "fix": "BFS minimises hop count, not total weight. Weighted needs Dijkstra (a priority queue instead of a queue)."
+    },
+    {
+      "mistake": "Forgetting to add both directions for an undirected edge",
+      "fix": "`addEdge` must push u→v and v→u."
+    },
+    {
+      "mistake": "Assuming the graph is connected",
+      "fix": "Loop over every vertex as a potential start — that is exactly how you count components."
+    },
+    {
+      "mistake": "Missing the bounds check in grid problems",
+      "fix": "Check row and column ranges *before* indexing, and use `continue` rather than nested ifs."
+    }
+  ],
+  "realWorldUses": [
+    "Social networks (friend suggestions, degrees of separation), maps and routing, package dependency resolution.",
+    "Build systems and CI pipelines topologically sort a DAG of tasks.",
+    "Microservice call graphs and distributed tracing; deadlock detection is cycle detection on a wait-for graph.",
+    "Web crawling is BFS over the link graph; PageRank is an eigenvector of its adjacency matrix."
+  ],
+  "interviewNotes": [
+    "Before touching an algorithm, say what the nodes are and what the edges are. Most graph interviews are won or lost in that sentence.",
+    "Then state directed/undirected and weighted/unweighted — those two answers pick the algorithm for you.",
+    "Grid problems are graph problems. Saying that out loud saves you ten minutes."
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "mcq",
+      "question": "What is the one thing graph traversal needs that tree traversal does not?",
+      "options": [
+        "Recursion",
+        "A visited set, because graphs can contain cycles",
+        "Sorted input",
+        "A root node"
+      ],
+      "answerIndex": 1,
+      "explanation": "Trees are acyclic with a single parent per node, so you can never revisit. A graph can loop, so without tracking visited nodes the traversal never terminates."
+    },
+    {
+      "id": "q2",
+      "type": "mcq",
+      "question": "A social network has 1 billion users averaging 200 friends each. Which representation?",
+      "options": [
+        "Adjacency matrix",
+        "Adjacency list",
+        "A sorted array",
+        "A binary search tree"
+      ],
+      "answerIndex": 1,
+      "explanation": "A matrix needs V² = 10¹⁸ cells. The list needs V + E ≈ 2×10¹¹ entries — a factor of ten million less. Real graphs are sparse, so lists win."
+    },
+    {
+      "id": "q3",
+      "type": "complexity",
+      "question": "What is the time complexity of BFS over a graph stored as an adjacency list?",
+      "options": [
+        "O(V)",
+        "O(E)",
+        "O(V + E)",
+        "O(V²)"
+      ],
+      "answerIndex": 2,
+      "explanation": "Every vertex is enqueued and dequeued once (V) and every adjacency entry is examined once (E). Neither term dominates in general, so both are kept."
+    },
+    {
+      "id": "q4",
+      "type": "identify-pattern",
+      "question": "'Given course prerequisites, determine whether all courses can be completed.' What is this?",
+      "options": [
+        "Shortest path",
+        "Cycle detection in a directed graph (topological sort)",
+        "Minimum spanning tree",
+        "Sliding window"
+      ],
+      "answerIndex": 1,
+      "explanation": "Courses are nodes and prerequisites are directed edges. A cycle means a circular dependency, which makes completion impossible. Kahn's algorithm or DFS with a recursion stack both answer it in O(V + E)."
+    }
+  ],
+  "practiceProblems": [
+    "clone-graph",
+    "graph-valid-tree",
+    "is-graph-bipartite",
+    "min-height-trees",
+    "number-of-islands",
+    "course-schedule"
+  ],
+  "related": [
+    "bfs",
+    "dfs",
+    "trees",
+    "queue"
+  ]
+}

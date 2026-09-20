@@ -1,0 +1,93 @@
+{
+  "id": "sliding-window",
+  "title": "Is this a Sliding Window problem?",
+  "start": "n1",
+  "nodes": {
+    "n1": {
+      "type": "question",
+      "text": "Does the problem involve a **contiguous** subarray or substring (elements must be adjacent)?",
+      "options": [
+        {
+          "label": "Yes",
+          "next": "n2"
+        },
+        {
+          "label": "No — elements can be skipped",
+          "next": "r-dp"
+        }
+      ]
+    },
+    "n2": {
+      "type": "question",
+      "text": "Are you asked for a longest / shortest / maximum / minimum over that range, or a count of qualifying ranges?",
+      "options": [
+        {
+          "label": "Yes",
+          "next": "n3"
+        },
+        {
+          "label": "No, I need arbitrary range sums repeatedly",
+          "next": "r-prefix"
+        }
+      ]
+    },
+    "n3": {
+      "type": "question",
+      "text": "Is the window size fixed and given (e.g. 'of size k')?",
+      "options": [
+        {
+          "label": "Yes, fixed size k",
+          "next": "r-fixed"
+        },
+        {
+          "label": "No, it depends on a condition",
+          "next": "n4"
+        }
+      ]
+    },
+    "n4": {
+      "type": "question",
+      "text": "Can the array contain **negative** numbers while the condition is about sums?",
+      "options": [
+        {
+          "label": "Yes, negatives are possible",
+          "next": "r-prefix-hash"
+        },
+        {
+          "label": "No, all values are non-negative",
+          "next": "r-variable"
+        }
+      ]
+    },
+    "r-fixed": {
+      "type": "result",
+      "text": "Fixed-size Sliding Window",
+      "detail": "Add the entering element, and once the window is k wide, record the answer and remove the leaving element at index right-k+1. O(n) time, O(1) space.",
+      "lessonId": "sliding-window"
+    },
+    "r-variable": {
+      "type": "result",
+      "text": "Variable-size Sliding Window",
+      "detail": "Grow with `right`; while the window is invalid, shrink from `left`. Record after shrinking for 'longest', inside the shrink loop for 'shortest'.",
+      "lessonId": "sliding-window"
+    },
+    "r-prefix-hash": {
+      "type": "result",
+      "text": "Prefix Sum + HashMap — NOT a sliding window",
+      "detail": "With negatives, growing the window can decrease the sum, so shrinking on invalidity is unsound. Use prefix sums and look up `running - k` in a map.",
+      "lessonId": "prefix-sum"
+    },
+    "r-prefix": {
+      "type": "result",
+      "text": "Prefix Sum",
+      "detail": "Precompute cumulative totals once; every range query becomes a single subtraction.",
+      "lessonId": "prefix-sum"
+    },
+    "r-dp": {
+      "type": "result",
+      "text": "Probably Dynamic Programming",
+      "detail": "A subsequence (non-contiguous) has no window to slide. Think about a state defined by position and choice.",
+      "lessonId": "dynamic-programming-basics"
+    }
+  }
+}

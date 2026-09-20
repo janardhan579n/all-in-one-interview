@@ -1,0 +1,109 @@
+{
+  "id": "diagonal-traverse",
+  "title": "Diagonal Traverse",
+  "patternId": "matrix",
+  "difficulty": "intermediate",
+  "tags": [
+    "matrix",
+    "traversal",
+    "simulation"
+  ],
+  "statement": "Given an m x n matrix, return all its elements in diagonal order: start at the top-left, walk the first diagonal up-and-right, then the next diagonal down-and-left, alternating direction on every diagonal until every element has been visited.",
+  "realWorld": "JPEG and MPEG encoding. A quantised 8x8 DCT block is serialised in exactly this zig-zag order so that low-frequency coefficients come first and the long tail of zeros clusters at the end, where run-length coding compresses it to almost nothing. The ordering is chosen because it groups coefficients by frequency, and diagonals of constant r + c are lines of constant frequency.",
+  "examples": [
+    {
+      "input": "matrix = [[1,2,3],[4,5,6],[7,8,9]]",
+      "output": "[1,2,4,7,5,3,6,8,9]",
+      "explanation": "Diagonals grouped by r + c: {1}, {2,4}, {3,5,7}, {6,8}, {9}. Even-sum diagonals are emitted bottom-to-top (up-right), odd-sum ones top-to-bottom (down-left), so {2,4} comes out as 2 then 4 and {3,5,7} as 7, 5, 3."
+    },
+    {
+      "input": "matrix = [[1,2,3],[4,5,6]]",
+      "output": "[1,2,4,5,3,6]",
+      "explanation": "A wide matrix, where the bottom edge is hit before the left edge. From 4 (r=1, c=0, odd sum, moving down-left) the bottom wall applies first, so the move is c++ to 5, not r++ off the board."
+    },
+    {
+      "input": "matrix = [[1,2],[3,4],[5,6]]",
+      "output": "[1,2,3,5,4,6]",
+      "explanation": "A tall matrix, where the left edge is hit before the bottom edge. At 3 (r=1, c=0, odd sum, moving down-left) the left wall applies, so the move is r++ to 5. The diagonal {5} then reverses direction and the interior move r--, c++ reaches 4."
+    }
+  ],
+  "constraints": [
+    "m == matrix.length, n == matrix[i].length",
+    "1 <= m, n <= 10^4",
+    "1 <= m * n <= 10^4",
+    "-10^5 <= matrix[i][j] <= 10^5"
+  ],
+  "bruteForce": {
+    "idea": "Bucket every element by the sum of its coordinates, then emit bucket 0, bucket 1, ... reversing the even-numbered ones.",
+    "code": [
+      "int rows = matrix.length, cols = matrix[0].length;",
+      "List<List<Integer>> buckets = new ArrayList<>();",
+      "for (int d = 0; d < rows + cols - 1; d++) buckets.add(new ArrayList<>());",
+      "for (int r = 0; r < rows; r++) {",
+      "    for (int c = 0; c < cols; c++) buckets.get(r + c).add(matrix[r][c]);",
+      "}",
+      "int[] result = new int[rows * cols];",
+      "int w = 0;",
+      "for (int d = 0; d < buckets.size(); d++) {",
+      "    List<Integer> bucket = buckets.get(d);",
+      "    if (d % 2 == 0) Collections.reverse(bucket);",
+      "    for (int value : bucket) result[w++] = value;",
+      "}",
+      "return result;"
+    ],
+    "complexity": {
+      "time": "O(m*n)",
+      "space": "O(m*n)"
+    },
+    "whySlow": "Every element is boxed into an Integer, appended to an ArrayList, half of those lists are reversed, and then everything is copied out again — three touches and a heap allocation per element to produce an ordering that is fully determined by a rule you can apply one step at a time. The buckets exist only to hold elements until their turn comes, and their turn is computable from the current position alone, so the whole intermediate structure is storing information the coordinates already encode."
+  },
+  "patternIdentification": "Two things are worth extracting. First, **r + c is the diagonal index**: every cell on an up-right diagonal has the same coordinate sum, and moving up-right (r--, c++) or down-left (r++, c--) keeps that sum fixed. The parity of r + c therefore tells you which way you are currently travelling, with no separate direction variable to keep in sync — state you can derive is state you cannot corrupt.\n\nSecond, this is a *boundary-cases* problem rather than an algorithmic one. The movement rule is two lines; the correctness is entirely in what happens when the next step would leave the matrix. There are exactly four such situations, and they are asymmetric in a way that trips almost everyone: when moving up-right you must test the right wall *before* the top wall, and when moving down-left you must test the bottom wall *before* the left wall. At the top-right corner both walls apply at once, and the right wall's response (drop down a row) is the one that keeps you on the board; testing the top wall first would move you right, off the edge. Whenever a traversal alternates direction against a boundary, enumerate the corner cases explicitly before writing the loop — the interior case is never the one that fails.",
+  "optimized": {
+    "idea": "Walk the matrix one cell at a time, emitting as you go, with the direction derived from the parity of r + c. There are exactly m*n steps, so a single counted loop suffices and no bookkeeping about diagonal lengths is needed.\n\nMoving up-right (r + c even), in this priority order:\n- at the right wall (c == cols - 1): step down, r++ — the diagonal ends here and the next one starts below\n- otherwise at the top row (r == 0): step right, c++\n- otherwise: r--, c++\n\nMoving down-left (r + c odd), in this priority order:\n- at the bottom row (r == rows - 1): step right, c++\n- otherwise at the left wall (c == 0): step down, r++\n- otherwise: r++, c--\n\nThe order matters only at the two corners where both conditions hold at once. Going up-right at the top-right cell, both c == cols - 1 and r == 0 are true; taking the right-wall branch moves you down one row, which is correct, while the top-row branch would push c past the last column. Symmetrically, going down-left at the bottom-left cell both r == rows - 1 and c == 0 hold, and the bottom-row branch (move right) is the safe one.",
+    "code": [
+      "public static int[] findDiagonalOrder(int[][] matrix) {",
+      "    if (matrix.length == 0 || matrix[0].length == 0) return new int[0];",
+      "    int rows = matrix.length, cols = matrix[0].length;",
+      "    int[] result = new int[rows * cols];",
+      "    int r = 0, c = 0;",
+      "    for (int i = 0; i < result.length; i++) {",
+      "        result[i] = matrix[r][c];",
+      "        if (((r + c) & 1) == 0) {       // even coordinate sum: travelling up-right",
+      "            if (c == cols - 1) r++;     // the right wall is checked FIRST: at the top-right corner it is the only safe move",
+      "            else if (r == 0) c++;",
+      "            else { r--; c++; }",
+      "        } else {                        // odd coordinate sum: travelling down-left",
+      "            if (r == rows - 1) c++;     // likewise the bottom wall outranks the left wall at the bottom-left corner",
+      "            else if (c == 0) r++;",
+      "            else { r++; c--; }",
+      "        }",
+      "    }",
+      "    return result;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(m*n)",
+      "space": "O(1) beyond the output array"
+    }
+  },
+  "commonMistakes": [
+    "Checking the top row before the right wall when moving up-right. At the top-right corner (0, cols-1) both hold, and the top-row branch sets c = cols, so the next read is matrix[0][cols] — an ArrayIndexOutOfBoundsException. It only fires once the traversal actually reaches that corner, so a 1x1 or 2x2 test can pass while [[1,2,3],[4,5,6],[7,8,9]] throws.",
+    "The mirrored version: checking c == 0 before r == rows - 1 when moving down-left. At the bottom-left corner (rows-1, 0) you step down to r = rows and read past the last row. On the tall matrix [[1,2],[3,4],[5,6]] this throws at the cell holding 5, which is exactly the corner the interior rule never visits.",
+    "Keeping a separate `boolean up` flag and flipping it at the end of each diagonal instead of deriving direction from (r + c) % 2. The flag and the position drift apart the first time a boundary move covers two diagonals' worth of transition, and the symptom is an output that is the right multiset in the wrong order — every element present, some diagonals reversed."
+  ],
+  "similar": [
+    "spiral-matrix",
+    "rotate-image",
+    "set-matrix-zeroes",
+    "game-of-life"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 498,
+      "slug": "diagonal-traverse",
+      "title": "Diagonal Traverse",
+      "url": "https://leetcode.com/problems/diagonal-traverse/",
+      "premium": false
+    }
+  }
+}

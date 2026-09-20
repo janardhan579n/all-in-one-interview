@@ -1,0 +1,10 @@
+{
+  "id": "binary-search",
+  "title": "Binary Search (बाइनरी सर्च)",
+  "summary": "एक ऐसे yes/no test की मदद से search space को बार-बार आधा कीजिए जो monotonic हो — answer space का array होना ज़रूरी नहीं है।",
+  "analogy": {
+    "beginner": "Phone book में 'Krishnan' ढूँढना। आप page 1 से शुरू नहीं करते। आप बीच में खोलते हैं, 'M' देखते हैं, और एक ही चाल में पूरा दूसरा आधा हिस्सा फेंक देते हैं। फिर जो बचा है उसका बीच, और फिर वही। हज़ार pages में लगभग दस बार खोलना पड़ता है। दस लाख pages में बीस बार।",
+    "interview": "Binary search के लिए एक ordered search space पर एक monotonic predicate चाहिए: space का कोई prefix false जवाब देता है और बाक़ी suffix true (या इसका उल्टा)। हर iteration candidate range को आधा कर देता है, जिससे O(log n) probes लगते हैं। Array आम मामला है, परिभाषा नहीं।"
+  },
+  "intuition": "हर कोई binary search को 'sorted array में एक number ढूँढना' के रूप में सीखता है। यह framing उसकी ज़्यादातर ताक़त छिपा देती है।\n\nअसली ज़रूरत है एक **monotonic predicate**: किसी candidate value के बारे में एक yes/no सवाल, जिसका जवाब एक बार पलटने के बाद कभी वापस नहीं पलटता।\n\n```\ncandidates:  1   2   3   4   5   6   7   8\npredicate:   N   N   N   N   Y   Y   Y   Y\n                             ^ यही boundary ढूँढनी है\n```\n\nअगर आप यह तस्वीर बना सकते हैं, तो आप binary search कर सकते हैं — array indices पर, हाँ, पर उतनी ही आसानी से *answers* पर भी। 'वह सबसे छोटी eating speed क्या है जिससे Koko समय पर केले ख़त्म कर सके?' — इसमें कहीं कोई sorted array नहीं है, पर `canFinish(speed)` धीमी speeds के लिए false है और तेज़ speeds के लिए true, और यह कभी वापस नहीं पलटता। तो आप speed को 1 से max तक binary search करते हैं, और हर probe उस परिस्थिति को simulate करता है। यही नया नज़रिया — **answer पर binary search** — interview की तैयारी के सबसे ज़्यादा फ़ायदा देने वाले विचारों में से एक है।\n\nlog₂ की बढ़त थोड़ा सम्मान माँगती है: एक अरब items के लिए 30 probes लगते हैं। Data दोगुना करने पर ठीक एक step बढ़ता है।"
+}

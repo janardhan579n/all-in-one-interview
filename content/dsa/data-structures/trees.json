@@ -1,0 +1,373 @@
+{
+  "id": "trees",
+  "kind": "data-structure",
+  "title": "Trees & Binary Search Trees",
+  "group": "Trees",
+  "level": 3,
+  "difficulty": "intermediate",
+  "estimatedMinutes": 40,
+  "summary": "A hierarchy where every node has one parent and any number of children — and, if you keep it sorted and balanced, a structure that finds anything in O(log n).",
+  "prerequisites": [
+    "recursion",
+    "queue"
+  ],
+  "tags": [
+    "tree",
+    "binary-tree",
+    "bst",
+    "traversal",
+    "level-3"
+  ],
+  "analogy": {
+    "beginner": "A family tree, or the folders on your computer. One thing at the top, branching downwards, and no loops — you can never walk down and end up back where you started. A binary search tree adds one rule: everything smaller goes left, everything bigger goes right. That single rule means each comparison throws away half the remaining family.",
+    "interview": "A connected acyclic graph with a distinguished root; n nodes and exactly n-1 edges. A binary tree restricts each node to ≤ 2 children. A BST additionally maintains the invariant that every key in the left subtree is less than the node's key and every key in the right subtree is greater, which makes an in-order traversal yield sorted output and search O(h)."
+  },
+  "intuition": "Two separate ideas share the word 'tree', and mixing them up is the main source of confusion.\n\n**The shape.** A tree is how you represent hierarchy: file systems, org charts, the DOM, JSON, a parsed expression. The useful property is self-similarity — every child is itself the root of a smaller tree — which is why every tree algorithm is three lines of recursion.\n\n**The search structure.** A *binary search tree* uses the shape to make lookup fast. The ordering invariant means each comparison eliminates an entire subtree, halving the search space, exactly like binary search over a sorted array — but with O(log n) insertion too, which a sorted array cannot give you.\n\nThe catch that every interviewer probes: a BST is only O(log n) if it is *balanced*. Insert 1, 2, 3, 4, 5 in order and you get a chain — a linked list wearing a tree costume, O(n) per operation. Self-balancing variants (red-black, AVL) restructure on insert to guarantee height O(log n). `TreeMap` is a red-black tree; this is why it is O(log n) and not O(n).",
+  "problemFirst": {
+    "motivatingProblem": "Store a million user records so you can (a) look up one user fast, (b) insert new users fast, and (c) list everyone in alphabetical order.",
+    "bruteForce": {
+      "idea": "A sorted array gives you (a) via binary search in O(log n) and (c) for free. But (b) is a disaster: inserting a new name in the middle shifts half a million records.",
+      "code": [
+        "// Sorted array: search is great...",
+        "int idx = Arrays.binarySearch(names, target);       // O(log n)",
+        "",
+        "// ...but insertion is not",
+        "int pos = insertionPoint(names, newName);",
+        "System.arraycopy(names, pos, names, pos + 1, size - pos);  // O(n)",
+        "names[pos] = newName;"
+      ],
+      "complexity": {
+        "time": "search O(log n), insert O(n)",
+        "space": "O(n)"
+      },
+      "whySlow": "Sortedness is maintained by physical position, so keeping it correct means physically moving data. A hash map fixes insertion (O(1)) but destroys requirement (c) — hash order is meaningless."
+    },
+    "observation": "Binary search never needs the elements to be *adjacent*. It only needs to know, at each step, which half to discard.",
+    "leap": "Encode 'which half' in the structure itself: give each node a left child holding smaller keys and a right child holding larger ones. Now halving is following a reference, so insertion is O(log n) too, and an in-order walk still produces sorted output."
+  },
+  "howItWorks": [
+    "**Vocabulary**: root (top), leaf (no children), parent/child, height (longest root-to-leaf edge count), depth (edges from the root), subtree (a node plus all its descendants).",
+    "**Node**: `{ value, left, right }`. `null` means an absent child.",
+    "**Traversals — depth-first (recursion):** *pre-order* visits the node before its children (copying a tree, prefix expressions); *in-order* visits left, node, right (**sorted order in a BST**); *post-order* visits children before the node (deleting a tree, evaluating an expression, computing heights bottom-up).",
+    "**Traversal — breadth-first (queue):** level order, used for shortest paths, tree serialisation and 'per level' questions. See the Queue lesson.",
+    "**BST search**: compare with the node; go left if smaller, right if larger, stop on equal. O(h).",
+    "**BST insert**: search until you fall off the tree; attach the new node there.",
+    "**BST delete**: three cases — leaf (just remove); one child (splice it up); two children (replace the value with its in-order successor, then delete that successor).",
+    "**Balance**: h is log₂ n for a balanced tree, but n for a degenerate one. Red-black/AVL trees rebalance on insert to guarantee the former."
+  ],
+  "patternRecognition": {
+    "signals": [
+      "The data is hierarchical: folders, categories, org charts, DOM, JSON, expressions",
+      "You need sorted order AND fast insertion (BST / TreeMap)",
+      "'Nearest key below/above X', range queries, floor/ceiling",
+      "The problem mentions parent/child, ancestor, subtree, depth or level"
+    ],
+    "antiSignals": [
+      "You only need exact-key lookup — a HashMap is O(1) and simpler",
+      "The structure has cycles or multiple parents — that is a graph, not a tree"
+    ],
+    "decisionTreeId": "which-data-structure"
+  },
+  "visualizations": [
+    {
+      "id": "traversals",
+      "title": "Four traversals over the same tree",
+      "engine": "treeTraversal",
+      "input": {
+        "tree": {
+          "value": 10,
+          "left": {
+            "value": 5,
+            "left": {
+              "value": 2
+            },
+            "right": {
+              "value": 7
+            }
+          },
+          "right": {
+            "value": 15,
+            "right": {
+              "value": 20
+            }
+          }
+        },
+        "order": "inorder"
+      },
+      "variants": [
+        {
+          "label": "Pre-order",
+          "input": {
+            "order": "preorder"
+          }
+        },
+        {
+          "label": "In-order",
+          "input": {
+            "order": "inorder"
+          }
+        },
+        {
+          "label": "Post-order",
+          "input": {
+            "order": "postorder"
+          }
+        },
+        {
+          "label": "Level order (BFS)",
+          "input": {
+            "order": "levelorder"
+          }
+        }
+      ],
+      "code": [
+        "void inorder(Node node, List<Integer> out) {",
+        "    if (node == null) return;",
+        "    inorder(node.left, out);",
+        "    out.add(node.value);",
+        "    inorder(node.right, out);",
+        "}"
+      ]
+    },
+    {
+      "id": "bst-ops",
+      "title": "BST search and insert — watch half the tree disappear each step",
+      "engine": "bstOps",
+      "input": {
+        "tree": {
+          "value": 10,
+          "left": {
+            "value": 5,
+            "left": {
+              "value": 2
+            },
+            "right": {
+              "value": 7
+            }
+          },
+          "right": {
+            "value": 15,
+            "right": {
+              "value": 20
+            }
+          }
+        },
+        "operations": [
+          {
+            "op": "search",
+            "value": 7
+          },
+          {
+            "op": "search",
+            "value": 12
+          },
+          {
+            "op": "insert",
+            "value": 12
+          }
+        ]
+      },
+      "code": [
+        "Node search(Node node, int target) {",
+        "    if (node == null || node.value == target) return node;",
+        "    if (target < node.value) return search(node.left, target);",
+        "    return search(node.right, target);",
+        "}"
+      ]
+    }
+  ],
+  "implementations": [
+    {
+      "label": "Simple",
+      "language": "java",
+      "explanation": "Every depth-first traversal is the same three lines in a different order. That is worth internalising: the *position of the visit* relative to the recursive calls is the only difference.",
+      "code": [
+        "class TreeNode {",
+        "    int val;",
+        "    TreeNode left, right;",
+        "    TreeNode(int val) { this.val = val; }",
+        "}",
+        "",
+        "void preorder(TreeNode n, List<Integer> out) {",
+        "    if (n == null) return;",
+        "    out.add(n.val);              // visit BEFORE the children",
+        "    preorder(n.left, out);",
+        "    preorder(n.right, out);",
+        "}",
+        "",
+        "void inorder(TreeNode n, List<Integer> out) {",
+        "    if (n == null) return;",
+        "    inorder(n.left, out);",
+        "    out.add(n.val);              // visit BETWEEN the children -> sorted in a BST",
+        "    inorder(n.right, out);",
+        "}",
+        "",
+        "void postorder(TreeNode n, List<Integer> out) {",
+        "    if (n == null) return;",
+        "    postorder(n.left, out);",
+        "    postorder(n.right, out);",
+        "    out.add(n.val);              // visit AFTER the children",
+        "}",
+        "",
+        "int height(TreeNode n) {",
+        "    if (n == null) return -1;    // height in EDGES; use 0 for height in nodes",
+        "    return 1 + Math.max(height(n.left), height(n.right));",
+        "}"
+      ]
+    },
+    {
+      "label": "Optimized",
+      "language": "java",
+      "explanation": "BST operations written iteratively (O(1) stack space), plus the validity check that catches the mistake almost everyone makes. Validating a BST needs bounds carried down the recursion — comparing only with the immediate parent is wrong.",
+      "code": [
+        "// Iterative search — O(h) time, O(1) space",
+        "TreeNode search(TreeNode root, int target) {",
+        "    TreeNode cur = root;",
+        "    while (cur != null && cur.val != target) {",
+        "        cur = target < cur.val ? cur.left : cur.right;",
+        "    }",
+        "    return cur;",
+        "}",
+        "",
+        "// Iterative insert",
+        "TreeNode insert(TreeNode root, int value) {",
+        "    TreeNode fresh = new TreeNode(value);",
+        "    if (root == null) return fresh;",
+        "    TreeNode cur = root;",
+        "    while (true) {",
+        "        if (value < cur.val) {",
+        "            if (cur.left == null) { cur.left = fresh; return root; }",
+        "            cur = cur.left;",
+        "        } else if (value > cur.val) {",
+        "            if (cur.right == null) { cur.right = fresh; return root; }",
+        "            cur = cur.right;",
+        "        } else {",
+        "            return root;   // duplicate: decide the policy and state it",
+        "        }",
+        "    }",
+        "}",
+        "",
+        "// Validate a BST: every node must fall inside an inherited (low, high) range",
+        "boolean isBst(TreeNode n, Integer low, Integer high) {",
+        "    if (n == null) return true;",
+        "    if (low  != null && n.val <= low)  return false;",
+        "    if (high != null && n.val >= high) return false;",
+        "    return isBst(n.left, low, n.val) && isBst(n.right, n.val, high);",
+        "}"
+      ]
+    }
+  ],
+  "complexity": {
+    "time": "Traversal O(n) · BST search/insert/delete O(h) — O(log n) balanced, O(n) degenerate",
+    "space": "O(n) storage; O(h) recursion stack for DFS; O(w) queue for BFS, where w is the widest level",
+    "why": "Traversal is O(n) because every node is visited exactly once and does O(1) work. BST operations are O(h) because each comparison descends one level; h is log₂ n only while the tree stays balanced. Inserting already-sorted data produces a chain with h = n, which is precisely why production code uses `TreeMap` (red-black) rather than a hand-rolled BST. DFS stack depth is the height; BFS memory is the widest level, which for a balanced tree is about n/2 — so BFS can use *more* memory than DFS on wide trees."
+  },
+  "commonMistakes": [
+    {
+      "mistake": "Validating a BST by comparing each node only with its parent",
+      "fix": "A node deep in the left subtree must still be smaller than a distant ancestor. Carry (low, high) bounds down."
+    },
+    {
+      "mistake": "Forgetting the `null` base case",
+      "fix": "Every tree recursion starts with `if (node == null) return …`. Missing it is an instant NullPointerException."
+    },
+    {
+      "mistake": "Assuming a BST is balanced",
+      "fix": "Sorted input gives a chain and O(n) operations. Mention balancing unprompted — interviewers wait for it."
+    },
+    {
+      "mistake": "Confusing height and depth, or edges and nodes",
+      "fix": "Depth is measured from the root down, height from the node to its deepest leaf. State which convention you use for a single node: height 0 (edges) or 1 (nodes)."
+    },
+    {
+      "mistake": "Recursing on a tree of unknown depth in production",
+      "fix": "A skewed tree of a million nodes overflows the stack. Use an explicit stack when the input is untrusted."
+    }
+  ],
+  "realWorldUses": [
+    "Database indexes are B-trees/B+-trees — the same idea with high fan-out to minimise disk reads.",
+    "File systems, the HTML DOM, and JSON documents are trees you already work with daily.",
+    "Compilers parse source into an abstract syntax tree; every optimisation is a tree rewrite.",
+    "`TreeMap`/`TreeSet` (red-black trees) whenever you need sorted keys or range queries.",
+    "Tries (prefix trees) power autocomplete — see the Search Autocomplete case study."
+  ],
+  "interviewNotes": [
+    "In-order traversal of a BST yields sorted output. A surprising number of tree questions reduce to that one fact.",
+    "State space complexity as O(h), then note it is O(log n) balanced and O(n) worst case. That distinction is often the whole point of the question.",
+    "Most tree questions are solved by asking: what do I need from my children, and what do I return to my parent? Answer that and the recursion writes itself."
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "mcq",
+      "question": "Which traversal of a binary search tree produces the values in sorted order?",
+      "options": [
+        "Pre-order",
+        "In-order",
+        "Post-order",
+        "Level order"
+      ],
+      "answerIndex": 1,
+      "explanation": "In-order visits left subtree (all smaller), then the node, then the right subtree (all larger) — recursively, that is ascending order."
+    },
+    {
+      "id": "q2",
+      "type": "complexity",
+      "question": "You insert 1, 2, 3, …, 1000 in that order into an unbalanced BST. What is the cost of searching for 1000?",
+      "options": [
+        "O(1)",
+        "O(log n)",
+        "O(n)",
+        "O(n log n)"
+      ],
+      "answerIndex": 2,
+      "explanation": "Each value is larger than all before it, so every node becomes a right child — a chain of height 1000. The tree has degenerated into a linked list."
+    },
+    {
+      "id": "q3",
+      "type": "mcq",
+      "question": "What is the space complexity of a recursive DFS over a balanced binary tree with n nodes?",
+      "options": [
+        "O(1)",
+        "O(log n) — the call stack holds one root-to-leaf path",
+        "O(n)",
+        "O(n log n)"
+      ],
+      "answerIndex": 1,
+      "explanation": "Only the frames along the current root-to-leaf path are live, and that path is the height — log n when balanced, n when skewed."
+    },
+    {
+      "id": "q4",
+      "type": "identify-pattern",
+      "question": "'Return the values of a binary tree grouped by level.' Which approach?",
+      "options": [
+        "In-order DFS",
+        "BFS with a queue, capturing the level size before each inner loop",
+        "Post-order DFS",
+        "Binary search"
+      ],
+      "answerIndex": 1,
+      "explanation": "Level-by-level output is breadth-first by definition. Freezing `queue.size()` before processing marks the boundary between one level and the next."
+    }
+  ],
+  "practiceProblems": [
+    "balanced-binary-tree",
+    "binary-tree-inorder-traversal",
+    "invert-binary-tree",
+    "same-tree",
+    "diameter-of-binary-tree",
+    "kth-smallest-in-bst",
+    "lowest-common-ancestor-bst",
+    "validate-bst",
+    "serialize-deserialize-tree",
+    "max-depth-binary-tree",
+    "binary-tree-level-order"
+  ],
+  "related": [
+    "recursion",
+    "dfs",
+    "bfs",
+    "queue",
+    "graphs"
+  ]
+}

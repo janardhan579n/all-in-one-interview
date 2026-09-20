@@ -1,0 +1,120 @@
+{
+  "id": "word-search",
+  "title": "Word Search",
+  "patternId": "backtracking",
+  "difficulty": "intermediate",
+  "tags": [
+    "matrix",
+    "backtracking",
+    "dfs"
+  ],
+  "statement": "Given an m x n grid of characters and a word, return true if the word can be spelled out by walking through horizontally or vertically adjacent cells. A single cell may not be used twice in the same path, though it is free to be reused by a different path.",
+  "realWorld": "Board-game validators such as Boggle, and more generally matching a pattern against a graph by walking it: checking whether a required sequence of operations exists as a path through a state machine, where each state may appear at most once in a given trace.",
+  "examples": [
+    {
+      "input": "board = [[\"A\",\"B\",\"C\",\"E\"],[\"S\",\"F\",\"C\",\"S\"],[\"A\",\"D\",\"E\",\"E\"]], word = \"ABCCED\"",
+      "output": "true",
+      "explanation": "A(0,0) to B(0,1) to C(0,2) to C(1,2) to E(2,2) to D(2,1) — the path turns downwards and back left, so the route is not a straight line."
+    },
+    {
+      "input": "same board, word = \"SEE\"",
+      "output": "true",
+      "explanation": "S(1,3) to E(2,3) to E(2,2). The word starts nowhere near the top-left, so every cell has to be tried as a starting point."
+    },
+    {
+      "input": "same board, word = \"ABCB\"",
+      "output": "false",
+      "explanation": "The only B is at (0,1) and it is already consumed by the second letter, so the final B has no unused cell to come from. This is the case that fails when visited cells are not marked."
+    }
+  ],
+  "constraints": [
+    "1 <= m, n <= 6 in the classic form, but the search must survive larger boards",
+    "1 <= word.length <= 15",
+    "board and word consist of letters",
+    "Movement is to the four orthogonal neighbours only — no diagonals",
+    "A cell may be used at most once within one path"
+  ],
+  "bruteForce": {
+    "idea": "From every starting cell, enumerate every self-avoiding path of exactly word.length cells, read the letters off it, and compare the resulting string with the word.",
+    "code": [
+      "public static boolean exist(char[][] board, String word) {",
+      "    for (int r = 0; r < board.length; r++) {",
+      "        for (int c = 0; c < board[0].length; c++) {",
+      "            if (walk(board, word, r, c, new StringBuilder(), new boolean[board.length][board[0].length])) return true;",
+      "        }",
+      "    }",
+      "    return false;",
+      "}",
+      "",
+      "private static boolean walk(char[][] board, String word, int r, int c, StringBuilder path, boolean[][] used) {",
+      "    if (r < 0 || r >= board.length || c < 0 || c >= board[0].length || used[r][c]) return false;",
+      "    used[r][c] = true;",
+      "    path.append(board[r][c]);",
+      "    boolean found = path.length() == word.length()",
+      "            ? path.toString().equals(word)   // the comparison happens only at full length",
+      "            : walk(board, word, r + 1, c, path, used) || walk(board, word, r - 1, c, path, used)",
+      "              || walk(board, word, r, c + 1, path, used) || walk(board, word, r, c - 1, path, used);",
+      "    path.deleteCharAt(path.length() - 1);",
+      "    used[r][c] = false;",
+      "    return found;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(m * n * 4^L)",
+      "space": "O(m * n)"
+    },
+    "whySlow": "Each cell has up to four neighbours, so the number of paths of length L from a given start is about 4^L, and there are m*n starts: for a 6x6 board and a 12-letter word that is well over 10^8 paths. Almost every one of them already disagrees with the word at its second character, yet the enumeration keeps extending it for another ten steps before looking. The wasted work is not the paths themselves — it is that the constraint is checked at the leaf when it could have been checked at the node."
+  },
+  "patternIdentification": "A search whose candidate is a path, with a constraint that can be tested on a PARTIAL candidate, is backtracking. The skeleton is the same one subsets and combination sum use — choose, recurse, un-choose — and only the choice and the prune differ. Here the choice is a neighbouring cell, and the prune is two tests applied the instant a cell is proposed: does it hold the letter the word wants next, and has this path already used it? Both fail in O(1) and both delete an entire subtree. The un-choose step is unusually visible in this problem: the 'state' being restored is the board itself. Mark the cell before recursing by overwriting it with a sentinel, and restore the original character after the recursive calls return — before, so that the path cannot eat itself; after, so that every other path may still use the cell. Whenever your recursion mutates shared state, that pair of lines is not optional bookkeeping, it is the algorithm.",
+  "optimized": {
+    "idea": "Depth-first search from every cell, comparing one character per level so a wrong branch dies immediately. The board doubles as the visited set: write a sentinel into the cell on the way down and restore it on the way up, which costs no extra memory and makes the un-choose impossible to forget. Order the base cases so the success test fires before any indexing.",
+    "code": [
+      "public static boolean exist(char[][] board, String word) {",
+      "    for (int r = 0; r < board.length; r++) {",
+      "        for (int c = 0; c < board[0].length; c++) {",
+      "            if (search(board, word, r, c, 0)) return true;",
+      "        }",
+      "    }",
+      "    return false;",
+      "}",
+      "",
+      "private static boolean search(char[][] board, String word, int r, int c, int k) {",
+      "    if (k == word.length()) return true;   // tested FIRST: never index past the word",
+      "    if (r < 0 || r >= board.length || c < 0 || c >= board[0].length) return false;",
+      "    if (board[r][c] != word.charAt(k)) return false;   // prune at the node, not at the leaf",
+      "    char original = board[r][c];",
+      "    board[r][c] = '#';   // choose: this path may not step here again",
+      "    boolean found = search(board, word, r + 1, c, k + 1)",
+      "            || search(board, word, r - 1, c, k + 1)",
+      "            || search(board, word, r, c + 1, k + 1)",
+      "            || search(board, word, r, c - 1, k + 1);",
+      "    board[r][c] = original;   // un-choose: restore it for every OTHER path",
+      "    return found;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(m * n * 4^L) worst case, far less once the letter test prunes",
+      "space": "O(L) recursion depth"
+    }
+  },
+  "commonMistakes": [
+    "Marking a cell visited but never restoring it. Abandoned branches leave '#' scattered across the board, so a sibling branch or a later starting cell cannot use those letters: the first search may succeed while a second call on the same board returns false, and false negatives appear on words whose paths cross.",
+    "Testing the character after recursing rather than before. The answer stays correct and the pruning disappears, so the search degenerates to the 4^L enumeration — a board that answered in microseconds now takes minutes on a 15-letter word that is not present.",
+    "Putting the k == word.length() check after the bounds and character tests. The recursion then takes one step past the end of the word and calls word.charAt(word.length()), throwing StringIndexOutOfBoundsException on exactly the inputs where the word IS found."
+  ],
+  "similar": [
+    "word-search-ii",
+    "number-of-islands",
+    "combination-sum",
+    "palindrome-partitioning"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 79,
+      "slug": "word-search",
+      "title": "Word Search",
+      "url": "https://leetcode.com/problems/word-search/",
+      "premium": false
+    }
+  }
+}

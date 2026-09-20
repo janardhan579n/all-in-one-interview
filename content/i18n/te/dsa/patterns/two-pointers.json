@@ -1,0 +1,10 @@
+{
+  "id": "two-pointers",
+  "title": "Two Pointers (టూ పాయింటర్స్)",
+  "summary": "ఒక index బదులు రెండు indices ను data మీద నడిపించడం — ఏ pointer ను కదపాలో నిర్ణయించడానికి data లోని ఒక లక్షణాన్ని (సాధారణంగా sorted గా ఉండటాన్ని) వాడుకుంటాం — దీంతో nested loop స్థానంలో ఒకే ఒక pass సరిపోతుంది.",
+  "analogy": {
+    "beginner": "ధర ప్రకారం పేర్చిన పుస్తకాల అరకు రెండు చివర్లలో మీరూ, మీ స్నేహితుడూ నిలబడ్డారు; కలిపి సరిగ్గా ₹500 అయ్యే రెండు పుస్తకాలు కనుక్కోవాలి. మీరు అన్నిటికంటే చవకైనది, అన్నిటికంటే ఖరీదైనది చూస్తారు. రెండూ కలిపి ఎక్కువైందా? మీ స్నేహితుడు ఇంకా చవకైన పుస్తకం వైపు జరుగుతాడు. తక్కువైందా? మీరు పైకి జరుగుతారు. మీలో ఎవరూ వెనక్కి నడవరు, కాబట్టి మీ ఇద్దరూ కలిసి ఆ అరను ఒక్కసారే దాటేస్తారు — ప్రతి పుస్తకాన్ని మిగతా ప్రతి పుస్తకంతో పోల్చే బదులు.",
+    "interview": "ఒక sequence మీద రెండు indices ను ఉంచి, ordering లేదా monotonicity లక్షణం నుంచి ఒక నియమాన్ని తీసుకురండి — ఆ నియమంతో ప్రతి comparison ఒక మొత్తం candidate pairs తరగతిని తీసేస్తుంది. ప్రతి pointer ఒకే దిశలో monotonic గా కదులుతుంది కాబట్టి, మొత్తం కదలిక O(n)."
+  },
+  "intuition": "Pair problems కు brute force అంటే 'ప్రతి i ని ప్రతి j తో' — O(n²). ఒకే ఒక comparison తో చాలా pairs ను కొట్టిపారేయడానికి సరిపడా సమాచారం data ఇచ్చినప్పుడు వచ్చేదే two pointers.\n\nరెండు చివర్లలో pointers ఉంచిన ఒక **sorted** array మీద: `a[left] + a[right]` చాలా ఎక్కువైతే, left నుంచి మొదలుకుని *దేనితో* జత కట్టినా `a[right]` ఎక్కువే అవుతుంది — ఎందుకంటే left నుంచి ఉన్న ప్రతిదీ a[left] కంటే తక్కువ కాదు (≥ a[left]). కాబట్టి `right` ను లోపలికి జరపడం అంటే comparison table లోని ఒక మొత్తం column ను ఒక్క అడుగులో పారేయడం. n అనే factor పోయేది అక్కడే.\n\nమూడు ఆకారాలు ఉన్నాయి, వాటిలో మీకు ఏది కావాలో గుర్తించడమే అసలు నైపుణ్యం:\n\n1. **Opposite ends** (converging) — sorted input, pair/triplet sums, palindromes, container problems.\n2. **Same direction** (fast and slow) — ఉన్న చోటే deduplication, elements తీసేయడం, partitioning. ఒక pointer చదువుతుంది, ఒకటి రాస్తుంది.\n3. **Two sequences** — sorted arrays ను merge చేయడం, subsequences ను check చేయడం, sorted lists ను intersect చేయడం.\n\nSliding window అనేది రెండో ఆకారానికి ఒక ప్రత్యేక సందర్భం — అక్కడ మీకు కావాల్సింది pointers మధ్య ఉన్న ప్రాంతం."
+}

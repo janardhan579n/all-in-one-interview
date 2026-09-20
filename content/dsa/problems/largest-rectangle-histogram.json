@@ -1,0 +1,110 @@
+{
+  "id": "largest-rectangle-histogram",
+  "title": "Largest Rectangle in a Histogram",
+  "patternId": "monotonic-stack",
+  "difficulty": "advanced",
+  "tags": [
+    "array",
+    "stack",
+    "monotonic-stack",
+    "geometry"
+  ],
+  "statement": "Given an array heights where heights[i] is the height of the i-th bar of a histogram and every bar has width 1, return the area of the largest axis-aligned rectangle that fits entirely under the bars.",
+  "realWorld": "Rendering and layout engines use it to find the largest empty region in a skyline or on a board. Run it once per row of a binary matrix, treating each row as a histogram of consecutive ones above it, and you get 'maximal rectangle' — the standard way to find the largest uniform block in an image or the largest free area in a PCB layout.",
+  "examples": [
+    {
+      "input": "heights = [2,1,5,6,2,3]",
+      "output": "10",
+      "explanation": "The bars of height 5 and 6 at indices 2 and 3 support a rectangle 2 wide and 5 tall. No taller-and-wide or wider-and-tall combination beats 10."
+    },
+    {
+      "input": "heights = [2,4]",
+      "output": "4",
+      "explanation": "Either 2 x 2 (both bars, height limited by the shorter) or 4 x 1 (the second bar alone). Both give 4."
+    },
+    {
+      "input": "heights = [2,2,2]",
+      "output": "6",
+      "explanation": "The duplicate-heights case worth tracing. With `>=` in the pop condition the first two bars are popped with short widths, and the last one is popped by the sentinel with width 3, giving 2 x 3 = 6. The intermediate under-measurements are harmless because the full span is still measured once."
+    }
+  ],
+  "constraints": [
+    "1 <= heights.length <= 10^5",
+    "0 <= heights[i] <= 10^4"
+  ],
+  "bruteForce": {
+    "idea": "Fix each bar as the limiting height and expand left and right while the neighbours are at least as tall.",
+    "code": [
+      "long best = 0;",
+      "for (int i = 0; i < heights.length; i++) {",
+      "    int left = i, right = i;",
+      "    while (left - 1 >= 0 && heights[left - 1] >= heights[i]) left--;",
+      "    while (right + 1 < heights.length && heights[right + 1] >= heights[i]) right++;",
+      "    best = Math.max(best, (long) heights[i] * (right - left + 1));",
+      "}",
+      "return best;"
+    ],
+    "complexity": {
+      "time": "O(n^2)",
+      "space": "O(1)"
+    },
+    "whySlow": "On a flat histogram such as [7,7,7,...,7] every bar expands across the whole array, giving n^2 steps — 10^10 at the upper constraint. Each expansion recomputes boundaries that a neighbouring bar has already established, which is exactly the repetition a monotonic stack removes."
+  },
+  "patternIdentification": "Rewrite the brute force's two while loops as what they compute: the *previous smaller* bar and the *next smaller* bar for every index. 'Nearest element on each side that beats me' is the monotonic-stack signature, and both sides can be produced in one pass because the pop event reveals both boundaries of the popped bar at the same instant.",
+  "optimized": {
+    "idea": "Keep a stack of indices with increasing heights. When a bar shorter than the top arrives, pop — and at that moment both boundaries of the popped bar are known: the arriving index is its first shorter bar on the right, and whatever is now exposed beneath it on the stack is its first shorter bar on the left. So its maximal width is right - left - 1, and its area is height x width. A virtual bar of height 0 appended after the array drains the stack, so no bar is left unmeasured.",
+    "code": [
+      "import java.util.ArrayDeque;",
+      "import java.util.Deque;",
+      "",
+      "/** O(n) time, O(n) space. Returns long because height x width overflows int. */",
+      "public static long largestRectangleArea(int[] heights) {",
+      "    Deque<Integer> stack = new ArrayDeque<>();   // indices; heights increasing",
+      "    long best = 0;",
+      "",
+      "    // i == heights.length is a virtual bar of height 0 — shorter than everything,",
+      "    // so it forces every remaining bar off the stack and gets it measured.",
+      "    for (int i = 0; i <= heights.length; i++) {",
+      "        int current = (i == heights.length) ? 0 : heights[i];",
+      "",
+      "        while (!stack.isEmpty() && heights[stack.peek()] >= current) {",
+      "            int height = heights[stack.pop()];",
+      "",
+      "            // Right boundary: i. Left boundary: whatever is now on top.",
+      "            int left = stack.isEmpty() ? -1 : stack.peek();",
+      "            long width = i - left - 1;",
+      "",
+      "            best = Math.max(best, (long) height * width);",
+      "        }",
+      "        stack.push(i);",
+      "    }",
+      "    return best;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n) — each index is pushed once and popped at most once, so the inner while contributes at most n pops across the entire run rather than per iteration",
+      "space": "O(n) for the stack, which holds every index when the histogram is strictly increasing"
+    }
+  },
+  "commonMistakes": [
+    "Computing the width as `i - popped` instead of `i - left - 1`. The popped bar extends past its own index, all the way to just after the previous shorter bar, so its span is measured between the two boundaries and not from itself.",
+    "Forgetting the left boundary when the stack empties after a pop. `left` must be -1 there, meaning the bar reaches the very start of the histogram; using 0 costs you one column.",
+    "Omitting the sentinel and then forgetting the drain loop, which loses every bar in a non-decreasing suffix — [1,2,3,4] returns 0 instead of 6.",
+    "Overflowing int on the area. With heights to 10^4 and widths to 10^5 the product reaches 10^9, which fits, but the same code on 'maximal rectangle' variants does not. Write `(long) height * width`, never `(long) (height * width)`, which casts after the overflow has already happened.",
+    "Worrying that `>=` under-measures duplicate bars. It does for all but the last of a run, and it does not matter: the last one is popped with the full span, so the maximum is still found. Verify on [2,2,2]."
+  ],
+  "similar": [
+    "daily-temperatures",
+    "next-greater-element",
+    "container-with-most-water"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 84,
+      "slug": "largest-rectangle-in-histogram",
+      "title": "Largest Rectangle in Histogram",
+      "url": "https://leetcode.com/problems/largest-rectangle-in-histogram/",
+      "premium": false
+    }
+  }
+}

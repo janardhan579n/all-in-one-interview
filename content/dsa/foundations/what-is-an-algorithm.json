@@ -1,0 +1,163 @@
+{
+  "id": "what-is-an-algorithm",
+  "kind": "foundation",
+  "title": "What Is an Algorithm?",
+  "group": "Foundations",
+  "level": 0,
+  "difficulty": "beginner",
+  "estimatedMinutes": 12,
+  "summary": "An algorithm is a finite list of unambiguous steps that turns an input into the answer you wanted.",
+  "prerequisites": [],
+  "tags": ["basics", "algorithm", "level-0"],
+  "analogy": {
+    "beginner": "A recipe. 'Boil 2 cups of water. Add rice. Cover. Wait 12 minutes.' Anyone who follows those steps exactly gets rice — they don't have to be a chef, and they don't have to understand why it works. An algorithm is a recipe for a computer: exact steps, no guessing, and it always ends.",
+    "interview": "An algorithm is a finite, deterministic sequence of well-defined operations that maps an input to an output, with provable termination and analysable resource usage in time and space."
+  },
+  "intuition": "Computers are fast but literal. They will not infer what you meant. So the entire job of a programmer is to take something a human understands vaguely — 'find the cheapest flight', 'sort these names' — and rewrite it as steps so precise that a machine with no judgement can follow them.\n\nThree properties separate an algorithm from a vague plan:\n\n1. **Finite** — it stops. 'Keep adding 1 forever' is not an algorithm.\n2. **Unambiguous** — every step has exactly one meaning. 'Add a pinch of salt' is not allowed.\n3. **Effective** — each step is something that can actually be carried out.\n\nEverything else in this course — arrays, trees, dynamic programming, sharding — is just people finding better recipes.",
+  "problemFirst": {
+    "motivatingProblem": "You have 200 exam papers in a pile, each with a student's score on the front. Find the highest score. Write down instructions so precise that someone who has never seen an exam paper could do it.",
+    "bruteForce": {
+      "idea": "Your first instinct is probably 'just look at them and pick the biggest'. But 'just look' is not a step a machine can perform. We have to spell it out: hold one number in your head as the best so far, then compare it against each paper in turn.",
+      "code": [
+        "// Find the largest score in a list of numbers.",
+        "int best = scores[0];              // assume the first is the winner",
+        "for (int i = 1; i < scores.length; i++) {",
+        "    if (scores[i] > best) {        // found someone better?",
+        "        best = scores[i];          // they are the new winner",
+        "    }",
+        "}",
+        "return best;"
+      ],
+      "complexity": { "time": "O(n)", "space": "O(1)" },
+      "whySlow": "It isn't slow — this is already optimal. You cannot find the maximum without looking at every paper at least once: any paper you skip could have been the highest. This is a useful early lesson: 'brute force' and 'bad' are not synonyms. Sometimes the obvious algorithm is provably the best one."
+    },
+    "observation": "Notice what we had to make explicit: where to start, what to remember between steps, when to stop, and what to hand back at the end. Those four questions come up in every algorithm you will ever write.",
+    "leap": "An algorithm is not clever code. It is a plan that is explicit about state (what you remember), progress (what changes each step) and termination (when you stop)."
+  },
+  "howItWorks": [
+    "Decide what the **input** is and what the **output** must be. Write both down before anything else.",
+    "Decide what you need to **remember** as you go (this is your state — `best`, a running sum, a set of seen values).",
+    "Decide how you **move through** the input (a loop, a recursion, a pointer).",
+    "Decide the **rule** that updates your state at each step.",
+    "Decide when you **stop** and what you **return**.",
+    "Check the awkward cases: empty input, one element, all elements equal, negative numbers."
+  ],
+  "patternRecognition": {
+    "signals": [
+      "The task can be described as 'given X, produce Y'",
+      "You can explain the steps to a person who cannot see the data"
+    ],
+    "antiSignals": [
+      "The task needs human judgement ('pick the nicest photo') — that is not an algorithm, that is a product decision"
+    ],
+    "decisionTreeId": null
+  },
+  "visualizations": [
+    {
+      "id": "find-max",
+      "title": "Finding the maximum, one step at a time",
+      "engine": "arrayScanMax",
+      "input": { "array": [42, 17, 93, 8, 61, 93, 4] },
+      "code": [
+        "int best = scores[0];",
+        "for (int i = 1; i < scores.length; i++) {",
+        "    if (scores[i] > best) {",
+        "        best = scores[i];",
+        "    }",
+        "}",
+        "return best;"
+      ]
+    }
+  ],
+  "implementations": [
+    {
+      "label": "Simple",
+      "language": "java",
+      "explanation": "The literal translation of the recipe. Read it out loud — it should sound exactly like the steps we wrote in English.",
+      "code": [
+        "public static int maxScore(int[] scores) {",
+        "    int best = scores[0];",
+        "    for (int i = 1; i < scores.length; i++) {",
+        "        if (scores[i] > best) {",
+        "            best = scores[i];",
+        "        }",
+        "    }",
+        "    return best;",
+        "}"
+      ]
+    },
+    {
+      "label": "Optimized",
+      "language": "java",
+      "explanation": "Same algorithm, but defensive about the awkward cases an interviewer will ask about: empty and null input. There is no faster version — O(n) is the lower bound for this problem, because a value you never read cannot be ruled out as the maximum.",
+      "code": [
+        "public static int maxScore(int[] scores) {",
+        "    if (scores == null || scores.length == 0) {",
+        "        throw new IllegalArgumentException(\"maxScore requires at least one score\");",
+        "    }",
+        "    int best = Integer.MIN_VALUE;",
+        "    for (int score : scores) {",
+        "        best = Math.max(best, score);",
+        "    }",
+        "    return best;",
+        "}"
+      ]
+    }
+  ],
+  "complexity": {
+    "time": "O(n)",
+    "space": "O(1)",
+    "why": "Time is O(n) because the loop body runs once per element and does a fixed amount of work each time — one comparison and at most one assignment. Doubling the number of papers doubles the work. Space is O(1) because no matter how many scores arrive, we only ever store one extra number (`best`) plus a loop counter; the storage does not grow with the input."
+  },
+  "commonMistakes": [
+    {
+      "mistake": "Starting with `int best = 0;`",
+      "fix": "If every score is negative, you will wrongly return 0. Start from the first element, or from `Integer.MIN_VALUE`."
+    },
+    {
+      "mistake": "Starting the loop at `i = 0` after seeding `best = scores[0]`",
+      "fix": "Harmless here (you just compare the first element with itself), but it signals you haven't thought about what the loop invariant is. Start at `i = 1`."
+    },
+    {
+      "mistake": "Assuming the input is never empty",
+      "fix": "`scores[0]` throws on an empty array. Decide and state the contract: throw, or return an Optional."
+    }
+  ],
+  "realWorldUses": [
+    "Every 'top result' on a page — highest bid, best match, cheapest fare — is a maximum scan at heart.",
+    "Database query planners run the same scan to pick the cheapest execution plan.",
+    "Monitoring systems scan a window of metrics for the peak value before firing an alert."
+  ],
+  "interviewNotes": [
+    "Interviewers open with problems like this to see whether you state the contract (empty input? ties? nulls?) before writing code.",
+    "Saying 'this is O(n) and O(n) is optimal here because any unread element could be the answer' is a lower-bound argument — it scores well and takes one sentence."
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "mcq",
+      "question": "Which of these is NOT a property every algorithm must have?",
+      "options": ["It finishes after a finite number of steps", "Every step is unambiguous", "It runs in under one second", "Each step can actually be carried out"],
+      "answerIndex": 2,
+      "explanation": "Speed is a quality measure, not part of the definition. An algorithm that takes a year is still an algorithm — just a bad one for most purposes."
+    },
+    {
+      "id": "q2",
+      "type": "mcq",
+      "question": "Why can't finding the maximum of an unsorted array be done faster than O(n)?",
+      "options": ["Because Java arrays are slow", "Because any element you never read could have been the maximum", "Because comparisons cost O(1)", "It can — binary search does it in O(log n)"],
+      "answerIndex": 1,
+      "explanation": "This is an adversary argument: if your algorithm skips element i, an adversary sets scores[i] to a huge value and your answer is wrong. So every element must be read — at least n operations. Binary search needs sorted input, which itself costs more than O(n) to produce."
+    },
+    {
+      "id": "q3",
+      "type": "predict-output",
+      "question": "With `int best = 0;` as the starting value, what does the algorithm return for the input [-5, -2, -9]?",
+      "options": ["-2", "-9", "0", "It throws an exception"],
+      "answerIndex": 2,
+      "explanation": "0 — which is not even in the array. This is the single most common off-by-one-style bug in beginner code, and it is why we seed from the first element."
+    }
+  ],
+  "practiceProblems": [],
+  "related": ["data-and-variables", "big-o"]
+}

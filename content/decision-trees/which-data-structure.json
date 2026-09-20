@@ -1,0 +1,123 @@
+{
+  "id": "which-data-structure",
+  "title": "Which data structure should I use?",
+  "start": "n1",
+  "nodes": {
+    "n1": {
+      "type": "question",
+      "text": "How will you look things up?",
+      "options": [
+        {
+          "label": "By position / index",
+          "next": "n2"
+        },
+        {
+          "label": "By key or value",
+          "next": "n3"
+        },
+        {
+          "label": "By order — smallest, largest, next",
+          "next": "n4"
+        },
+        {
+          "label": "By relationship to other items",
+          "next": "r-graph"
+        }
+      ]
+    },
+    "n2": {
+      "type": "question",
+      "text": "Do you insert or remove in the middle frequently?",
+      "options": [
+        {
+          "label": "No, mostly at the end or read-only",
+          "next": "r-array"
+        },
+        {
+          "label": "Yes, and I already hold the position",
+          "next": "r-list"
+        }
+      ]
+    },
+    "n3": {
+      "type": "question",
+      "text": "Do you also need the keys in sorted order or range queries?",
+      "options": [
+        {
+          "label": "No, exact lookups only",
+          "next": "r-hash"
+        },
+        {
+          "label": "Yes",
+          "next": "r-tree"
+        }
+      ]
+    },
+    "n4": {
+      "type": "question",
+      "text": "Which end do you need?",
+      "options": [
+        {
+          "label": "Most recently added (LIFO)",
+          "next": "r-stack"
+        },
+        {
+          "label": "Longest waiting (FIFO)",
+          "next": "r-queue"
+        },
+        {
+          "label": "Highest or lowest priority",
+          "next": "r-heap"
+        }
+      ]
+    },
+    "r-array": {
+      "type": "result",
+      "text": "Array / ArrayList",
+      "detail": "O(1) access by index, excellent cache locality. O(n) to insert in the middle.",
+      "lessonId": "arrays"
+    },
+    "r-list": {
+      "type": "result",
+      "text": "Linked List (or ArrayDeque)",
+      "detail": "O(1) insert/delete given the node. But measure — ArrayList frequently wins in practice due to cache locality.",
+      "lessonId": "linked-list"
+    },
+    "r-hash": {
+      "type": "result",
+      "text": "HashMap / HashSet",
+      "detail": "O(1) average lookup, insert and delete. No ordering guarantees.",
+      "lessonId": "hashing"
+    },
+    "r-tree": {
+      "type": "result",
+      "text": "TreeMap / TreeSet (balanced BST)",
+      "detail": "O(log n) operations, sorted iteration, floor/ceiling and range views.",
+      "lessonId": "trees"
+    },
+    "r-stack": {
+      "type": "result",
+      "text": "Stack (ArrayDeque)",
+      "detail": "Matching, nesting, undo, iterative DFS, monotonic-stack problems.",
+      "lessonId": "stack"
+    },
+    "r-queue": {
+      "type": "result",
+      "text": "Queue (ArrayDeque)",
+      "detail": "Fair processing, buffering, and BFS.",
+      "lessonId": "queue"
+    },
+    "r-heap": {
+      "type": "result",
+      "text": "PriorityQueue (binary heap)",
+      "detail": "O(log n) insert and extract-min. Top-K problems, Dijkstra, merging sorted streams.",
+      "lessonId": "queue"
+    },
+    "r-graph": {
+      "type": "result",
+      "text": "Graph (adjacency list)",
+      "detail": "Map<Node, List<Node>>. Traverse with BFS for shortest paths, DFS for reachability, ordering and cycles.",
+      "lessonId": "graphs"
+    }
+  }
+}

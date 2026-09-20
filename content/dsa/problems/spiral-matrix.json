@@ -1,0 +1,166 @@
+{
+  "id": "spiral-matrix",
+  "title": "Spiral Matrix",
+  "patternId": "matrix",
+  "difficulty": "beginner",
+  "tags": [
+    "matrix",
+    "array",
+    "simulation",
+    "traversal"
+  ],
+  "statement": "Given an m × n matrix, return all of its elements in spiral order: across the top row left to right, down the last column, back across the bottom row right to left, up the first column, then repeat on the rectangle that remains.",
+  "realWorld": "Serialising a 2-D region into a 1-D stream in a fixed order — image tiles written to a file, sensor cells read in a coverage sweep, or a robot vacuum planning a boundary-first path over a room grid.",
+  "examples": [
+    {
+      "input": "matrix = [[1,2,3],[4,5,6],[7,8,9]]",
+      "output": "[1,2,3,6,9,8,7,4,5]",
+      "explanation": "Top row 1,2,3 → right column 6,9 → bottom row 8,7 → left column 4 → the single remaining cell 5."
+    },
+    {
+      "input": "matrix = [[1,2,3,4],[5,6,7,8],[9,10,11,12]]",
+      "output": "[1,2,3,4,8,12,11,10,9,5,6,7]",
+      "explanation": "After the outer ring, only the middle row [6,7] is left, and it is walked left to right."
+    },
+    {
+      "input": "matrix = [[1,2,3]]",
+      "output": "[1,2,3]",
+      "explanation": "A single row. The bottom-row pass must be skipped, or 2 and 1 would be emitted a second time — this is the case the guards exist for."
+    }
+  ],
+  "constraints": [
+    "1 <= m, n <= 10",
+    "matrix.length == m and matrix[0].length == n",
+    "-100 <= matrix[r][c] <= 100",
+    "The matrix is not necessarily square"
+  ],
+  "bruteForce": {
+    "idea": "Simulate a walker with a visited grid. Step in the current direction; when the next cell is off the edge or already visited, turn right.",
+    "code": [
+      "int rows = matrix.length, cols = matrix[0].length;",
+      "boolean[][] visited = new boolean[rows][cols];",
+      "int[][] DIRS = {{0, 1}, {1, 0}, {0, -1}, {-1, 0}};   // right, down, left, up",
+      "List<Integer> out = new ArrayList<>();",
+      "int r = 0, c = 0, dir = 0;",
+      "",
+      "for (int step = 0; step < rows * cols; step++) {",
+      "    out.add(matrix[r][c]);",
+      "    visited[r][c] = true;",
+      "    int nr = r + DIRS[dir][0], nc = c + DIRS[dir][1];",
+      "    if (nr < 0 || nr >= rows || nc < 0 || nc >= cols || visited[nr][nc]) {",
+      "        dir = (dir + 1) % 4;              // blocked — turn right and re-probe",
+      "        nr = r + DIRS[dir][0];",
+      "        nc = c + DIRS[dir][1];",
+      "    }",
+      "    r = nr;",
+      "    c = nc;",
+      "}",
+      "return out;"
+    ],
+    "complexity": {
+      "time": "O(m·n)",
+      "space": "O(m·n)"
+    },
+    "whySlow": "The time is already optimal — every cell must be emitted, so nothing can beat O(m·n). The cost is the second grid: `boolean[][] visited` is exactly as large as the input and exists only to remember where the walker has been. The turn logic is also error-prone, since a blocked step must be detected, the direction rotated, and the step recomputed, and getting that sequence slightly wrong produces a walk that looks almost right."
+  },
+  "patternIdentification": "The traversal order is prescribed, not discovered — this is a simulation, not a search. Whenever the shape of the walk is known in advance, the positions already visited are implied by the walk itself, so the visited structure is redundant. A spiral is four straight passes over a rectangle that shrinks by one on each side per round, which four integers describe completely.",
+  "optimized": {
+    "idea": "Hold the inclusive bounds of the unvisited rectangle in `top`, `bottom`, `left`, `right`. Walk each of the four edges, moving that boundary inwards afterwards. The two `if` guards before the bottom and left passes are essential: once the rectangle has narrowed to a single row or column, the top and right passes have already consumed it, and walking it again emits every element twice.",
+    "code": [
+      "public static List<Integer> spiralOrder(int[][] matrix) {",
+      "    List<Integer> out = new ArrayList<>();",
+      "    if (matrix == null || matrix.length == 0 || matrix[0].length == 0) return out;",
+      "",
+      "    int top = 0, bottom = matrix.length - 1;        // matrix.length  = rows",
+      "    int left = 0, right = matrix[0].length - 1;     // matrix[0].length = columns",
+      "",
+      "    while (top <= bottom && left <= right) {",
+      "        for (int c = left; c <= right; c++) out.add(matrix[top][c]);        // → top row",
+      "        top++;",
+      "",
+      "        for (int r = top; r <= bottom; r++) out.add(matrix[r][right]);      // ↓ right column",
+      "        right--;",
+      "",
+      "        if (top <= bottom) {                                                 // GUARD 1",
+      "            for (int c = right; c >= left; c--) out.add(matrix[bottom][c]);  // ← bottom row",
+      "            bottom--;",
+      "        }",
+      "",
+      "        if (left <= right) {                                                 // GUARD 2",
+      "            for (int r = bottom; r >= top; r--) out.add(matrix[r][left]);    // ↑ left column",
+      "            left++;",
+      "        }",
+      "    }",
+      "    return out;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(m·n)",
+      "space": "O(1)"
+    }
+  },
+  "visualization": {
+    "engine": "matrixSpiral",
+    "input": {
+      "matrix": [
+        [
+          1,
+          2,
+          3,
+          4
+        ],
+        [
+          5,
+          6,
+          7,
+          8
+        ],
+        [
+          9,
+          10,
+          11,
+          12
+        ]
+      ]
+    },
+    "code": [
+      "int top = 0, bottom = rows - 1, left = 0, right = cols - 1;",
+      "while (top <= bottom && left <= right) {",
+      "    for (int c = left; c <= right; c++) out.add(matrix[top][c]);",
+      "    top++;",
+      "    for (int r = top; r <= bottom; r++) out.add(matrix[r][right]);",
+      "    right--;",
+      "    // guard 1: without this, a single remaining row is walked twice",
+      "    if (top <= bottom) for (int c = right; c >= left; c--) out.add(matrix[bottom][c]);",
+      "    bottom--;",
+      "    // guard 2: without this, a single remaining column is walked twice",
+      "    if (left <= right) for (int r = bottom; r >= top; r--) out.add(matrix[r][left]);",
+      "    left++;",
+      "}",
+      "return out;"
+    ]
+  },
+  "commonMistakes": [
+    "Omitting the `if (top <= bottom)` and `if (left <= right)` guards. A square test matrix hides the bug completely; `[[1,2,3]]` returns 1,2,3,2,1 and `[[1],[2],[3]]` returns 1,2,3,2.",
+    "Using `matrix.length` for the column count. On a square input it compiles, runs and quietly produces a transposed spiral; on a 2×5 input it throws ArrayIndexOutOfBoundsException.",
+    "Shrinking a boundary before the pass that uses it, rather than after — the first row then never gets emitted.",
+    "Writing the bottom and left passes with ascending loops. They run in reverse: `c` from `right` down to `left`, and `r` from `bottom` down to `top`.",
+    "Not guarding the empty input. `matrix[0].length` throws when `matrix.length == 0`.",
+    "Looping `while (out.size() < rows * cols)` and forgetting to break inside the passes — the guards are still needed, and this form makes the off-by-one harder to see."
+  ],
+  "similar": [
+    "rotate-image",
+    "set-matrix-zeroes",
+    "number-of-islands",
+    "diagonal-traverse"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 54,
+      "slug": "spiral-matrix",
+      "title": "Spiral Matrix",
+      "url": "https://leetcode.com/problems/spiral-matrix/",
+      "premium": false
+    }
+  }
+}

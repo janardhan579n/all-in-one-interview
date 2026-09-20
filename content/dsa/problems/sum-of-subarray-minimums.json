@@ -1,0 +1,113 @@
+{
+  "id": "sum-of-subarray-minimums",
+  "title": "Sum of Subarray Minimums",
+  "patternId": "monotonic-stack",
+  "difficulty": "advanced",
+  "tags": [
+    "monotonic-stack",
+    "array",
+    "contribution-technique"
+  ],
+  "statement": "Given an array of integers, compute the sum of min(b) over every contiguous subarray b of the array. The answer may be large, so return it modulo 10^9 + 7.",
+  "realWorld": "The contribution technique behind this is how query planners and monitoring systems aggregate over all windows without materialising them: 'total of the worst-case latency across every possible retention window', or in competitive-programming terms the same machinery that computes the sum of subarray ranges, the largest rectangle in a histogram, and the total area under all sliding-window minima. Whenever a report sums a per-window extreme over quadratically many windows, this is the technique that makes it linear.",
+  "examples": [
+    {
+      "input": "nums = [3,1,2,4]",
+      "output": "17",
+      "explanation": "Singletons give 3+1+2+4 = 10; the length-2 subarrays give 1+1+2 = 4; the length-3 give 1+1 = 2; the whole array gives 1. Total 17. Notice how often the answer is 1 — the element at index 1 is the minimum of six of the ten subarrays."
+    },
+    {
+      "input": "nums = [11,81,94,43,3]",
+      "output": "444",
+      "explanation": "3 is the minimum of all five subarrays that include it; 43 is the minimum of three; 94 of only one, itself. Each element's contribution is its value times the number of subarrays it dominates."
+    },
+    {
+      "input": "nums = [2,2]",
+      "output": "6",
+      "explanation": "The three subarrays are [2], [2] and [2,2], all with minimum 2. The joint subarray [2,2] has two elements tied for minimum, and it must be credited to exactly one of them — this is the case that decides the comparison strictness."
+    }
+  ],
+  "constraints": [
+    "1 <= nums.length <= 3 * 10^4",
+    "1 <= nums[i] <= 3 * 10^4",
+    "Values may repeat",
+    "Return the sum modulo 10^9 + 7"
+  ],
+  "bruteForce": {
+    "idea": "Fix a start index, extend the end one step at a time keeping a running minimum, and add that minimum to the total for each subarray.",
+    "code": [
+      "long total = 0;",
+      "final int MOD = 1_000_000_007;",
+      "for (int i = 0; i < nums.length; i++) {",
+      "    int min = Integer.MAX_VALUE;",
+      "    for (int j = i; j < nums.length; j++) {",
+      "        min = Math.min(min, nums[j]);",
+      "        total = (total + min) % MOD;",
+      "    }",
+      "}",
+      "return (int) total;"
+    ],
+    "complexity": {
+      "time": "O(n^2)",
+      "space": "O(1)"
+    },
+    "whySlow": "The same element is re-identified as 'the minimum' once for every subarray it happens to dominate, and the loop never records what it learned. In [3,1,2,4] the inner loop concludes 'the minimum here is nums[1]' six separate times, from scratch, without ever noticing that nums[1] is the minimum of an entire rectangle of index ranges — every start at or left of 1 paired with every end at or right of 1. The fact being rediscovered is a property of the element and its two nearest smaller neighbours; the enumeration re-derives it per subarray, so n^2/2 subarrays each pay for a discovery that n elements' worth of work could have produced once."
+  },
+  "patternIdentification": "The leap is to invert the question. The sum runs over subarrays, but the value being summed is 'the extreme element', and each element is the extreme of many subarrays at once. So stop enumerating subarrays and enumerate elements instead: for each nums[i], ask *how many subarrays is it the minimum of?* Because a subarray's minimum is nums[i] exactly when the subarray contains i and contains no element smaller than nums[i], such a subarray must start somewhere after the previous smaller element and end somewhere before the next smaller element. Those two boundaries are independent, so the count multiplies: (i - prevLess) * (nextLess - i), and the element contributes nums[i] times that. 'How far until the first smaller element on each side' is the canonical monotonic-stack query, answered for every index in one pass. The transferable signal: a sum or count over all subarrays whose summand is a per-subarray max, min or range is almost always a contribution problem, and the contribution is almost always a span bounded by the nearest element that beats you.",
+  "optimized": {
+    "idea": "Two monotonic-stack passes and a multiply. Left to right, maintain a stack of indices whose values increase from bottom to top; before pushing i, pop everything with a value >= nums[i], so the index remaining on top is the previous *strictly* smaller element, and left[i] = i - that index gives the number of valid subarray starts (with -1 standing in for 'none', so the start may be index 0). Right to left, the mirror: pop while the top's value is > nums[i], leaving the next element that is *less than or equal*, and right[i] = that index - i counts the valid ends. Then total = sum of nums[i] * left[i] * right[i], reduced mod 10^9+7. The asymmetry is deliberate and is the only subtle thing here. On [2,2] the subarray spanning both elements has two tied minima, and the pair of formulas has to award it to exactly one index. Strict on the left means an equal earlier element does not block index 1, so index 1's reach extends over it; non-strict on the right means an equal later element does block index 0, so index 0's reach stops short. The tie therefore always goes to the rightmost of the equal minima. Make both sides strict and both indices claim [2,2], giving 8 instead of 6; make both non-strict and neither claims it, giving 4. Each pass is O(n) because every index is pushed once and popped at most once.",
+    "code": [
+      "public static int sumSubarrayMins(int[] nums) {",
+      "    final int MOD = 1_000_000_007;",
+      "    int n = nums.length;",
+      "    int[] left = new int[n];    // number of subarray STARTS for which nums[i] is the minimum",
+      "    int[] right = new int[n];   // number of subarray ENDS for which nums[i] is the minimum",
+      "    Deque<Integer> stack = new ArrayDeque<>();",
+      "",
+      "    for (int i = 0; i < n; i++) {",
+      "        while (!stack.isEmpty() && nums[stack.peek()] >= nums[i]) stack.pop();   // STRICT: an equal earlier element does not block i",
+      "        left[i] = i - (stack.isEmpty() ? -1 : stack.peek());",
+      "        stack.push(i);",
+      "    }",
+      "",
+      "    stack.clear();",
+      "    for (int i = n - 1; i >= 0; i--) {",
+      "        while (!stack.isEmpty() && nums[stack.peek()] > nums[i]) stack.pop();    // NON-strict: an equal later element DOES block i, so ties are credited once",
+      "        right[i] = (stack.isEmpty() ? n : stack.peek()) - i;",
+      "        stack.push(i);",
+      "    }",
+      "",
+      "    long total = 0;",
+      "    for (int i = 0; i < n; i++) {",
+      "        total = (total + (long) nums[i] * left[i] % MOD * right[i]) % MOD;",
+      "    }",
+      "    return (int) total;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(n)"
+    }
+  },
+  "commonMistakes": [
+    "Using the same strictness on both boundaries. With strict comparisons on both sides, [2,2] gives 8 because the subarray [2,2] is claimed by both indices; with non-strict on both, it gives 4 because neither claims it. The correct answer is 6, and only inputs with no duplicate values hide the bug.",
+    "Off-by-one in the span: writing left[i] = i - prevLess - 1 (the *distance* to the previous smaller element) instead of i - prevLess (the *count* of valid starts, which includes i itself). Every element adjacent to a smaller neighbour then contributes zero and [3,1,2,4] returns 2 instead of 17.",
+    "Multiplying in int: `nums[i] * left[i] * right[i]` overflows well before the modulus is applied — the spans alone reach 3*10^4 each, so the product can exceed 2^31 and the running total goes negative. Cast to long and reduce between the multiplications."
+  ],
+  "similar": [
+    "largest-rectangle-histogram",
+    "daily-temperatures",
+    "remove-k-digits",
+    "next-greater-element",
+    "subarray-sum-equals-k"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 907,
+      "slug": "sum-of-subarray-minimums",
+      "title": "Sum of Subarray Minimums",
+      "url": "https://leetcode.com/problems/sum-of-subarray-minimums/",
+      "premium": false
+    }
+  }
+}

@@ -1,0 +1,278 @@
+{
+  "id": "stack",
+  "kind": "data-structure",
+  "title": "Stack",
+  "group": "Stack & Queue",
+  "level": 1,
+  "difficulty": "beginner",
+  "estimatedMinutes": 22,
+  "summary": "Last in, first out. Add and remove only at the top — which is exactly the shape of anything that must be undone in reverse order.",
+  "prerequisites": [
+    "arrays"
+  ],
+  "tags": [
+    "stack",
+    "lifo",
+    "data-structure",
+    "level-1"
+  ],
+  "analogy": {
+    "beginner": "A pile of plates. You put a clean plate on top and you take the top plate off. You never pull one from the middle — the pile would collapse. The last plate you put down is the first one you pick up.",
+    "interview": "A LIFO collection with O(1) push, pop and peek. Backed by an array with a top index, or by a singly linked list with head insertion. In Java, use `ArrayDeque` — `java.util.Stack` extends `Vector` and is synchronised legacy."
+  },
+  "intuition": "A stack is the data structure of *pending work* and *undo*.\n\nWhenever you start something you cannot finish until you first finish something else, you have a stack. Reading a nested expression: you meet `(` and must remember it until the matching `)`. Calling a function: you must remember where to return before you can run the callee. Browsing: each page you leave waits for you to come back.\n\nThe defining property is that things come out in *reverse* order. If reverse order is what the problem needs, a stack is almost certainly the answer — and the restriction to one end is not a limitation, it is what makes every operation O(1).",
+  "problemFirst": {
+    "motivatingProblem": "Check whether a string of brackets is balanced: `{[()]}` is valid, `{[(])}` is not.",
+    "bruteForce": {
+      "idea": "Count the brackets — as many `(` as `)`. Or repeatedly delete adjacent matching pairs until nothing changes.",
+      "code": [
+        "// Counting: wrong.",
+        "int open = 0;",
+        "for (char c : s.toCharArray()) {",
+        "    if (c == '(') open++;",
+        "    else if (c == ')') open--;",
+        "}",
+        "return open == 0;   // says \")(\" is valid. It is not.",
+        "",
+        "// Repeated deletion: correct but slow.",
+        "while (s.contains(\"()\") || s.contains(\"[]\") || s.contains(\"{}\")) {",
+        "    s = s.replace(\"()\", \"\").replace(\"[]\", \"\").replace(\"{}\", \"\");",
+        "}",
+        "return s.isEmpty();"
+      ],
+      "complexity": {
+        "time": "O(n²) for repeated deletion",
+        "space": "O(n)"
+      },
+      "whySlow": "Counting ignores order, so it accepts `)(`. Repeated deletion is correct but rebuilds the whole string on every pass — O(n) passes × O(n) work each."
+    },
+    "observation": "When we meet a closing bracket, the only bracket it may legally match is the *most recent* unmatched opening bracket. Nothing older matters.",
+    "leap": "'Most recent unmatched thing' is exactly what a stack gives you in O(1). Push every opener; on a closer, pop and check the pair. One pass, O(n)."
+  },
+  "howItWorks": [
+    "**push(x)** — put x on top. O(1).",
+    "**pop()** — remove and return the top. O(1). Throws or returns null if empty, so check `isEmpty()` first.",
+    "**peek()** — look at the top without removing it. O(1).",
+    "**isEmpty() / size()** — O(1).",
+    "Array-backed: keep an index `top`; push writes `a[top++]`, pop reads `a[--top]`. Grows by doubling.",
+    "List-backed: insert and remove at the head; no resizing, but an object per element and worse cache behaviour."
+  ],
+  "patternRecognition": {
+    "signals": [
+      "Matching or nesting: brackets, tags, nested structures",
+      "'Undo', 'back', 'reverse order', 'most recent'",
+      "Evaluating expressions, parsing",
+      "'Next greater / next smaller element' → monotonic stack",
+      "Converting a recursive solution to an iterative one"
+    ],
+    "antiSignals": [
+      "You need first-in-first-out order (that is a Queue)",
+      "You need access to the middle or to arbitrary positions"
+    ],
+    "decisionTreeId": "which-data-structure"
+  },
+  "visualizations": [
+    {
+      "id": "stack-ops",
+      "title": "push · pop · peek",
+      "engine": "stackOps",
+      "input": {
+        "operations": [
+          {
+            "op": "push",
+            "value": 10
+          },
+          {
+            "op": "push",
+            "value": 20
+          },
+          {
+            "op": "push",
+            "value": 30
+          },
+          {
+            "op": "peek"
+          },
+          {
+            "op": "pop"
+          },
+          {
+            "op": "push",
+            "value": 40
+          },
+          {
+            "op": "pop"
+          },
+          {
+            "op": "pop"
+          }
+        ]
+      },
+      "code": [
+        "Deque<Integer> stack = new ArrayDeque<>();",
+        "stack.push(x);          // add on top",
+        "int top = stack.peek(); // look at the top",
+        "int out = stack.pop();  // remove the top"
+      ]
+    },
+    {
+      "id": "balanced-brackets",
+      "title": "Balanced brackets, one pass",
+      "engine": "balancedBrackets",
+      "input": {
+        "text": "{[()]}"
+      },
+      "code": [
+        "Deque<Character> stack = new ArrayDeque<>();",
+        "for (char c : s.toCharArray()) {",
+        "    if (c == '(' || c == '[' || c == '{') {",
+        "        stack.push(c);",
+        "    } else {",
+        "        if (stack.isEmpty() || !matches(stack.pop(), c)) return false;",
+        "    }",
+        "}",
+        "return stack.isEmpty();"
+      ]
+    }
+  ],
+  "implementations": [
+    {
+      "label": "Simple",
+      "language": "java",
+      "explanation": "A stack built on a plain array, so you can see that push and pop are just an index moving up and down.",
+      "code": [
+        "class IntStack {",
+        "    private int[] items = new int[16];",
+        "    private int top = 0;              // next free slot",
+        "",
+        "    void push(int x) {",
+        "        if (top == items.length) {",
+        "            items = Arrays.copyOf(items, items.length * 2);",
+        "        }",
+        "        items[top++] = x;",
+        "    }",
+        "",
+        "    int pop() {",
+        "        if (top == 0) throw new NoSuchElementException(\"stack is empty\");",
+        "        return items[--top];",
+        "    }",
+        "",
+        "    int peek() {",
+        "        if (top == 0) throw new NoSuchElementException(\"stack is empty\");",
+        "        return items[top - 1];",
+        "    }",
+        "",
+        "    boolean isEmpty() { return top == 0; }",
+        "}"
+      ]
+    },
+    {
+      "label": "Optimized",
+      "language": "java",
+      "explanation": "In real code use `ArrayDeque`. It is faster and unsynchronised, unlike the legacy `java.util.Stack`. The balanced-brackets solution below is the canonical interview answer — note the two failure modes: a closer with an empty stack, and leftovers at the end.",
+      "code": [
+        "public boolean isValid(String s) {",
+        "    Deque<Character> stack = new ArrayDeque<>();",
+        "    for (char c : s.toCharArray()) {",
+        "        switch (c) {",
+        "            case '(' -> stack.push(')');   // push what we EXPECT to see",
+        "            case '[' -> stack.push(']');",
+        "            case '{' -> stack.push('}');",
+        "            default -> {",
+        "                if (stack.isEmpty() || stack.pop() != c) return false;",
+        "            }",
+        "        }",
+        "    }",
+        "    return stack.isEmpty();   // leftovers mean unclosed brackets",
+        "}"
+      ]
+    }
+  ],
+  "complexity": {
+    "time": "push O(1) · pop O(1) · peek O(1) · search O(n)",
+    "space": "O(n)",
+    "why": "All operations touch only one end, so no element ever has to move to make room — unlike inserting into the middle of an array. Array-backed push is O(1) amortised because doubling makes the occasional copy rare. Searching is O(n) because a stack deliberately gives you no way to look inside; if you need that, you have picked the wrong structure."
+  },
+  "commonMistakes": [
+    {
+      "mistake": "Popping without checking `isEmpty()`",
+      "fix": "`)))` pops an empty stack. Check first — it is also the classic missed edge case in the brackets problem."
+    },
+    {
+      "mistake": "Forgetting to check the stack is empty at the end",
+      "fix": "`(((` never fails during the loop but is still invalid. Leftovers mean unclosed openers."
+    },
+    {
+      "mistake": "Using `java.util.Stack`",
+      "fix": "It extends `Vector`, so every operation is synchronised and slower. Use `ArrayDeque`."
+    },
+    {
+      "mistake": "Mixing `push/pop` with `add/remove` on a Deque",
+      "fix": "`push` adds at the head, `add` adds at the tail. Mixing them silently turns your stack into a queue."
+    }
+  ],
+  "realWorldUses": [
+    "The JVM call stack — every method call pushes a frame; `StackOverflowError` is that stack overflowing.",
+    "Undo/redo in editors; the browser back button.",
+    "Expression evaluation and syntax parsing in compilers; JSON and XML parsers matching nesting.",
+    "Depth-first search, when written iteratively, is a stack replacing the recursion."
+  ],
+  "interviewNotes": [
+    "The monotonic stack (keeping the stack sorted as you push) solves 'next greater element', 'daily temperatures' and 'largest rectangle in a histogram' in O(n). It is a high-yield follow-up.",
+    "'Solve this without recursion' means 'use an explicit stack'."
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "predict-output",
+      "question": "push(1); push(2); push(3); pop(); push(4); pop(); pop();\nWhat is the last value popped?",
+      "options": [
+        "1",
+        "2",
+        "3",
+        "4"
+      ],
+      "answerIndex": 1,
+      "explanation": "Stack after pushes 1,2,3 is [1,2,3]. pop→3, push 4 →[1,2,4], pop→4, pop→2. The last popped value is 2."
+    },
+    {
+      "id": "q2",
+      "type": "identify-pattern",
+      "question": "'Given daily temperatures, for each day find how many days until a warmer day.' Which structure?",
+      "options": [
+        "Queue",
+        "Monotonic stack of indices waiting for a warmer day",
+        "HashMap",
+        "Binary search tree"
+      ],
+      "answerIndex": 1,
+      "explanation": "Each day waits for the next warmer one — the most recent unresolved days resolve first, which is LIFO. Keeping a stack of decreasing temperatures gives O(n) instead of O(n²)."
+    },
+    {
+      "id": "q3",
+      "type": "mcq",
+      "question": "Why is `ArrayDeque` preferred over `java.util.Stack` in modern Java?",
+      "options": [
+        "Stack is O(n) per push",
+        "Stack extends Vector, so it is synchronised and slower with no benefit here",
+        "Stack cannot hold objects",
+        "ArrayDeque is sorted"
+      ],
+      "answerIndex": 1,
+      "explanation": "Both are O(1) per operation, but Vector's synchronisation costs on every call and is pointless for a single-threaded algorithm. The Java docs themselves recommend ArrayDeque."
+    }
+  ],
+  "practiceProblems": [
+    "valid-parentheses",
+    "min-stack",
+    "asteroid-collision",
+    "decode-string",
+    "evaluate-rpn",
+    "daily-temperatures"
+  ],
+  "related": [
+    "queue",
+    "dfs",
+    "recursion"
+  ]
+}

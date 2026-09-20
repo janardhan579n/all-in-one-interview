@@ -1,0 +1,91 @@
+{
+  "id": "container-with-most-water",
+  "title": "Container With Most Water",
+  "patternId": "two-pointers",
+  "difficulty": "intermediate",
+  "tags": [
+    "array",
+    "two-pointers",
+    "greedy"
+  ],
+  "statement": "Given an array where each element is the height of a vertical line, find two lines that together with the x-axis hold the most water. Return that maximum area.",
+  "realWorld": "The same 'widest span limited by the weakest endpoint' shape appears in capacity planning between two constrained resources, and in finding the best pair of price points bounded by the lower one.",
+  "examples": [
+    {
+      "input": "height = [1,8,6,2,5,4,8,3,7]",
+      "output": "49",
+      "explanation": "Lines at indices 1 and 8: width 7, limiting height min(8,7) = 7, area 49."
+    },
+    {
+      "input": "height = [1,1]",
+      "output": "1",
+      "explanation": ""
+    }
+  ],
+  "constraints": [
+    "2 <= height.length <= 10^5",
+    "0 <= height[i] <= 10^4"
+  ],
+  "bruteForce": {
+    "idea": "Compute the area for every pair of lines.",
+    "code": [
+      "int best = 0;",
+      "for (int i = 0; i < height.length; i++) {",
+      "    for (int j = i + 1; j < height.length; j++) {",
+      "        int area = (j - i) * Math.min(height[i], height[j]);",
+      "        best = Math.max(best, area);",
+      "    }",
+      "}",
+      "return best;"
+    ],
+    "complexity": {
+      "time": "O(n^2)",
+      "space": "O(1)"
+    },
+    "whySlow": "5 * 10^9 pairs at the upper constraint. It also ignores a decisive structural fact about which pairs can possibly be better."
+  },
+  "patternIdentification": "Not sorted, so why two pointers? Because there is still a monotonic argument: starting at maximum width, the only way to beat the current area is to increase the limiting height. That justifies discarding the shorter line — which is the two-pointer move.",
+  "optimized": {
+    "idea": "Start at the widest possible pair. The area is limited by the shorter line, so moving the taller one inwards can only reduce width without ever raising the limit. Therefore always move the shorter line — every other pair involving it is provably worse.",
+    "code": [
+      "public static int maxArea(int[] height) {",
+      "    int left = 0;",
+      "    int right = height.length - 1;",
+      "    int best = 0;",
+      "",
+      "    while (left < right) {",
+      "        int limiting = Math.min(height[left], height[right]);",
+      "        best = Math.max(best, (right - left) * limiting);",
+      "",
+      "        // Move the shorter line: keeping it can never beat what we just recorded,",
+      "        // because width only shrinks from here and this line caps the height.",
+      "        if (height[left] < height[right]) left++;",
+      "        else                              right--;",
+      "    }",
+      "    return best;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(1)"
+    }
+  },
+  "commonMistakes": [
+    "Moving the taller line, or moving both. Only discarding the shorter one is justified.",
+    "Using the taller line's height in the area — the shorter one is the constraint.",
+    "Assuming the array must be sorted for two pointers to apply; the justification here is the monotonic width argument, not ordering."
+  ],
+  "similar": [
+    "two-sum-sorted",
+    "three-sum"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 11,
+      "slug": "container-with-most-water",
+      "title": "Container With Most Water",
+      "url": "https://leetcode.com/problems/container-with-most-water/",
+      "premium": false
+    }
+  }
+}

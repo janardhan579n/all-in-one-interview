@@ -1,0 +1,145 @@
+{
+  "id": "min-stack",
+  "title": "Min Stack",
+  "patternId": "stack",
+  "difficulty": "beginner",
+  "tags": [
+    "stack",
+    "design"
+  ],
+  "statement": "Design a stack that supports push(val), pop(), top() and getMin() — where getMin() returns the smallest value currently in the stack — with every one of the four operations running in O(1).",
+  "realWorld": "A risk engine that tracks the running low of a price series inside a session that can be rolled back: each tick is pushed, a correction pops the last tick, and the dashboard asks for the session low after every single change. Recomputing the low per query is what the O(1) requirement exists to forbid.",
+  "examples": [
+    {
+      "input": "push(-2), push(0), push(-3), getMin(), pop(), top(), getMin()",
+      "output": "-3, then 0, then -2",
+      "explanation": "getMin() is -3 while -3 is on the stack. After popping it the minimum has to go back to -2 — which is the minimum of what remains, not of what was ever pushed."
+    },
+    {
+      "input": "push(2), push(1), pop(), getMin()",
+      "output": "2",
+      "explanation": "The popped value 1 was the minimum. A single cached min field would still be holding 1 here."
+    },
+    {
+      "input": "push(5), push(5), pop(), getMin()",
+      "output": "5",
+      "explanation": "Duplicated minima. One copy of 5 leaves and the minimum is still 5, so a scheme that discards the record of a tie loses the answer."
+    }
+  ],
+  "constraints": [
+    "-2^31 <= val <= 2^31 - 1",
+    "pop(), top() and getMin() are only called on a non-empty stack",
+    "At most 3 * 10^4 calls in total",
+    "All four operations must be O(1)"
+  ],
+  "bruteForce": {
+    "idea": "Store the values in a plain stack and answer getMin() by walking every element.",
+    "code": [
+      "private final Deque<Integer> stack = new ArrayDeque<>();",
+      "",
+      "public void push(int val) { stack.push(val); }",
+      "",
+      "public void pop() { stack.pop(); }",
+      "",
+      "public int top() { return stack.peek(); }",
+      "",
+      "public int getMin() {",
+      "    int min = Integer.MAX_VALUE;",
+      "    for (int value : stack) min = Math.min(min, value);",
+      "    return min;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(1) push/pop/top, O(n) getMin",
+      "space": "O(n)"
+    },
+    "whySlow": "Each getMin() walks the entire stack to rediscover a number that changed by at most one element since the last call. The push that just happened already knew whether it was the new minimum, and the previous getMin() already knew the answer for everything beneath it — the scan throws both facts away and re-derives them from raw values. With 3 * 10^4 interleaved calls on a deep stack that is hundreds of millions of comparisons to learn almost nothing new."
+  },
+  "patternIdentification": "The tempting fix — cache the answer in a single `min` field — fails, and it fails for a reason worth naming: a pop can remove the very element the cache points at, and the cache has no way to recover what the minimum was before that element arrived. History has been destroyed. But a stack *is* its own history: its frames are exactly the sequence of states it has passed through. So store the answer as of each push, alongside the value it belongs to. Whenever an O(1) query depends on the whole structure and the structure changes only at one end, record the query's answer at the moment it is cheap to compute and let it ride along with the data.",
+  "optimized": {
+    "idea": "Every frame carries two numbers: the value pushed, and the minimum of the stack as of that push. The minimum for a new frame is min(val, minimum of the frame below), which is O(1) to compute. A pop discards a frame and with it that frame's minimum, so the frame now on top already holds the correct answer for the smaller stack — no recomputation, and no cache that a pop can invalidate. A second parallel stack holding only the minima works identically; the pairing is just the same idea with one allocation.",
+    "code": [
+      "class MinStack {",
+      "",
+      "    private final Deque<int[]> stack = new ArrayDeque<>();   // {value, minimum as of this push}",
+      "",
+      "    public void push(int val) {",
+      "        int min = stack.isEmpty() ? val : Math.min(val, stack.peek()[1]);",
+      "        stack.push(new int[]{val, min});   // capture the minimum AT PUSH TIME: popping this frame restores the previous minimum for free",
+      "    }",
+      "",
+      "    public void pop() {",
+      "        stack.pop();",
+      "    }",
+      "",
+      "    public int top() {",
+      "        return stack.peek()[0];",
+      "    }",
+      "",
+      "    public int getMin() {",
+      "        return stack.peek()[1];",
+      "    }",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(1) for all four operations",
+      "space": "O(n)"
+    }
+  },
+  "visualization": {
+    "engine": "stackOps",
+    "input": {
+      "operations": [
+        {
+          "op": "push",
+          "value": -2
+        },
+        {
+          "op": "push",
+          "value": 0
+        },
+        {
+          "op": "push",
+          "value": -3
+        },
+        {
+          "op": "peek"
+        },
+        {
+          "op": "pop"
+        },
+        {
+          "op": "peek"
+        }
+      ]
+    },
+    "code": [
+      "Deque<int[]> stack = new ArrayDeque<>();",
+      "stack.push(new int[]{val, stack.isEmpty() ? val : Math.min(val, stack.peek()[1])});",
+      "int top = stack.peek()[0];",
+      "stack.pop();   // the frame's minimum leaves with it",
+      "int min = stack.peek()[1];"
+    ]
+  },
+  "commonMistakes": [
+    "Keeping one `int min` field updated only on push — pop() then leaves it pointing at a value that is no longer in the stack: push(2), push(1), pop(), getMin() returns 1 instead of 2. Every test that never pops the minimum passes.",
+    "Pushing onto a separate min stack only when `val < min` but popping from it on every pop — the two stacks fall out of step on ties: push(5), push(5), pop(), getMin() finds the min stack already empty and throws NoSuchElementException. Push on `val <= min`, or push unconditionally.",
+    "Initialising the running minimum to 0 rather than to the first pushed value (or Integer.MAX_VALUE) — a stack of only positive numbers reports getMin() == 0, a minimum that was never pushed, and nothing in the output hints where the 0 came from."
+  ],
+  "similar": [
+    "valid-parentheses",
+    "evaluate-rpn",
+    "implement-queue-using-stacks",
+    "daily-temperatures",
+    "lru-cache"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 155,
+      "slug": "min-stack",
+      "title": "Min Stack",
+      "url": "https://leetcode.com/problems/min-stack/",
+      "premium": false
+    }
+  }
+}

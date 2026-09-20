@@ -1,0 +1,193 @@
+{
+  "id": "network-delay-time",
+  "title": "Network Delay Time",
+  "patternId": "shortest-paths",
+  "difficulty": "intermediate",
+  "tags": [
+    "graph",
+    "dijkstra",
+    "shortest-path",
+    "priority-queue",
+    "weighted-graph"
+  ],
+  "statement": "A network has n nodes labelled 1..n and directed travel times given as times[i] = [u, v, w], meaning a signal takes w time to go from u to v. A signal is sent from node k. Return the time it takes for all n nodes to receive it, or -1 if some node never does.",
+  "realWorld": "Propagation delay in a real network: how long before a configuration push, cache invalidation or gossip message has reached every server. The answer is always the worst node, which is why tail latency and not average latency is what gets monitored.",
+  "examples": [
+    {
+      "input": "times = [[2,1,1],[2,3,1],[3,4,1]], n = 4, k = 2",
+      "output": "2",
+      "explanation": "Node 1 receives it at time 1, node 3 at time 1, node 4 at time 2 (via 3). The last arrival is 2."
+    },
+    {
+      "input": "times = [[1,2,1]], n = 2, k = 1",
+      "output": "1",
+      "explanation": "One hop. Node 1 itself is at time 0."
+    },
+    {
+      "input": "times = [[1,2,1]], n = 2, k = 2",
+      "output": "-1",
+      "explanation": "Edges are directed. Node 1 is unreachable from node 2, so the signal never arrives everywhere."
+    }
+  ],
+  "constraints": [
+    "1 <= k <= n <= 100",
+    "1 <= times.length <= 6000",
+    "1 <= u, v <= n, u != v",
+    "0 <= w <= 100 — every weight is non-negative, which is what makes Dijkstra applicable"
+  ],
+  "bruteForce": {
+    "idea": "Enumerate every simple path from k to each node and keep the cheapest, then take the maximum over all nodes.",
+    "code": [
+      "int best = Integer.MAX_VALUE;",
+      "",
+      "void walk(int node, int target, int elapsed, boolean[] onPath) {",
+      "    if (node == target) { best = Math.min(best, elapsed); return; }",
+      "    onPath[node] = true;",
+      "    for (int[] edge : adj.get(node)) {        // edge = {neighbour, weight}",
+      "        if (onPath[edge[0]]) continue;",
+      "        walk(edge[0], target, elapsed + edge[1], onPath);",
+      "    }",
+      "    onPath[node] = false;",
+      "}"
+    ],
+    "complexity": {
+      "time": "Exponential — up to O(V!) simple paths, repeated per target",
+      "space": "O(V) recursion depth"
+    },
+    "whySlow": "The number of simple paths grows factorially in a dense graph, and every path through an intermediate node repeats all the work of getting to that node. With n = 100 and 6000 edges this never finishes."
+  },
+  "patternIdentification": "A weighted directed graph with non-negative weights, a single source, and a question about minimum total cost to every node — textbook single-source shortest paths. The only twist is the final aggregation: 'when have all nodes received it' is the *maximum* over the shortest distances, and any node still at infinity means -1.",
+  "optimized": {
+    "idea": "Dijkstra from k. Keep a tentative arrival time per node, repeatedly settle the unsettled node with the smallest tentative time, and relax its outgoing edges. Because no weight is negative, a settled node's time is final. When the heap empties, scan the distances: an unreachable node gives -1, otherwise return the largest.",
+    "code": [
+      "public static int networkDelayTime(int[][] times, int n, int k) {",
+      "    List<List<int[]>> adj = new ArrayList<>();",
+      "    for (int i = 0; i <= n; i++) adj.add(new ArrayList<>());   // 1-indexed nodes",
+      "    for (int[] edge : times) {",
+      "        adj.get(edge[0]).add(new int[]{edge[1], edge[2]});     // {to, weight}",
+      "    }",
+      "",
+      "    int[] dist = new int[n + 1];",
+      "    Arrays.fill(dist, Integer.MAX_VALUE);",
+      "    dist[k] = 0;",
+      "",
+      "    // {distance, node}, ordered by distance. Arrays are not Comparable, so",
+      "    // the comparator is mandatory.",
+      "    PriorityQueue<int[]> heap = new PriorityQueue<>((a, b) -> Integer.compare(a[0], b[0]));",
+      "    heap.offer(new int[]{0, k});",
+      "",
+      "    while (!heap.isEmpty()) {",
+      "        int[] top = heap.poll();",
+      "        int elapsed = top[0], node = top[1];",
+      "",
+      "        // STALE: this entry was superseded by a cheaper route already settled.",
+      "        // Java's PriorityQueue has no decrease-key, so outdated copies linger.",
+      "        if (elapsed > dist[node]) continue;",
+      "",
+      "        for (int[] edge : adj.get(node)) {",
+      "            int next = edge[0];",
+      "            int candidate = elapsed + edge[1];",
+      "            if (candidate < dist[next]) {",
+      "                dist[next] = candidate;          // relax",
+      "                heap.offer(new int[]{candidate, next});",
+      "            }",
+      "        }",
+      "    }",
+      "",
+      "    int worst = 0;",
+      "    for (int node = 1; node <= n; node++) {",
+      "        if (dist[node] == Integer.MAX_VALUE) return -1;   // never receives it",
+      "        worst = Math.max(worst, dist[node]);",
+      "    }",
+      "    return worst;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O((V + E) log V) — the log factor is the heap answering 'which unsettled node is nearest?'",
+      "space": "O(V + E) for the adjacency list plus up to O(E) heap entries under lazy deletion"
+    }
+  },
+  "visualization": {
+    "engine": "dijkstra",
+    "input": {
+      "source": "2",
+      "graph": {
+        "nodes": [
+          {
+            "id": "2",
+            "x": 80,
+            "y": 100
+          },
+          {
+            "id": "1",
+            "x": 240,
+            "y": 40
+          },
+          {
+            "id": "3",
+            "x": 240,
+            "y": 160
+          },
+          {
+            "id": "4",
+            "x": 400,
+            "y": 160
+          }
+        ],
+        "edges": [
+          {
+            "from": "2",
+            "to": "1",
+            "weight": 1
+          },
+          {
+            "from": "2",
+            "to": "3",
+            "weight": 1
+          },
+          {
+            "from": "3",
+            "to": "4",
+            "weight": 1
+          }
+        ]
+      }
+    },
+    "code": [
+      "int[] dist = new int[n + 1];  Arrays.fill(dist, Integer.MAX_VALUE);",
+      "dist[k] = 0;  heap.offer(new int[]{0, k});        // min-heap on distance",
+      "while (!heap.isEmpty()) {",
+      "    int[] top = heap.poll();",
+      "    int d = top[0], u = top[1];",
+      "    if (d > dist[u]) continue;                    // stale entry: u is settled",
+      "    for (int[] e : adj.get(u)) {                  // e = {neighbour, weight}",
+      "        int cand = d + e[1];",
+      "        if (cand < dist[e[0]]) { dist[e[0]] = cand; heap.offer(new int[]{cand, e[0]}); }",
+      "    }",
+      "}",
+      "return maxOrMinusOne(dist);"
+    ]
+  },
+  "commonMistakes": [
+    "Returning dist[n] or the distance to the last settled node instead of the maximum over all nodes. The question asks when the slowest node receives it.",
+    "Forgetting the stale-entry skip. Without `if (elapsed > dist[node]) continue;` a node is expanded once per heap copy and the running time degrades.",
+    "Off-by-one indexing: nodes are 1..n, so the arrays need size n + 1 and the final scan must start at 1, not 0.",
+    "Constructing the PriorityQueue without a comparator. int[] does not implement Comparable and the code fails at runtime.",
+    "Treating the graph as undirected. times[i] = [u, v, w] is one-way, and the -1 case usually comes from exactly that.",
+    "Relaxing from a node still at Integer.MAX_VALUE, which overflows to a negative distance. The stale check prevents it here; a hand-rolled loop may not."
+  ],
+  "similar": [
+    "cheapest-flights-k-stops",
+    "path-with-minimum-effort",
+    "rotting-oranges"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 743,
+      "slug": "network-delay-time",
+      "title": "Network Delay Time",
+      "url": "https://leetcode.com/problems/network-delay-time/",
+      "premium": false
+    }
+  }
+}

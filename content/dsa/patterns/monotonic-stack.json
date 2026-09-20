@@ -1,0 +1,366 @@
+{
+  "id": "monotonic-stack",
+  "kind": "pattern",
+  "title": "Monotonic Stack",
+  "group": "Stack & Queue",
+  "level": 3,
+  "difficulty": "intermediate",
+  "estimatedMinutes": 40,
+  "summary": "Keep a stack whose values only ever increase, or only ever decrease. A value that breaks the order can never be anyone's answer again, so it leaves permanently — which turns 'for each element, scan sideways until…' from O(n²) into O(n).",
+  "prerequisites": [
+    "stack",
+    "arrays",
+    "big-o"
+  ],
+  "tags": [
+    "stack",
+    "array",
+    "monotonic",
+    "next-greater",
+    "histogram",
+    "amortised",
+    "level-3"
+  ],
+  "analogy": {
+    "beginner": "People queue up and each one wants to know: who is the next person taller than me? Everyone waits in line. When a newcomer arrives, everyone shorter than them gets their answer on the spot — it is the newcomer — and goes home for good. Everyone taller stays, because the newcomer does not block the view of a taller person. Nobody ever rejoins the line. So the queue, read front to back, is always tallest-to-shortest, and the whole crowd is served in one pass rather than each person walking the line themselves.",
+    "interview": "Maintain a stack of indices whose answer is still pending, kept in monotonic order of the values they point at. Before pushing index i, pop every index whose value violates the order — i is exactly that index's answer, and the popped index can be discarded because any later query it would have satisfied is satisfied better and nearer by i. Each index is pushed once and popped at most once, so the total stack work is bounded by 2n and the scan is O(n) amortised, despite the inner while loop."
+  },
+  "intuition": "The expensive thing in `[73, 74, 75, 71, 69, 72, 76, 73]` is not the comparison. It is the *re-scanning*.\n\nWalk forward from day 3 (71): 69, no; 72, yes. Now walk forward from day 4 (69): 72, yes. Day 4 looked at nothing day 3 had not already looked at — it just looked again. Over a long descending run that repetition is the whole O(n²).\n\nSo turn the question around. Instead of each element asking *\"what is to the right of me?\"*, let each new element announce itself: **\"I am 72 — does anybody here need me?\"**\n\nDays 3 (71) and 4 (69) both do. They get their answer and leave. Day 2 (75) does not, because 72 is smaller than it. It stays and keeps waiting.\n\nAnd here is the fact the entire pattern rests on:\n\n> Once 72 has arrived, day 4 (69) can never be anybody else's answer. Any element further right that would have chosen 69 will choose 72 instead — 72 is both **bigger** and **nearer**.\n\nSo 69 is not merely answered; it is *useless from now on*. It can be thrown away permanently. That discard is the pattern. Everything else is bookkeeping.\n\nWhat is left after the discards is sorted by construction — nobody sorted it:\n\n```\nday:   0   1   2   3   4   5   6   7\ntemp: 73  74  75  71  69  72  76  73\n\nafter day 4:  stack = [2(75), 3(71), 4(69)]   strictly decreasing\nday 5 = 72 :  pop 4(69), pop 3(71)            both answered by day 5\n              stack = [2(75), 5(72)]\nday 6 = 76 :  pop 5(72), pop 2(75)            both answered by day 6\n              stack = [6(76)]\nday 7 = 73 :  nothing to pop\n              stack = [6(76), 7(73)]          never answered → 0\n```\n\nThe code *looks* quadratic: a `while` nested inside a `for`. It is not. Count the pushes — exactly n, one per index. Count the pops — at most n, because nothing is ever pushed a second time. Total stack work ≤ 2n, so the scan is O(n).\n\nThat is an **amortised** bound, not a per-iteration one. A single iteration genuinely can pop n−1 elements; the point is that it cannot happen twice. Saying this out loud is the difference between having understood the pattern and having memorised its shape.",
+  "problemFirst": {
+    "motivatingProblem": "Given daily temperatures `[73, 74, 75, 71, 69, 72, 76, 73]`, report for each day how many days you must wait before it gets warmer — 0 if it never does.",
+    "bruteForce": {
+      "idea": "For each day, walk forward from the next day until you meet a warmer temperature, then record the gap.",
+      "code": [
+        "int[] answer = new int[temps.length];",
+        "for (int i = 0; i < temps.length; i++) {",
+        "    for (int j = i + 1; j < temps.length; j++) {",
+        "        if (temps[j] > temps[i]) {      // re-reading days we scanned before",
+        "            answer[i] = j - i;",
+        "            break;",
+        "        }",
+        "    }",
+        "}",
+        "return answer;"
+      ],
+      "complexity": {
+        "time": "O(n²)",
+        "space": "O(1) beyond the output"
+      },
+      "whySlow": "O(n²), and — this is the useful half of the sentence — the work is *repeated*, not merely plentiful. A descending run like `[90, 89, 88, …, 41, 95]` makes every one of the first n−1 days scan all the way to the end, and each of those scans re-reads exactly the values the previous day already rejected. At n = 10⁵ that is 10¹⁰ comparisons for an answer that needs 2 × 10⁵ operations."
+    },
+    "observation": "When 72 arrives, it settles day 4 (69) and day 3 (71) at once — and after that, days 3 and 4 are worthless to every remaining day. Anything further right that would have picked 69 or 71 will pick 72 instead, because 72 is larger *and* closer. A value that has just been beaten is not merely answered; it is permanently irrelevant.",
+    "leap": "Keep only the still-unanswered indices, and keep them on a stack. Because every arrival evicts everyone smaller, the stack is always decreasing from bottom to top. Each index is pushed once and popped once, so the nested-looking loop does at most 2n units of work in total — O(n).",
+    "optimizedSketch": [
+      "Deque<Integer> pending = new ArrayDeque<>();      // indices, temps decreasing",
+      "for (int day = 0; day < temps.length; day++) {",
+      "    while (!pending.isEmpty() && temps[day] > temps[pending.peek()]) {",
+      "        int earlier = pending.pop();              // today is its answer…",
+      "        answer[earlier] = day - earlier;          // …and it never comes back",
+      "    }",
+      "    pending.push(day);",
+      "}",
+      "// anything still pending never got warmer — it keeps the default 0"
+    ]
+  },
+  "howItWorks": [
+    "**Pick the direction and the comparison first; the rest is boilerplate.** There are four variants and one template. Scanning **left → right** popping while `value[top] < current` gives *next greater to the right*; popping while `value[top] > current` gives *next smaller to the right*. Scanning **right → left** with the same two conditions gives *previous greater* and *previous smaller*. Write the pop condition down before you write anything else — it is the only line that differs.",
+    "**Strict vs non-strict matters.** `<` versus `<=` in the pop condition decides how equal values behave: with `<`, an equal newcomer does not evict, so ties keep the earlier index; with `<=` it does. For 'next strictly greater' use `<`. For histogram problems, using `<=` on one side and `<` on the other is the standard way to stop duplicate bars double-counting the same rectangle.",
+    "**Store indices, never values.** The value is always one lookup away (`arr[stack.peek()]`), but the index is not recoverable from the value. You need indices for distances (`day - earlier`), for widths (`right - left - 1`), and for writing into the answer array at the right slot. Storing values is the single most common way to get stuck halfway through this pattern.",
+    "**`while`, never `if`.** One arrival can settle many pending elements — `[5, 4, 3, 2, 9]` has 9 resolving four of them in one iteration. An `if` resolves only the most recent and silently leaves the rest wrong.",
+    "**What is still on the stack at the end is the answer 'none'.** Those indices never met anything that beat them. Initialise the output to the 'no answer' sentinel (`-1`, or `0` for a wait-count, which Java's zero-filled arrays give you free) and simply stop — no cleanup loop needed. If you instead need them processed (as in the histogram), push a sentinel value at the end that beats everything, and the drain happens inside the main loop.",
+    "**The hard case — largest rectangle in a histogram.** A rectangle whose height is bar `i` extends left until the first bar shorter than `i` and right until the first bar shorter than `i`. So the answer is *previous smaller* and *next smaller* for every bar, which is two monotonic-stack passes — or one, if you notice that the moment you pop a bar you already know both of its boundaries: the new arrival is its next-smaller on the right, and whatever is now beneath it on the stack is its previous-smaller on the left. Width is `right - left - 1`, and appending a virtual bar of height 0 drains the stack so no bar is forgotten."
+  ],
+  "patternRecognition": {
+    "signals": [
+      "The words **next greater**, **next smaller**, **previous greater**, **previous smaller**, **span**, or 'how many days/steps until…'",
+      "The brute force is literally 'for each element, walk sideways until some comparison holds'",
+      "The answer for element i depends on the **nearest** element on one side that beats it — nearest, not largest, not best",
+      "Histogram, skyline, rectangle, trapping rain water: any shape question over a 1-D array of heights",
+      "Order books, stock spans, temperature waits — 'how far until something bigger arrives'",
+      "You notice that once an element is beaten, no later element could ever want it"
+    ],
+    "antiSignals": [
+      "You need the maximum over a **fixed-size window** rather than the nearest bigger element → monotonic *deque* inside a sliding window, because elements must also expire from the front",
+      "You need the k largest values, or the answer depends on ranking by value rather than by position → heap",
+      "The condition is a sum or a count over a range rather than a nearest-element comparison → prefix sums, or a sliding window",
+      "'Any element greater than x', not 'the *nearest* element greater than x' → sort and binary search; a stack gives you nearness, which you are not using",
+      "You must answer range queries repeatedly after the array is built → segment tree or sparse table; a monotonic stack is one pass and keeps no history"
+    ]
+  },
+  "visualizations": [
+    {
+      "id": "next-greater",
+      "title": "Next greater element — watch what gets discarded, and why it never returns",
+      "engine": "monotonicStack",
+      "input": {
+        "array": [
+          2,
+          1,
+          2,
+          4,
+          3
+        ]
+      },
+      "code": [
+        "int[] res = new int[nums.length]; Arrays.fill(res, -1); Deque<Integer> stack = new ArrayDeque<>();",
+        "for (int i = 0; i < nums.length; i++) {",
+        "    while (!stack.isEmpty() && nums[stack.peek()] < nums[i]) {",
+        "        res[stack.pop()] = nums[i];   // i is the answer for that waiting index",
+        "    }",
+        "    stack.push(i);                    // nothing bigger yet — wait here",
+        "}",
+        "return res;                           // whatever is still waiting stays -1"
+      ]
+    }
+  ],
+  "implementations": [
+    {
+      "label": "Simple",
+      "language": "java",
+      "explanation": "The template, written once and parameterised by the pop condition. `nextGreater` and `nextSmaller` differ by a single character, which is worth seeing side by side — it stops you memorising two algorithms when there is one. Note that both store indices and both leave `-1` for the elements still on the stack at the end.",
+      "code": [
+        "import java.util.ArrayDeque;",
+        "import java.util.Arrays;",
+        "import java.util.Deque;",
+        "",
+        "public final class MonotonicStack {",
+        "",
+        "    /**",
+        "     * For each i, the value of the nearest element to the RIGHT that is strictly greater,",
+        "     * or -1 if there is none. O(n) time, O(n) space.",
+        "     */",
+        "    public static int[] nextGreater(int[] nums) {",
+        "        int[] result = new int[nums.length];",
+        "        Arrays.fill(result, -1);",
+        "        Deque<Integer> stack = new ArrayDeque<>();   // indices; values DECREASING",
+        "",
+        "        for (int i = 0; i < nums.length; i++) {",
+        "            // Everything smaller than nums[i] is answered by nums[i] and is then useless:",
+        "            // any later index that wanted it would prefer nums[i], which is bigger and nearer.",
+        "            while (!stack.isEmpty() && nums[stack.peek()] < nums[i]) {",
+        "                result[stack.pop()] = nums[i];",
+        "            }",
+        "            stack.push(i);",
+        "        }",
+        "        return result;   // indices left on the stack keep -1: nothing greater exists",
+        "    }",
+        "",
+        "    /** Same shape, one character different: '>' instead of '<' gives next SMALLER. */",
+        "    public static int[] nextSmaller(int[] nums) {",
+        "        int[] result = new int[nums.length];",
+        "        Arrays.fill(result, -1);",
+        "        Deque<Integer> stack = new ArrayDeque<>();   // indices; values INCREASING",
+        "",
+        "        for (int i = 0; i < nums.length; i++) {",
+        "            while (!stack.isEmpty() && nums[stack.peek()] > nums[i]) {",
+        "                result[stack.pop()] = nums[i];",
+        "            }",
+        "            stack.push(i);",
+        "        }",
+        "        return result;",
+        "    }",
+        "",
+        "    /** Walking right-to-left turns 'next' into 'previous' with no other change. */",
+        "    public static int[] previousGreater(int[] nums) {",
+        "        int[] result = new int[nums.length];",
+        "        Arrays.fill(result, -1);",
+        "        Deque<Integer> stack = new ArrayDeque<>();",
+        "",
+        "        for (int i = nums.length - 1; i >= 0; i--) {",
+        "            while (!stack.isEmpty() && nums[stack.peek()] < nums[i]) {",
+        "                result[stack.pop()] = nums[i];",
+        "            }",
+        "            stack.push(i);",
+        "        }",
+        "        return result;",
+        "    }",
+        "",
+        "    private MonotonicStack() {}",
+        "}"
+      ]
+    },
+    {
+      "label": "Hard case",
+      "language": "java",
+      "explanation": "Largest rectangle in a histogram — the problem that convinces people this pattern is worth learning. The trick to see: **at the moment a bar is popped, both of its boundaries are already known**. The arrival that caused the pop is its first shorter bar on the right; whatever sits beneath it on the stack is its first shorter bar on the left. So one pass computes both sides. The sentinel `height = 0` appended at the end is what drains the stack, removing the separate cleanup loop and the off-by-one bugs that come with it.",
+      "code": [
+        "import java.util.ArrayDeque;",
+        "import java.util.Deque;",
+        "",
+        "public final class Histogram {",
+        "",
+        "    /**",
+        "     * Area of the largest axis-aligned rectangle that fits under the bars.",
+        "     * O(n) time — each bar is pushed once and popped once. O(n) space.",
+        "     */",
+        "    public static long largestRectangleArea(int[] heights) {",
+        "        Deque<Integer> stack = new ArrayDeque<>();   // indices; heights INCREASING",
+        "        long best = 0;",
+        "",
+        "        // i == heights.length is a virtual bar of height 0: shorter than everything,",
+        "        // so it forces every remaining bar off the stack and gets it measured.",
+        "        for (int i = 0; i <= heights.length; i++) {",
+        "            int current = (i == heights.length) ? 0 : heights[i];",
+        "",
+        "            while (!stack.isEmpty() && heights[stack.peek()] >= current) {",
+        "                int height = heights[stack.pop()];",
+        "",
+        "                // Right boundary: i, the first bar shorter than this one.",
+        "                // Left boundary: whatever is now on top — the previous shorter bar.",
+        "                int left = stack.isEmpty() ? -1 : stack.peek();",
+        "                long width = i - left - 1;",
+        "",
+        "                best = Math.max(best, (long) height * width);",
+        "            }",
+        "            stack.push(i);",
+        "        }",
+        "        return best;",
+        "    }",
+        "",
+        "    private Histogram() {}",
+        "}"
+      ]
+    }
+  ],
+  "complexity": {
+    "time": "O(n)",
+    "space": "O(n)",
+    "why": "The `while` inside the `for` does not multiply the cost, because the two loops are not independent. Each index is pushed exactly once, and an index that has been popped is never pushed again — so the number of pops over the *entire run* is at most n. Pushes plus pops is therefore bounded by 2n, and every other operation in the loop body is O(1). That gives O(n) overall. It is an amortised bound rather than a per-iteration one, and the distinction matters: one iteration really can pop n−1 elements, it simply cannot do so twice. Space is the stack itself, which in the worst case — a strictly decreasing array, where no element is ever resolved — holds all n indices at once; the output array is a further O(n) if you count it. One Java note on the constant factor: use `Deque` with `ArrayDeque`, not `java.util.Stack`, which is synchronised, extends `Vector`, and iterates bottom-to-top — the opposite of what you expect."
+  },
+  "commonMistakes": [
+    {
+      "mistake": "Pushing values instead of indices",
+      "fix": "Push indices. Distances (`i - popped`), widths (`i - left - 1`) and writing into `result[popped]` all need the position, and no amount of cleverness recovers it from the value."
+    },
+    {
+      "mistake": "Using `if` instead of `while` to pop",
+      "fix": "A single arrival can resolve an unbounded number of pending elements. In `[5, 4, 3, 2, 9]`, the 9 answers four of them in one iteration; an `if` answers one and leaves three wrong."
+    },
+    {
+      "mistake": "Claiming the algorithm is O(n²) because of the nested loop",
+      "fix": "State the amortised argument: n pushes, at most n pops, total work ≤ 2n. Interviewers ask this specifically to see whether you can distinguish loop nesting from operation counting."
+    },
+    {
+      "mistake": "Forgetting the elements left on the stack",
+      "fix": "They are exactly the ones with no answer. Either pre-fill the result with the sentinel and let them stay, or push a value that beats everything (0 for a histogram, +∞ for next-greater) so the main loop drains them."
+    },
+    {
+      "mistake": "Getting the wrong strictness on ties",
+      "fix": "Decide deliberately between `<` and `<=`. With duplicate bars in a histogram, `>=` in the pop condition lets each duplicate be measured with a short width while the last one gets the full span — the total maximum is still correct, which is worth checking on `[2, 2, 2]`."
+    },
+    {
+      "mistake": "Reversing the comparison when scanning right-to-left",
+      "fix": "Do not. Direction and comparison are independent knobs: reverse the loop to switch next↔previous, and flip the comparison to switch greater↔smaller. Changing both at once gives you the variant you started with."
+    },
+    {
+      "mistake": "Overflow in the histogram area",
+      "fix": "`height × width` with heights up to 10⁹ and widths up to 10⁵ overflows `int`. Cast one operand to `long` before multiplying — `(long) height * width`, not `(long) (height * width)`."
+    }
+  ],
+  "realWorldUses": [
+    "Order-book and market-data processing: 'the next bid above this price' is next-greater-element on a price series.",
+    "Monitoring and alerting: the 'span' of a metric — how many consecutive intervals it stayed at or below the current level — is the classic stock-span problem.",
+    "Layout and rendering engines: skyline construction and largest-empty-rectangle queries in UI and PCB layout are histogram problems.",
+    "Compilers and expression evaluation: operator-precedence parsing pops operators until precedence is restored, which is the same monotonic discipline on a different key.",
+    "Image processing: the largest rectangle of uniform colour inside a bitmap reduces to running the histogram algorithm once per row."
+  ],
+  "interviewNotes": [
+    "Say the trigger phrase out loud: 'this is next-greater-element, so monotonic stack'. It signals recognition immediately and buys you the time to get the details right.",
+    "Volunteer the amortised O(n) argument before you are asked. The nested `while` makes weaker candidates say O(n²), and the interviewer is watching for exactly that.",
+    "Write the pop condition first, then the loop around it. Getting `<` versus `>` right at the start avoids the mid-interview rewrite that costs the most time.",
+    "Standard follow-ups: 'make the array circular' (walk `2n` indices with `i % n`, push only on the first pass), 'return distances instead of values' (you already have indices), 'now do it for the previous smaller element' (reverse the loop), and 'now largest rectangle in a histogram'.",
+    "Trapping rain water is the same machinery and is a common surprise follow-up; mention that it also has a two-pointer solution in O(1) space if you have time."
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "identify-pattern",
+      "question": "'For each element of an array, find the first element to its right that is strictly larger.' Which pattern?",
+      "options": [
+        "Sliding Window",
+        "Binary Search",
+        "Monotonic Stack",
+        "Dynamic Programming"
+      ],
+      "answerIndex": 2,
+      "explanation": "'Nearest element on one side that beats me' is the monotonic-stack signature. The brute force is 'scan right until the comparison holds', and the fix is to let each arrival settle everyone it beats and discard them."
+    },
+    {
+      "id": "q2",
+      "type": "complexity",
+      "question": "The monotonic-stack template has a `while` loop inside a `for` loop. What is its time complexity?",
+      "options": [
+        "O(n²), because of the nesting",
+        "O(n log n), because the stack stays sorted",
+        "O(n), because each index is pushed once and popped at most once",
+        "O(n·k), where k is the stack depth"
+      ],
+      "answerIndex": 2,
+      "explanation": "Complexity counts total operations, not nesting depth. There are exactly n pushes and at most n pops across the whole run, so stack work is bounded by 2n. One iteration can pop many elements — it just cannot do so twice, because nothing is ever pushed again."
+    },
+    {
+      "id": "q3",
+      "type": "mcq",
+      "question": "Why is a popped element safe to discard forever, rather than being re-examined later?",
+      "options": [
+        "Because the stack has a fixed capacity",
+        "Because the element that popped it is both larger and nearer, so any later index would prefer it",
+        "Because the array is sorted",
+        "Because it has already been written to the output array"
+      ],
+      "answerIndex": 1,
+      "explanation": "This is the whole justification for the pattern. If some index further right would have chosen the popped element, the element that caused the pop beats it on both criteria that matter — it is bigger and it is closer. So the popped element can never win again."
+    },
+    {
+      "id": "q4",
+      "type": "mcq",
+      "question": "After the main loop finishes, some indices are still on the stack. What do they represent?",
+      "options": [
+        "A bug — the stack should always end empty",
+        "Elements whose answer is somewhere earlier in the array",
+        "Elements with no qualifying element on that side, so they take the 'none' sentinel",
+        "Duplicates that were pushed twice"
+      ],
+      "answerIndex": 2,
+      "explanation": "Nothing ever arrived that beat them, which is precisely the definition of 'no next greater element'. Pre-filling the result with -1 (or 0 for a wait-count) handles them with no extra code; pushing a sentinel that beats everything is the alternative when they must be processed."
+    },
+    {
+      "id": "q5",
+      "type": "mcq",
+      "question": "In largest-rectangle-in-a-histogram, at the moment bar `p` is popped by the arrival at index `i`, what is the width of `p`'s rectangle?",
+      "options": [
+        "i - p",
+        "i - left - 1, where `left` is the index now on top of the stack (or -1 if empty)",
+        "p - left",
+        "The whole array length"
+      ],
+      "answerIndex": 1,
+      "explanation": "The pop reveals both boundaries at once: `i` is the first bar shorter than `p` on the right, and whatever is now exposed on top of the stack is the first bar shorter than `p` on the left. The bars strictly between them are all at least as tall as `p`, so the span is `i - left - 1`."
+    },
+    {
+      "id": "q6",
+      "type": "mcq",
+      "question": "You need the maximum of every window of size k as the window slides. Is a monotonic stack the right tool?",
+      "options": [
+        "Yes, it is exactly the same algorithm",
+        "No — you need a monotonic deque, because elements must also expire from the front when they fall out of the window",
+        "No — you need a heap, and nothing else works",
+        "Yes, but only if k is a power of two"
+      ],
+      "answerIndex": 1,
+      "explanation": "The monotonic discipline is right, but a stack only removes from one end. A sliding window also has to evict the element leaving on the left, which needs access to the other end — that is a deque. A heap works too but costs O(n log k) instead of O(n)."
+    }
+  ],
+  "practiceProblems": [
+    "daily-temperatures",
+    "next-greater-element",
+    "remove-k-digits",
+    "largest-rectangle-histogram",
+    "sum-of-subarray-minimums"
+  ],
+  "related": [
+    "stack",
+    "sliding-window",
+    "heap"
+  ]
+}

@@ -1,0 +1,142 @@
+{
+  "id": "top-k-frequent",
+  "title": "Top K Frequent Elements",
+  "patternId": "heap",
+  "difficulty": "intermediate",
+  "tags": [
+    "array",
+    "hashing",
+    "heap",
+    "top-k",
+    "bucket-sort"
+  ],
+  "statement": "Given an integer array `nums` and an integer `k`, return the k most frequent elements. The answer is unique, and it may be returned in any order.",
+  "realWorld": "Trending topics, 'most played tracks this week', top error codes on a dashboard, hot keys in a cache. Every one of them is count-then-select, and at scale the counting happens in a stream while the selection happens in a bounded heap.",
+  "examples": [
+    {
+      "input": "nums = [1,1,1,2,2,3], k = 2",
+      "output": "[1,2]",
+      "explanation": "Counts are {1:3, 2:2, 3:1}. The two highest counts belong to 1 and 2."
+    },
+    {
+      "input": "nums = [1], k = 1",
+      "output": "[1]",
+      "explanation": "One distinct value, so it is trivially the most frequent."
+    },
+    {
+      "input": "nums = [4,1,-1,2,-1,2,3], k = 2",
+      "output": "[-1,2]",
+      "explanation": "Counts are {4:1, 1:1, -1:2, 2:2, 3:1}. Both -1 and 2 occur twice; every other value occurs once. Order within the answer does not matter."
+    }
+  ],
+  "constraints": [
+    "1 <= nums.length <= 10^5",
+    "-10^4 <= nums[i] <= 10^4",
+    "k is in the range [1, number of distinct elements in nums]",
+    "The answer is guaranteed to be unique"
+  ],
+  "bruteForce": {
+    "idea": "Count occurrences into a map, dump the entries into a list, sort the whole list by count descending, and take the first k.",
+    "code": [
+      "Map<Integer, Integer> counts = new HashMap<>();",
+      "for (int value : nums) counts.merge(value, 1, Integer::sum);",
+      "",
+      "List<Map.Entry<Integer, Integer>> entries = new ArrayList<>(counts.entrySet());",
+      "entries.sort((a, b) -> b.getValue() - a.getValue());   // orders ALL m distinct values",
+      "",
+      "int[] out = new int[k];",
+      "for (int i = 0; i < k; i++) out[i] = entries.get(i).getKey();   // …and we read k of them",
+      "return out;"
+    ],
+    "complexity": {
+      "time": "O(n + m log m), where m is the number of distinct values",
+      "space": "O(m)"
+    },
+    "whySlow": "The counting pass is unavoidable and cheap — O(n). The sort is where the waste is: it establishes the exact frequency rank of every distinct value, including the full ordering among the m-k values that do not make the cut, and then reads k of them. With 100,000 distinct values and k = 10 that is roughly 1.7 million comparisons to answer a question about ten of them. The subtraction comparator is also a latent overflow bug for large counts."
+  },
+  "patternIdentification": "Two patterns stacked, and naming both is the answer the interviewer wants. Counting frequencies is a hash map — you can name exactly what you are looking up, so you look it up rather than search for it. Selecting the k highest counts is a top-k, and top-k with k much smaller than m means a min-heap capped at k: the root is the weakest count you are keeping, which is the only one that can ever be evicted. The give-away is that the brute force reads 'count, then sort everything, then look at a few'.",
+  "optimized": {
+    "idea": "Count into a HashMap in one pass, then run the counted entries through a min-heap capped at k, ordered by count. The heap's root is always the least frequent element currently being kept, so each new entry costs one comparison and, only if it wins, an O(log k) eviction and insertion. The heap never exceeds k, so the selection phase is O(m log k) rather than O(m log m).",
+    "code": [
+      "import java.util.*;",
+      "",
+      "/** O(n + m log k) time, O(m) space, where m = number of distinct values. */",
+      "public static int[] topKFrequent(int[] nums, int k) {",
+      "    Map<Integer, Integer> counts = new HashMap<>();",
+      "    for (int value : nums) {",
+      "        counts.merge(value, 1, Integer::sum);       // O(n) total",
+      "    }",
+      "",
+      "    // MIN-heap on count: the root is the LEAST frequent element we are keeping,",
+      "    // which is the only one eviction can ever target.",
+      "    PriorityQueue<Map.Entry<Integer, Integer>> keep =",
+      "            new PriorityQueue<>(Comparator.comparingInt(Map.Entry::getValue));",
+      "",
+      "    for (Map.Entry<Integer, Integer> entry : counts.entrySet()) {",
+      "        keep.offer(entry);",
+      "        if (keep.size() > k) {",
+      "            keep.poll();                           // drop the weakest, stay at size k",
+      "        }",
+      "    }",
+      "",
+      "    int[] out = new int[keep.size()];",
+      "    for (int i = 0; i < out.length; i++) {",
+      "        out[i] = keep.poll().getKey();             // any order is acceptable",
+      "    }",
+      "    return out;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n + m log k)",
+      "space": "O(m) for the counts plus O(k) for the heap"
+    }
+  },
+  "visualization": {
+    "engine": "topKHeap",
+    "title": "The selection phase over the frequency counts [3, 2, 1, 4], k = 2",
+    "input": {
+      "array": [
+        3,
+        2,
+        1,
+        4
+      ],
+      "k": 2
+    },
+    "code": [
+      "PriorityQueue<Integer> keep = new PriorityQueue<>();   // MIN-heap on COUNT",
+      "for (int count : counts.values()) {",
+      "    if (keep.size() < k) keep.offer(count);            // not full yet — keep it",
+      "    else if (count > keep.peek()) {                    // beats the least frequent kept?",
+      "        keep.poll(); keep.offer(count);                // evict the weakest, keep this one",
+      "    }",
+      "    // else: this count can never be top-k — drop it",
+      "}",
+      "return keep;                                           // O(m log k), not O(m log m)"
+    ]
+  },
+  "commonMistakes": [
+    "Sorting the whole frequency map. It works and is O(m log m); the heap exists to avoid ranking the values you will never look at. If m is small the difference is academic — say so rather than pretending otherwise — but at m = 10^5 and k = 10 it is real.",
+    "Using a max-heap. A max-heap of size k gives cheap access to the most frequent element you are keeping, which you never need to touch. You need cheap access to the least frequent one, because that is the eviction candidate — so it is a min-heap ordered by count.",
+    "Comparing by key instead of by value: `Comparator.comparingInt(Map.Entry::getKey)` selects the k largest *values in the array*, not the k most frequent. The comparator is the whole algorithm; read it twice.",
+    "Writing the comparator as `(a, b) -> a.getValue() - b.getValue()`. It is idiomatic and overflows once counts differ by more than Integer.MAX_VALUE, producing a non-transitive comparator. `Comparator.comparingInt` is safe and no longer.",
+    "Mutating the map while iterating its `entrySet()`, or holding `Map.Entry` references after the map changes — the entries are live views, not snapshots.",
+    "Missing the O(n) alternative. Counts are bounded by n, so bucket sort works: put each value into `buckets[count]`, then walk the buckets from the highest count down until you have k. That is O(n) time and O(n) space, and is the expected follow-up when the interviewer says 'can you beat O(m log k)?'."
+  ],
+  "similar": [
+    "kth-largest-element",
+    "merge-k-sorted-lists",
+    "group-anagrams",
+    "contains-duplicate",
+    "two-sum"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 347,
+      "slug": "top-k-frequent-elements",
+      "title": "Top K Frequent Elements",
+      "url": "https://leetcode.com/problems/top-k-frequent-elements/",
+      "premium": false
+    }
+  }
+}

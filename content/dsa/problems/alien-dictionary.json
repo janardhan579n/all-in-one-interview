@@ -1,0 +1,195 @@
+{
+  "id": "alien-dictionary",
+  "title": "Alien Dictionary",
+  "patternId": "topological-sort",
+  "difficulty": "advanced",
+  "tags": [
+    "graph",
+    "topological-sort",
+    "kahn",
+    "string",
+    "dag"
+  ],
+  "statement": "You are given a list of words from an alien language, sorted lexicographically by that language's unknown alphabet order. Derive a string of the distinct letters in an order consistent with the given sorting, or return \"\" if no such order exists.",
+  "realWorld": "Recovering an implicit ordering from observed sorted output — the same shape as inferring a schema's column order from sorted exports, or reconstructing a version precedence from a sorted release list.",
+  "examples": [
+    {
+      "input": "words = [\"wrt\",\"wrf\",\"er\",\"ett\",\"rftt\"]",
+      "output": "\"wertf\"",
+      "explanation": "wrt < wrf gives t < f. wrf < er gives w < e. er < ett gives r < t. ett < rftt gives e < r. Chain them: w < e < r < t < f."
+    },
+    {
+      "input": "words = [\"z\",\"x\",\"z\"]",
+      "output": "\"\"",
+      "explanation": "z < x and x < z. The constraints contradict each other, so no alphabet can produce this sorting."
+    },
+    {
+      "input": "words = [\"abc\",\"ab\"]",
+      "output": "\"\"",
+      "explanation": "The invalid-prefix case. A prefix always sorts before the longer word in any alphabet, so a longer word appearing before its own prefix is impossible regardless of letter order."
+    }
+  ],
+  "constraints": [
+    "1 <= words.length <= 100",
+    "1 <= words[i].length <= 100",
+    "words[i] consists of lowercase English letters",
+    "Only letters that actually appear in the input belong in the output"
+  ],
+  "bruteForce": {
+    "idea": "Generate every permutation of the distinct letters and keep the first one under which the given word list is correctly sorted.",
+    "code": [
+      "for (String candidate : allPermutations(distinctLetters)) {",
+      "    if (isSortedUnder(words, candidate)) return candidate;",
+      "}",
+      "return \"\";"
+    ],
+    "complexity": {
+      "time": "O(k! * n * L) for k distinct letters, n words of length L",
+      "space": "O(k)"
+    },
+    "whySlow": "With all 26 letters present there are 26! permutations — about 4 x 10^26. And the check throws away the useful information: comparing two adjacent words tells you one concrete ordering fact, which the permutation search rediscovers from scratch every time."
+  },
+  "patternIdentification": "Two things have to click. First, each adjacent pair of words yields at most one ordering constraint — the first position where they differ, and nothing after it (everything past the first difference is already decided by that difference). Second, 'letter x must come before letter y' over a set of letters is a directed graph, and 'produce a full ordering consistent with all constraints' is a topological sort. The contradiction case ('z' before 'x' and 'x' before 'z') becomes a cycle, which Kahn's algorithm reports for free.",
+  "optimized": {
+    "idea": "Build a graph over the distinct letters. For each adjacent word pair, scan to the first differing character and add that single edge; if no character differs but the first word is longer, the input is invalid. Then run Kahn's algorithm. Use a Set for the adjacency so a repeated constraint does not inflate an indegree twice. A short output means a cycle, so the constraints contradict.",
+    "code": [
+      "public static String alienOrder(String[] words) {",
+      "    Map<Character, Set<Character>> adj = new HashMap<>();",
+      "    Map<Character, Integer> indegree = new HashMap<>();",
+      "",
+      "    // Every letter that appears is a node, even one with no constraints at all.",
+      "    for (String word : words) {",
+      "        for (char c : word.toCharArray()) {",
+      "            adj.putIfAbsent(c, new HashSet<>());",
+      "            indegree.putIfAbsent(c, 0);",
+      "        }",
+      "    }",
+      "",
+      "    for (int i = 0; i + 1 < words.length; i++) {",
+      "        String first = words[i], second = words[i + 1];",
+      "        // A longer word before its own prefix is impossible in ANY alphabet.",
+      "        if (first.length() > second.length() && first.startsWith(second)) return \"\";",
+      "",
+      "        int limit = Math.min(first.length(), second.length());",
+      "        for (int j = 0; j < limit; j++) {",
+      "            char before = first.charAt(j), after = second.charAt(j);",
+      "            if (before != after) {",
+      "                if (adj.get(before).add(after)) {   // Set: count each edge once",
+      "                    indegree.merge(after, 1, Integer::sum);",
+      "                }",
+      "                break;                              // nothing after the first difference",
+      "            }",
+      "        }",
+      "    }",
+      "",
+      "    Deque<Character> ready = new ArrayDeque<>();",
+      "    for (Map.Entry<Character, Integer> entry : indegree.entrySet()) {",
+      "        if (entry.getValue() == 0) ready.offer(entry.getKey());",
+      "    }",
+      "",
+      "    StringBuilder order = new StringBuilder();",
+      "    while (!ready.isEmpty()) {",
+      "        char letter = ready.poll();",
+      "        order.append(letter);",
+      "        for (char next : adj.get(letter)) {",
+      "            if (indegree.merge(next, -1, Integer::sum) == 0) ready.offer(next);",
+      "        }",
+      "    }",
+      "",
+      "    // Short output: the remaining letters constrain each other cyclically.",
+      "    return order.length() == indegree.size() ? order.toString() : \"\";",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(C + k) where C is the total number of characters in the input and k the number of distinct letters",
+      "space": "O(k) — at most 26 nodes and 26*25 edges, so effectively O(1)"
+    }
+  },
+  "visualization": {
+    "engine": "topologicalSort",
+    "input": {
+      "graph": {
+        "nodes": [
+          {
+            "id": "w",
+            "x": 60,
+            "y": 100
+          },
+          {
+            "id": "e",
+            "x": 180,
+            "y": 100
+          },
+          {
+            "id": "r",
+            "x": 300,
+            "y": 100
+          },
+          {
+            "id": "t",
+            "x": 420,
+            "y": 100
+          },
+          {
+            "id": "f",
+            "x": 540,
+            "y": 100
+          }
+        ],
+        "edges": [
+          {
+            "from": "w",
+            "to": "e"
+          },
+          {
+            "from": "e",
+            "to": "r"
+          },
+          {
+            "from": "r",
+            "to": "t"
+          },
+          {
+            "from": "t",
+            "to": "f"
+          }
+        ]
+      }
+    },
+    "code": [
+      "int[] indegree = new int[26];  Queue<Character> ready = new ArrayDeque<>();",
+      "buildEdgesFromAdjacentWordPairs(words, adj, indegree);   // one edge per pair",
+      "for (char c : letters) if (indegree[c] == 0) ready.offer(c);",
+      "while (!ready.isEmpty()) {",
+      "    char letter = ready.poll();  order.append(letter);",
+      "    for (char next : adj.get(letter)) {",
+      "        if (--indegree[next] > 0) continue;      // still waiting on others",
+      "        ready.offer(next);                       // last constraint cleared",
+      "    }",
+      "}",
+      "return order.length() == letters.size() ? order.toString() : \"\";"
+    ]
+  },
+  "commonMistakes": [
+    "Adding an edge for every differing position instead of only the first. Everything after the first difference is unconstrained — 'abc' < 'abd' says nothing about c versus anything beyond d.",
+    "Missing the invalid-prefix case. [\"abc\",\"ab\"] must return \"\", and checking only the shared prefix positions silently accepts it.",
+    "Omitting letters that appear in no constraint. Every distinct letter must be in the output, so seed the node set from the words, not from the edges.",
+    "Using a List for the adjacency, so a constraint repeated by two different word pairs increments the indegree twice and nothing ever reaches zero.",
+    "Comparing against one expected string. Several alphabets can be consistent with the input when constraints are incomplete; verify against the constraints instead.",
+    "Treating the cycle case as an error to throw. Contradictory constraints are a legitimate input whose answer is \"\"."
+  ],
+  "similar": [
+    "course-schedule-ii",
+    "course-schedule",
+    "number-of-islands"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 269,
+      "slug": "alien-dictionary",
+      "title": "Alien Dictionary",
+      "url": "https://leetcode.com/problems/alien-dictionary/",
+      "premium": true
+    }
+  }
+}

@@ -1,0 +1,125 @@
+{
+  "id": "max-consecutive-ones-iii",
+  "title": "Max Consecutive Ones III",
+  "patternId": "sliding-window",
+  "difficulty": "intermediate",
+  "tags": [
+    "sliding-window",
+    "array",
+    "binary"
+  ],
+  "statement": "Given a binary array nums and an integer k, return the length of the longest contiguous subarray containing only 1s, if you are allowed to flip at most k zeros to ones.",
+  "realWorld": "Uptime with an allowance. A per-minute availability bitmap and an SLA that tolerates k bad minutes: the longest stretch you may still bill as 'available' is this exact computation. It is also how a defragmenter finds the longest run of blocks it could make contiguous by relocating at most k occupied blocks.",
+  "examples": [
+    {
+      "input": "nums = [1,1,1,0,0,0,1,1,1,1,0], k = 2",
+      "output": "6",
+      "explanation": "Flip the zeros at indices 4 and 5 to get 1,1,1,1,1,1 across indices 5..10. The window at indices 0..2 cannot extend past index 5 because that would need three flips."
+    },
+    {
+      "input": "nums = [0,0,1,1,0,0,1,1,1,0,1,1,0,0,0,1,1,1,1], k = 3",
+      "output": "10",
+      "explanation": "Indices 2..11 span ten elements containing exactly three zeros, at indices 4, 5 and 9. Flipping those three gives ten consecutive ones. Extending to index 12 would add a fourth zero, so the window shrinks from the left instead."
+    },
+    {
+      "input": "nums = [0,0,0], k = 3",
+      "output": "3",
+      "explanation": "The budget covers the whole array. The window never becomes invalid, `left` never moves, and the answer is the full length — the case that catches a shrink condition written as `zeros >= k`."
+    }
+  ],
+  "constraints": [
+    "1 <= nums.length <= 10^5",
+    "nums[i] is 0 or 1",
+    "0 <= k <= nums.length"
+  ],
+  "bruteForce": {
+    "idea": "Try every start index, walk right while the running count of zeros stays within k, and keep the longest run.",
+    "code": [
+      "int best = 0;",
+      "for (int i = 0; i < nums.length; i++) {",
+      "    int zeros = 0;",
+      "    for (int j = i; j < nums.length; j++) {",
+      "        if (nums[j] == 0) zeros++;",
+      "        if (zeros > k) break;",
+      "        best = Math.max(best, j - i + 1);",
+      "    }",
+      "}",
+      "return best;"
+    ],
+    "complexity": {
+      "time": "O(n^2)",
+      "space": "O(1)"
+    },
+    "whySlow": "When the window starting at i fails, the restart at i+1 throws away a zero count that was one decrement away from being correct. Dropping nums[i] changes the count by at most one, and the code recomputes it from scratch by re-reading every element from i+1 up to where it failed. On an array like [1,1,...,1,0,0] every restart re-walks almost the whole array to rediscover the same two zeros, so each element is visited O(n) times to answer a question whose state fits in a single integer."
+  },
+  "patternIdentification": "This is the same shape as `longest-repeating-char-replacement`, with a simpler validity test. A window is valid while the number of zeros inside it is <= k; the count changes by at most one when either edge moves; and if a window is invalid, every window containing it is invalid too. That monotonicity is the licence for the template: **valid window, grow greedily, shrink on violation**. Advance `right` unconditionally and update the counter, then advance `left` while the window violates the predicate, then record the length. Each index enters once and leaves once, so the whole thing is O(n) no matter how much shrinking happens.\n\nThe habit to build is writing the validity predicate down first, in one sentence, before any code. 'Zeros in window <= k' here; '(window length - most common count) <= k' in `longest-repeating-char-replacement`; 'window contains every needed character' in `min-window-substring`. Once that sentence exists, the only remaining decisions are which counter maintains it and whether you are maximising (shrink while invalid) or minimising (shrink while valid).",
+  "optimized": {
+    "idea": "One pass with two pointers and a single integer of state: how many zeros are currently inside the window. Grow the window by moving `right`, incrementing `zeros` when the entering element is a 0. While `zeros > k` the window is invalid, so move `left` forward, decrementing `zeros` when the leaving element is a 0. After the shrink loop the window is valid by construction, so right - left + 1 is a legal answer — take the maximum. Note that you never need to know *where* the zeros are, only how many there are.",
+    "code": [
+      "public static int longestOnes(int[] nums, int k) {",
+      "    int left = 0, zeros = 0, best = 0;",
+      "    for (int right = 0; right < nums.length; right++) {",
+      "        if (nums[right] == 0) zeros++;",
+      "        while (zeros > k) {              // invalid: more zeros inside than the flip budget allows",
+      "            if (nums[left] == 0) zeros--;",
+      "            left++;",
+      "        }",
+      "        best = Math.max(best, right - left + 1);",
+      "    }",
+      "    return best;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(1)"
+    }
+  },
+  "visualization": {
+    "engine": "slidingWindowShrink",
+    "input": {
+      "array": [
+        1,
+        1,
+        1,
+        0,
+        0,
+        0,
+        1,
+        1
+      ],
+      "target": 4
+    },
+    "code": [
+      "int left = 0, zeros = 0, best = 0;",
+      "for (int right = 0; right < nums.length; right++) {",
+      "    if (nums[right] == 0) zeros++;",
+      "    while (zeros > k) {",
+      "        if (nums[left] == 0) zeros--;",
+      "        left++;",
+      "    }",
+      "    best = Math.max(best, right - left + 1);",
+      "}",
+      "return best;"
+    ]
+  },
+  "commonMistakes": [
+    "Shrinking on `zeros >= k` instead of `zeros > k`. The window is then capped at k-1 flips: [0,0,0] with k = 3 returns 2 instead of 3, and every answer is short by exactly one run of ones. It passes any test where the optimal window happens not to use the full budget.",
+    "Incrementing `left` inside the shrink loop but decrementing `zeros` unconditionally, without the `if (nums[left] == 0)` guard. `zeros` goes negative, the loop exits immediately on later violations, and the reported length grows past the true answer — the symptom is an answer larger than any valid window, sometimes the whole array.",
+    "Recording `best` before the shrink loop rather than after it. On [1,0,0] with k = 1 the window at right = 2 holds two zeros and is still invalid when measured, so you return 3 instead of 2. The bug is invisible whenever k is generous enough that the window never violates."
+  ],
+  "similar": [
+    "longest-repeating-char-replacement",
+    "max-sum-subarray-k",
+    "min-window-substring",
+    "longest-substring-no-repeat"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 1004,
+      "slug": "max-consecutive-ones-iii",
+      "title": "Max Consecutive Ones III",
+      "url": "https://leetcode.com/problems/max-consecutive-ones-iii/",
+      "premium": false
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "id": "recursion",
+  "title": "Recursion (रिकर्शन)",
+  "summary": "ऐसा function जो किसी problem को उसी problem के सख़्ती से छोटे रूप पर ख़ुद को call करके हल करता है, और जिसमें एक base case होता है जो नीचे उतरना रोक देता है।",
+  "analogy": {
+    "beginner": "आप cinema में हैं और जानना चाहते हैं कि आप किस row में हैं। आगे का हिस्सा दिख नहीं रहा। तो आप आगे बैठे व्यक्ति को थपथपाकर पूछते हैं 'आप किस row में हैं?'। उन्हें भी नहीं पता, इसलिए वे अपने आगे वाले से पूछते हैं। आख़िरकार row 1 में बैठा कोई कहता है 'row 1' — यही base case है। फिर जवाब वापस लौटता है: row 1 → मैं row 2 → मैं row 3 … हर व्यक्ति लगभग कोई काम नहीं करता: एक सवाल पूछो, एक जोड़ो, वापस पास कर दो।",
+    "interview": "Recursion किसी problem को उसी के छोटे instances के रूप में व्यक्त करता है। Correctness के लिए चाहिए एक base case, एक recursive case जो problem size को सख़्ती से घटाए, और यह गारंटी कि यह घटना ख़त्म होती है। हर call एक stack frame लेता है, इसलिए recursion की depth ही space cost है।"
+  },
+  "intuition": "मानसिक जाल जिसमें हर कोई फँसता है वह है पूरी चीज़ को दिमाग़ में trace करने की कोशिश — call के अंदर call के अंदर call। ऐसा मत कीजिए। इसके बजाय **recursive leap of faith** लीजिए:\n\n1. मान लीजिए कि function किसी भी छोटे input के लिए पहले से सही काम करता है।\n2. पूछिए: छोटे input के उस सही जवाब को देखते हुए, मैं अपने वाले का जवाब कैसे बनाऊँ?\n3. सबसे छोटे case को सीधे handle कीजिए।\n\nअगर ये तीनों सही हैं और input सचमुच छोटा होता जाता है, तो function सही है। बस इतना ही। call stack का हिसाब-किताब मशीन सँभाल लेती है।\n\nRecursion हर उस चीज़ की स्वाभाविक भाषा है जिसका आकार ख़ुद जैसा हो: किसी tree का subtree एक tree है, किसी array का sorted आधा हिस्सा एक sorted array है, किसी folder के अंदर का folder एक folder है। Trees, graphs, backtracking, divide-and-conquer sorting और dynamic programming सब यहीं से शुरू होते हैं — यही वजह है कि यह lesson Level 3 का दरवाज़ा है।"
+}

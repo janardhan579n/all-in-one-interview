@@ -1,0 +1,251 @@
+{
+  "id": "idempotency",
+  "title": "Idempotency",
+  "group": "Reliability",
+  "level": 2,
+  "estimatedMinutes": 28,
+  "summary": "An operation is idempotent when doing it twice leaves the system exactly as doing it once did. It matters because a client that never sees a response cannot tell failure from a lost reply, so it must retry — and the second attempt is the one that charges the card twice.",
+  "analogy": "Pressing the button at a pedestrian crossing. Press it once or press it eleven times; the lights change on the same schedule, which is why nobody worries about pressing it again when they are not sure the first press registered. Contrast the button on a vending machine: press it twice because the first press seemed to do nothing, and you get two chocolate bars and a bill for two. The difference is not the user's behaviour — both people pressed twice — it is whether the machine was built to notice.",
+  "explanation": {
+    "beginner": "A client sends a request and waits. The reply never arrives. From where the client is standing, two very different things look identical: the request never reached the server, or it worked perfectly and the reply was lost on the way back. The client cannot tell, so it retries — it has no better option. If the request was 'charge this card £40', that retry charges £40 again. The fix is to make the server able to recognise a repeat: the client attaches a unique id to the request, and the server records that id alongside whatever it did. When the same id shows up again, the server does not redo the work — it looks up what it did last time and replies with that.",
+    "interview": "Idempotency is a property of the operation, not of the transport. GET, PUT and DELETE are idempotent by HTTP's definition and POST is not, but the verb grants nothing: a PUT handler that appends to a list is not idempotent regardless of what the spec says. The general mechanism is the idempotency key: the client generates a unique key per logical operation (a UUID, generated once and reused across retries of that same operation), and the server persists key → result in the same transaction as the side effect. A repeat of the key returns the stored result without re-executing. The key must be written atomically with the effect — a unique constraint on the key column is the usual enforcement — or a crash between the effect and the record recreates the bug you were fixing. Concurrent duplicates are handled by making the insert of the key the first, conflicting write: the loser either blocks on the row or is told the operation is already in progress and should retry. This is also how messaging systems get exactly-once semantics without exactly-once delivery, which is not achievable: at-least-once delivery plus an idempotent consumer is effectively-once processing."
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "client",
+        "label": "Client",
+        "type": "client",
+        "x": 110,
+        "y": 300,
+        "note": "Generates one key per logical operation and reuses it on every retry of that operation. A new key per retry defeats the whole mechanism."
+      },
+      {
+        "id": "api",
+        "label": "Payments API",
+        "type": "server",
+        "x": 370,
+        "y": 300,
+        "note": "Looks the key up first. Hit: return the stored result. Miss: execute, and record the key with the result."
+      },
+      {
+        "id": "keys",
+        "label": "Key → result store",
+        "type": "cache",
+        "x": 640,
+        "y": 160,
+        "note": "Unique constraint on the key. Written in the same transaction as the effect, not after it.",
+        "why": {
+          "without": [
+            "The response to a successful charge is lost; the client retries because it cannot distinguish that from a request that never arrived",
+            "The second charge succeeds too — the customer is billed twice and the fix is a manual refund",
+            "Every timeout becomes a judgement call for the client: retry and risk a duplicate, or give up and risk losing a real order"
+          ],
+          "with": [
+            "The retry finds the key already recorded and gets the original result back — same charge id, same amount, no second charge",
+            "Clients can retry freely on any timeout, which is what makes at-least-once delivery safe",
+            "A crash mid-operation cannot leave the effect applied but unrecorded, because they commit together"
+          ],
+          "conclusion": "You cannot stop responses from being lost. You can make it not matter."
+        }
+      },
+      {
+        "id": "db",
+        "label": "Ledger DB",
+        "type": "db",
+        "x": 640,
+        "y": 440,
+        "note": "Holds the effect — the charge row. Same transaction as the key write, which is the part people skip."
+      },
+      {
+        "id": "psp",
+        "label": "Card network",
+        "type": "server",
+        "x": 900,
+        "y": 300,
+        "note": "The external side effect, which has no undo. Called only on the first execution of a key."
+      }
+    ],
+    "edges": [
+      {
+        "from": "client",
+        "to": "api",
+        "label": "1. POST /charges + Idempotency-Key"
+      },
+      {
+        "from": "api",
+        "to": "keys",
+        "label": "2. look up key"
+      },
+      {
+        "from": "api",
+        "to": "psp",
+        "label": "3. on miss: charge"
+      },
+      {
+        "from": "api",
+        "to": "db",
+        "label": "4. commit effect + key together"
+      },
+      {
+        "from": "client",
+        "to": "api",
+        "label": "5. retry, same key → stored result",
+        "dashed": true
+      }
+    ]
+  },
+  "why": {
+    "without": [
+      "A lost response is indistinguishable from a lost request, so a correct client must retry — and every retry of a non-idempotent operation is a duplicate charge, a duplicate order or a duplicate email",
+      "Message consumers see the same message more than once whenever a broker redelivers after a missed acknowledgement, so at-least-once delivery silently becomes at-least-once *effects*",
+      "Teams compensate by making clients not retry, which trades duplicates for lost operations — a worse failure, because nobody notices it"
+    ],
+    "with": [
+      "Retry becomes safe, which means timeouts stop being a correctness decision and become a latency one",
+      "At-least-once delivery plus an idempotent consumer gives effectively-once processing, without needing exactly-once delivery",
+      "Failure handling gets simpler everywhere: clients, proxies, queues and schedulers can all retry without coordination"
+    ],
+    "conclusion": "Exactly-once delivery is not achievable over an unreliable network. Exactly-once *effects* are — by making duplicates harmless rather than by preventing them."
+  },
+  "whenToUse": [
+    "Any write that costs money, sends a message, or creates something a human will see — charges, orders, transfers, notifications",
+    "Any endpoint reachable through a retrying client, proxy, gateway or job scheduler, which in practice is all of them",
+    "Consumers of at-least-once message queues, where redelivery is a guarantee of the broker rather than a bug",
+    "Operations that call an external system with no undo, so a duplicate cannot be rolled back afterwards",
+    "Workflows resumed after a crash, where you cannot tell which steps already completed"
+  ],
+  "whenNotToUse": [
+    "Operations that are already naturally idempotent — setting a status to 'cancelled', writing a full object with PUT — where a key store adds a write and a failure mode and prevents nothing",
+    "Appends whose whole purpose is that each call adds an entry: an audit log or an event stream wants every duplicate recorded, and deduplicating it destroys the record you were keeping",
+    "Pure reads, where the machinery costs a lookup per request and protects against nothing",
+    "High-volume, low-value writes — metric samples, clickstream events — where the storage and latency of a key per event outweighs a small duplicate rate you can correct in aggregation",
+    "Cases where the client genuinely cannot produce a stable key across retries: a key regenerated per attempt gives you the cost with none of the protection, and the honest fix is upstream"
+  ],
+  "tradeoffs": [
+    {
+      "option": "Client-supplied idempotency key, stored with the result",
+      "pros": [
+        "Works for any operation, including ones with external side effects the server cannot re-derive",
+        "The retry gets the *original* response back, so the client sees one consistent answer",
+        "Explicit contract: the key defines what 'the same operation' means"
+      ],
+      "cons": [
+        "Requires clients to cooperate — generate once, reuse across retries — and you cannot enforce it",
+        "A write and a lookup per request, plus storage for every key in the retention window",
+        "Getting the atomicity wrong (effect committed, key written after) silently leaves the original bug in place"
+      ]
+    },
+    {
+      "option": "Natural idempotency (absolute set instead of relative change)",
+      "pros": [
+        "No extra storage, no key lifecycle, nothing to expire",
+        "Safe under any number of duplicates and any ordering of them",
+        "Simplest thing to reason about in review"
+      ],
+      "cons": [
+        "Many operations cannot be expressed this way — 'add £10 to the balance' has no absolute form without knowing the prior state",
+        "Absolute writes lose information: two concurrent updates silently overwrite each other unless you add versioning",
+        "Tempts people to claim idempotency for handlers that merely look like a set"
+      ]
+    },
+    {
+      "option": "Deduplication window in the consumer (message id in a short-lived store)",
+      "pros": [
+        "Requires nothing from the producer beyond a stable message id",
+        "Cheap: a TTL-bounded set, often in memory or a cache tier",
+        "Catches the overwhelming majority of duplicates, which arrive within seconds"
+      ],
+      "cons": [
+        "A duplicate arriving after the window expires is processed again, so it reduces duplicates rather than eliminating them",
+        "The dedup record and the effect are usually in different stores, so a crash between them still duplicates",
+        "Sizing the window is guesswork: too short and it misses redeliveries, too long and it is a growing index"
+      ]
+    },
+    {
+      "option": "Server-derived key from request content (hashing the payload)",
+      "pros": [
+        "No client cooperation needed at all",
+        "Naturally blocks accidental double-submits of an identical form"
+      ],
+      "cons": [
+        "Cannot distinguish a retry from a genuine second identical operation — two deliberate £5 transfers become one, which is a correctness bug with real money",
+        "Any incidental difference between attempts (a timestamp, a client-generated field) produces a different hash and no protection"
+      ]
+    }
+  ],
+  "keyNumbers": [
+    {
+      "label": "Idempotency key format",
+      "value": "UUIDv4 — 122 random bits, collisions not a practical concern"
+    },
+    {
+      "label": "Typical key retention window",
+      "value": "~24 hours; long enough to outlive any sane retry schedule"
+    },
+    {
+      "label": "Storage per stored key + result",
+      "value": "~100 bytes to a few KB, depending on how much of the response you keep"
+    },
+    {
+      "label": "Added cost per write",
+      "value": "one indexed lookup plus one row in the same transaction"
+    },
+    {
+      "label": "HTTP methods idempotent by definition",
+      "value": "GET, PUT, DELETE (and HEAD, OPTIONS) — POST and PATCH are not"
+    },
+    {
+      "label": "Delivery guarantee you can actually get",
+      "value": "at-least-once delivery + idempotent consumer = effectively-once processing"
+    }
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "architecture",
+      "question": "A payments service charges the card network, commits the charge row, returns 200 — and the response is lost in transit. The client retries. The service does have an idempotency key store, but it writes the key *after* committing the charge, and it crashed between the two. What does the retry do, and what is the fix?",
+      "options": [
+        "Returns the stored result, because the charge row exists; no fix needed",
+        "Charges again, because the key was never recorded — the key must be written in the same transaction as the effect",
+        "Returns a 409 conflict, which the client should treat as success",
+        "Nothing, because the card network deduplicates charges itself"
+      ],
+      "answerIndex": 1,
+      "explanation": "The key store is only a defence if its record and the effect become durable together. Any gap between them — a crash, a failed write, a process kill — is a window where the effect happened and the system does not know it happened, which is precisely the original bug. Put the key insert and the effect in one transaction, with a unique constraint on the key doing the enforcement. Where the effect is external and cannot join your transaction, as with the card network, you write the key *before* calling out and record the outcome against it, so a repeat finds an in-progress or completed record rather than a blank."
+    },
+    {
+      "id": "q2",
+      "type": "mcq",
+      "question": "Which of these operations is idempotent as written?",
+      "options": [
+        "POST /accounts/7/balance/increment with body {\"amount\": 10}",
+        "PUT /accounts/7/status with body {\"status\": \"frozen\"}",
+        "POST /orders with body {\"item\": \"a\", \"qty\": 1}",
+        "POST /emails/send with body {\"to\": \"x@y.z\"}"
+      ],
+      "answerIndex": 1,
+      "explanation": "Setting a value to an absolute state is idempotent: applying 'status = frozen' ten times leaves the account exactly as applying it once did. Incrementing is the textbook counter-example — the result depends on how many times it ran, which is the definition of non-idempotent. Creating an order and sending an email both produce a new observable thing per call. Note that the verb is a hint, not a guarantee: a PUT handler that appended to a history list would not be idempotent either, and HTTP would not save you."
+    },
+    {
+      "id": "q3",
+      "type": "architecture",
+      "question": "A consumer reads from an at-least-once queue. The team is asked to guarantee exactly-once processing. What should they build?",
+      "options": [
+        "Switch the broker to exactly-once delivery mode, which solves it at the transport layer",
+        "Acknowledge the message before processing it, so it is never redelivered",
+        "Make the consumer idempotent — dedup on a stable message id, recorded atomically with the effect — giving effectively-once processing on top of at-least-once delivery",
+        "Process each message twice and compare the results"
+      ],
+      "answerIndex": 2,
+      "explanation": "Exactly-once *delivery* is not achievable across an unreliable network: the acknowledgement can always be the message that gets lost, and the sender must then choose between resending (at-least-once) and not resending (at-most-once). What systems actually deliver is exactly-once *semantics* — duplicates are still delivered, and the consumer makes them harmless. Acknowledging before processing does not help; it converts duplicates into lost messages, which is the worse trade because nothing alerts you. If the dedup record and the effect live in different stores, you are back to the crash window and have a dedup *window*, not a guarantee."
+    }
+  ],
+  "related": [
+    "message-queue",
+    "api",
+    "event-driven",
+    "saga",
+    "database"
+  ]
+}

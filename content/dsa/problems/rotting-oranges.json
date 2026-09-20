@@ -1,0 +1,185 @@
+{
+  "id": "rotting-oranges",
+  "title": "Rotting Oranges",
+  "patternId": "bfs",
+  "difficulty": "intermediate",
+  "tags": [
+    "grid",
+    "bfs",
+    "multi-source"
+  ],
+  "statement": "In a grid, 0 is empty, 1 is a fresh orange and 2 is rotten. Every minute, a rotten orange rots any fresh orange in the four adjacent cells. Return the number of minutes until no fresh orange remains, or -1 if that is impossible.",
+  "realWorld": "Any spreading process on a network: cache invalidation propagating through a topology, a rumour or outage cascading across dependent services, or a wildfire model. The question 'how long until everything is affected' is the same computation.",
+  "examples": [
+    {
+      "input": "[[2,1,1],[1,1,0],[0,1,1]]",
+      "output": "4",
+      "explanation": "Rot spreads outward from the single source; the far corner is reached at minute 4."
+    },
+    {
+      "input": "[[2,1,1],[0,1,1],[1,0,1]]",
+      "output": "-1",
+      "explanation": "The bottom-left orange is isolated and never rots."
+    }
+  ],
+  "constraints": [
+    "1 <= rows, cols <= 10",
+    "grid[i][j] is 0, 1 or 2"
+  ],
+  "bruteForce": {
+    "idea": "Simulate minute by minute: scan the whole grid, mark every fresh orange adjacent to a rotten one, repeat until nothing changes.",
+    "code": [
+      "int minutes = 0;",
+      "boolean changed = true;",
+      "while (changed) {",
+      "    changed = false;",
+      "    int[][] snapshot = copyOf(grid);      // must not rot twice in one minute",
+      "    for (int r = 0; r < rows; r++)",
+      "        for (int c = 0; c < cols; c++)",
+      "            if (snapshot[r][c] == 1 && hasRottenNeighbour(snapshot, r, c)) {",
+      "                grid[r][c] = 2;",
+      "                changed = true;",
+      "            }",
+      "    if (changed) minutes++;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(minutes * rows * cols)",
+      "space": "O(rows * cols) for the snapshot"
+    },
+    "whySlow": "Each minute rescans every cell, including long-dead regions. It also needs a snapshot to stop rot cascading multiple cells in a single minute — a subtle bug that catches most people writing the naive version."
+  },
+  "patternIdentification": "Rot spreads one ring per minute from every rotten cell simultaneously. Simultaneous starts plus per-ring timing is multi-source BFS: seed the queue with all sources at distance 0, and each BFS level is one minute.",
+  "optimized": {
+    "idea": "Enqueue every initially rotten cell, count the fresh ones, then run level-by-level BFS. Each level is one minute. At the end, if any fresh orange remains it was unreachable.",
+    "code": [
+      "public static int orangesRotting(int[][] grid) {",
+      "    int rows = grid.length, cols = grid[0].length;",
+      "    Queue<int[]> queue = new ArrayDeque<>();",
+      "    int fresh = 0;",
+      "",
+      "    for (int r = 0; r < rows; r++) {",
+      "        for (int c = 0; c < cols; c++) {",
+      "            if (grid[r][c] == 2) queue.offer(new int[]{r, c});   // all sources",
+      "            else if (grid[r][c] == 1) fresh++;",
+      "        }",
+      "    }",
+      "    if (fresh == 0) return 0;          // nothing to rot: zero minutes",
+      "",
+      "    final int[][] DIRS = {{1,0},{-1,0},{0,1},{0,-1}};",
+      "    int minutes = 0;",
+      "",
+      "    while (!queue.isEmpty() && fresh > 0) {",
+      "        int levelSize = queue.size();   // exactly one minute's worth",
+      "        for (int i = 0; i < levelSize; i++) {",
+      "            int[] cell = queue.poll();",
+      "            for (int[] d : DIRS) {",
+      "                int r = cell[0] + d[0], c = cell[1] + d[1];",
+      "                if (r < 0 || r >= rows || c < 0 || c >= cols) continue;",
+      "                if (grid[r][c] != 1) continue;",
+      "                grid[r][c] = 2;         // the grid itself is the visited set",
+      "                fresh--;",
+      "                queue.offer(new int[]{r, c});",
+      "            }",
+      "        }",
+      "        minutes++;",
+      "    }",
+      "    return fresh == 0 ? minutes : -1;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(rows * cols)",
+      "space": "O(rows * cols)"
+    }
+  },
+  "visualization": {
+    "engine": "gridBfs",
+    "input": {
+      "grid": [
+        [
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        [
+          1,
+          0,
+          1,
+          0,
+          1
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          1,
+          1,
+          1,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          1,
+          0
+        ]
+      ],
+      "sources": [
+        [
+          0,
+          0
+        ],
+        [
+          4,
+          4
+        ]
+      ]
+    },
+    "code": [
+      "for (int[] source : sources) {      // ALL of them, at distance 0",
+      "    queue.offer(source);            // <- the only line that differs from single-source",
+      "}",
+      "while (!queue.isEmpty()) {",
+      "    int levelSize = queue.size();   // one whole round per outer iteration",
+      "    for (int i = 0; i < levelSize; i++) {",
+      "        int[] cell = queue.poll();",
+      "        for (int[] d : DIRS) {",
+      "            int r = cell[0] + d[0], c = cell[1] + d[1];",
+      "            if (outOfBounds(r, c) || blocked[r][c] || seen[r][c]) continue;",
+      "            seen[r][c] = true;      // mark on ENQUEUE, never on poll",
+      "            queue.offer(new int[]{r, c});",
+      "        }",
+      "    }",
+      "    rounds++;",
+      "}"
+    ],
+    "title": "Multi-source BFS: every rotten orange spreads at once, one round per minute"
+  },
+  "commonMistakes": [
+    "Running a separate BFS from each rotten orange instead of seeding them all at once.",
+    "Incrementing minutes even when the last level added nothing, giving an answer one too high. Guarding the loop with `fresh > 0` avoids it.",
+    "Returning 0 vs -1 incorrectly for a grid with no fresh oranges — it is 0, not -1.",
+    "Forgetting that rot must not cascade several cells within a single minute; level-by-level BFS handles this automatically, naive simulation does not."
+  ],
+  "similar": [
+    "binary-tree-level-order",
+    "number-of-islands"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 994,
+      "slug": "rotting-oranges",
+      "title": "Rotting Oranges",
+      "url": "https://leetcode.com/problems/rotting-oranges/",
+      "premium": false
+    }
+  }
+}

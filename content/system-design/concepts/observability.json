@@ -1,0 +1,266 @@
+{
+  "id": "observability",
+  "title": "Observability",
+  "group": "Reliability",
+  "level": 2,
+  "estimatedMinutes": 30,
+  "summary": "Monitoring answers the questions you knew to ask when you built the dashboard. Observability is whether you can answer a question you did not anticipate — which is every question a real incident asks.",
+  "analogy": "The difference between a car's dashboard and a mechanic's diagnostic port. The dashboard shows speed, fuel and temperature: someone decided in advance that those three things matter, and they are cheap enough to display continuously. It is genuinely useful right up to the moment the car makes a noise nobody designed a gauge for — and then you need the port, which lets you ask questions the designer never enumerated. The catch is the same one telemetry has: the port only helps if the sensors were fitted and wired before the noise started, and fitting sensors to everything costs money and weight you carry on every journey.",
+  "explanation": {
+    "beginner": "When one program runs on one machine and it breaks, you read the error and the stack trace and you are usually done. When a single user action touches eight services across a hundred machines, there is no single place to look. So services are built to emit evidence as they run: numbers (how many requests, how long they took), text records of what happened, and a trail that follows one request as it moves from service to service. The goal is not to have a pretty dashboard. It is that when something breaks in a way nobody predicted, you can ask a new question — 'which requests from paying users in Europe were slow in the last ten minutes, and where did the time go?' — and actually get an answer, instead of guessing and redeploying.",
+    "interview": "Three signals with different cost curves. Metrics are pre-aggregated numeric time series: cheap to store and query, fixed-resolution, and bounded by cardinality — the number of stored series is the product of a metric's label value counts, so a label like user id turns one metric into millions of series and breaks the storage. Logs are per-event records: maximum detail, cost growing linearly with traffic, and near-useless unstructured, which is the argument for structured logging plus sampling. Traces follow one request across services via a propagated trace id and per-hop spans; they are the only signal that answers 'which service made this request slow', and they are usually sampled because full fidelity at high volume costs as much as the service. Analysis is percentile-based, never average-based: averages hide the tail, p99 is the experience of your heaviest users, and percentiles cannot be averaged across servers — you need the underlying distribution or a mergeable sketch. Alerting is on symptoms — SLO burn rate, error rate, latency — not on causes like CPU, because cause alerts fire when nothing is wrong and miss the failures nobody predicted. The framework worth naming: SLI (the measured quantity), SLO (the target), error budget (the allowed shortfall, and the thing that makes 'is this urgent?' a calculation rather than an argument)."
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "client",
+        "label": "Client",
+        "type": "client",
+        "x": 110,
+        "y": 300,
+        "note": "The only opinion that matters: was the request fast, and did it work?"
+      },
+      {
+        "id": "api",
+        "label": "API service",
+        "type": "server",
+        "x": 370,
+        "y": 300,
+        "note": "Starts the trace: generates a trace id, opens a span, and puts the id on every log line it writes."
+      },
+      {
+        "id": "downstream",
+        "label": "Search service",
+        "type": "server",
+        "x": 640,
+        "y": 300,
+        "note": "Receives the trace id in a header and continues it. A hop that drops the header is a hole in every trace that crosses it."
+      },
+      {
+        "id": "collector",
+        "label": "Telemetry collector",
+        "type": "monitor",
+        "x": 900,
+        "y": 160,
+        "note": "One pipeline for all three signals: aggregates metrics, batches logs, samples traces, and enforces the cardinality limits.",
+        "why": {
+          "without": [
+            "An incident starts with 'the site feels slow' and the only tools are per-service dashboards nobody built for this question",
+            "You cannot tell which of eight services in the path is responsible, so the team restarts things and watches",
+            "Mean time to *diagnosis* dominates the outage; the fix itself often takes minutes"
+          ],
+          "with": [
+            "Latency percentiles per endpoint say which endpoint, traces say which hop inside it, and logs filtered by trace id say why",
+            "A question nobody anticipated — 'only requests with a certain header are slow' — is answerable without a deploy",
+            "Alerts fire on SLO burn, so the page correlates with users actually suffering"
+          ],
+          "conclusion": "The value is not the dashboards. It is that a question you did not plan for has an answer in minutes rather than a guess."
+        }
+      },
+      {
+        "id": "backends",
+        "label": "Metrics / logs / traces",
+        "type": "storage",
+        "x": 900,
+        "y": 440,
+        "note": "Three stores with three cost curves. The bill is driven by metric cardinality, log volume and trace sampling rate."
+      }
+    ],
+    "edges": [
+      {
+        "from": "client",
+        "to": "api",
+        "label": "1. request"
+      },
+      {
+        "from": "api",
+        "to": "downstream",
+        "label": "2. call + trace id header"
+      },
+      {
+        "from": "api",
+        "to": "collector",
+        "label": "3. metrics, logs, spans",
+        "dashed": true
+      },
+      {
+        "from": "downstream",
+        "to": "collector",
+        "label": "4. spans with the same trace id",
+        "dashed": true
+      },
+      {
+        "from": "collector",
+        "to": "backends",
+        "label": "5. aggregate, sample, store"
+      }
+    ]
+  },
+  "why": {
+    "without": [
+      "A user reports slowness and nobody can say which of the services in the path is responsible, so diagnosis becomes restarting things in order and watching what changes",
+      "Dashboards report averages, so a p99 of 5 seconds hides behind a mean of 100 ms and the tail is invisible until the complaints arrive",
+      "Alerts fire on causes — CPU, memory, disk — which page the team when nothing is broken and stay silent during failures nobody predicted, so people learn to ignore them",
+      "Log lines exist but have no shared request id, so reconstructing one user's journey means grepping eight services and guessing at timestamps"
+    ],
+    "with": [
+      "A latency percentile per endpoint narrows the failure to an endpoint, a trace narrows it to a hop, and logs filtered by trace id explain that hop",
+      "New questions are answerable against data already collected, without shipping code",
+      "Alerting on SLO burn rate means a page corresponds to users actually losing something, and the error budget turns 'should we ship this?' into arithmetic"
+    ],
+    "conclusion": "Observability does not reduce how often things break. It reduces how long you spend not knowing why — which in most incidents is the majority of the outage."
+  },
+  "whenToUse": [
+    "Requests cross process boundaries, where no single stack trace contains the whole story",
+    "You operate the system in production and are on the hook for its availability, not just its correctness in tests",
+    "Failures are partial and probabilistic — some users, some regions, some request shapes — so reproducing them locally is not realistic",
+    "You have, or want, an availability or latency commitment, which requires measuring an SLI to know whether you are meeting it",
+    "Deploys are frequent enough that 'what changed?' is a question you ask weekly"
+  ],
+  "whenNotToUse": [
+    "The investment level is wrong for a single-process application: a stack trace and a log file already contain the whole causal chain, and a tracing pipeline adds operational surface without adding an answer",
+    "Sampling every trace at full fidelity on a high-volume service — you pay near-100% overhead for data almost none of which is ever read, when head sampling a small percentage plus keeping all error traces answers the same questions",
+    "Adding high-cardinality labels to metrics to make them 'more useful' — user id, request id, full URL path — which multiplies series count until the metrics backend is the thing that falls over",
+    "Building dashboards nobody has agreed to look at: an unread dashboard costs storage, query load and maintenance while producing no decisions",
+    "Instrumenting a prototype or an internal tool with a handful of users, where the cheapest observability is asking the three people who use it"
+  ],
+  "tradeoffs": [
+    {
+      "option": "Metrics",
+      "pros": [
+        "Cheap and constant-cost per series regardless of traffic — a counter at 1,000 req/s costs the same as at 10 req/s",
+        "Fast to query over long windows, so trends and capacity planning are practical",
+        "The right substrate for alerting and for SLI measurement"
+      ],
+      "cons": [
+        "Pre-aggregated: once the request is counted you cannot go back and ask about an individual one",
+        "Cardinality is the hard limit — series count is the product of label value counts, so one unbounded label is an outage of the metrics system",
+        "Tells you that p99 rose, never which request or why"
+      ]
+    },
+    {
+      "option": "Logs",
+      "pros": [
+        "Maximum detail: the actual values, the actual error, the actual line of code",
+        "Structured logs (key-value, not prose) are queryable and aggregatable after the fact",
+        "Require the least forethought — you can log something today and query it today"
+      ],
+      "cons": [
+        "Cost scales linearly with traffic, and at high volume the logging bill can rival the compute bill",
+        "Unstructured text is nearly unqueryable at scale, and reformatting it later is a migration",
+        "Sampling is necessary and makes counting from logs subtly wrong unless you account for the sample rate"
+      ]
+    },
+    {
+      "option": "Distributed traces",
+      "pros": [
+        "The only signal that attributes latency to a specific hop in a multi-service request",
+        "Shows the real call graph, including the dependency nobody remembered was in the path",
+        "One trace of a slow request often replaces an hour of cross-team speculation"
+      ],
+      "cons": [
+        "Requires context propagation through every hop — one service that drops the header breaks every trace crossing it",
+        "Almost always sampled, so the specific slow request a user complained about may simply not have been recorded",
+        "The most invasive to adopt: it needs instrumentation in code paths, not just a sidecar"
+      ]
+    },
+    {
+      "option": "Alerting on symptoms (SLO burn, error rate, latency)",
+      "pros": [
+        "Fires when users are actually affected, which keeps pages credible and acted upon",
+        "Catches failure modes nobody predicted, because it measures the outcome rather than a guessed cause",
+        "Ties directly to the error budget, so urgency is computed rather than argued"
+      ],
+      "cons": [
+        "Says that something is wrong without saying what, so it must be paired with signals that support diagnosis",
+        "Fires later than a cause alert would in the cases where the cause was genuinely predictable",
+        "Needs an agreed SLO, and agreeing one is a product conversation many teams keep postponing"
+      ]
+    },
+    {
+      "option": "Alerting on causes (CPU, memory, queue depth)",
+      "pros": [
+        "Can give early warning before users notice, for saturation problems you understand well",
+        "Straightforward to set up from infrastructure metrics with no application changes"
+      ],
+      "cons": [
+        "High CPU is frequently a healthy service working hard, so these alerts page people when nothing is wrong and teams learn to mute them",
+        "Only covers causes someone thought of; the incident that hurts is usually a cause with no threshold on it"
+      ]
+    }
+  ],
+  "keyNumbers": [
+    {
+      "label": "Average hides the tail",
+      "value": "99% at 50 ms + 1% at 5 s ⇒ mean ≈ 100 ms, p99 ≈ 5 s"
+    },
+    {
+      "label": "Fan-out amplifies the tail",
+      "value": "10 sequential services each with a 1% slow path ⇒ ~10% of requests hit at least one"
+    },
+    {
+      "label": "Metric cardinality",
+      "value": "series = product of label value counts; one user-id label on 1M users = 1M series per metric"
+    },
+    {
+      "label": "Typical head sampling for traces",
+      "value": "~1–10% of requests, plus keeping error and slow traces"
+    },
+    {
+      "label": "99.9% availability",
+      "value": "≈ 43 minutes of error budget per 30 days"
+    },
+    {
+      "label": "99.99% availability",
+      "value": "≈ 4.3 minutes per 30 days — less than most teams' time to notice"
+    }
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "architecture",
+      "question": "Your endpoint serves 99% of requests in 50 ms and 1% in 5 s. The dashboard shows average latency and it reads about 100 ms, which looks fine. Users are complaining. What is wrong with the dashboard, and what should replace the number?",
+      "options": [
+        "Nothing — 100 ms is genuinely fine and the complaints are unrelated",
+        "The average is diluted by the fast majority; show p99 (≈5 s here), because that 1% is a real slice of users and the heaviest users hit it most often",
+        "The average should be computed per minute instead of per hour",
+        "Averages are fine; the fix is to average the p99s across servers instead"
+      ],
+      "answerIndex": 1,
+      "explanation": "0.99 × 50 ms + 0.01 × 5,000 ms ≈ 100 ms. The mean doubled and the dashboard still looks healthy, while one request in a hundred takes five seconds. A user who makes 100 requests in a session almost certainly hits one. Two further traps: percentiles cannot be averaged across servers — the mean of two p99s is not the p99 of the combined traffic, so you need the distribution or a mergeable sketch — and a p99 computed over an hour can look calm while a five-minute burst was catastrophic."
+    },
+    {
+      "id": "q2",
+      "type": "mcq",
+      "question": "A team adds a `user_id` label to their request-count metric so they can see per-user traffic. They have about a million monthly users. What happens?",
+      "options": [
+        "Query latency improves because the data is more specific",
+        "Series count multiplies by the number of user ids — roughly a million series for that one metric — and the metrics backend's memory and index blow up; per-user detail belongs in logs or traces instead",
+        "Nothing, because metrics are compressed",
+        "The metric becomes a log, which is fine"
+      ],
+      "answerIndex": 1,
+      "explanation": "A metrics backend stores one time series per unique combination of label values, so cardinality is the product of the label value counts. An unbounded label — user id, request id, full URL, email — turns one metric into as many series as there are distinct values, and the ingestion and index cost is roughly linear in that. The rule of thumb: metric labels must have a small, bounded set of values you could write on a whiteboard (status code, region, endpoint name). Per-entity detail is what logs and traces exist for."
+    },
+    {
+      "id": "q3",
+      "type": "architecture",
+      "question": "During an incident, checkout p99 has tripled. The request passes through six services. Every service's own dashboard looks normal, every host's CPU is unremarkable, and no alert fired except a customer complaint. Which signal will identify where the time is going, and which alerting change would have caught this?",
+      "options": [
+        "More metrics per service; alert on CPU above 80%",
+        "Distributed traces with a propagated trace id, which attribute latency per hop; and alert on the symptom — SLO burn rate on checkout latency — rather than on causes",
+        "Increase log verbosity on all six services and grep by timestamp",
+        "Add a health-check endpoint to each service and alert when one fails"
+      ],
+      "answerIndex": 1,
+      "explanation": "Each service looking 'normal' is exactly the case metrics cannot resolve: six services each contributing a modest extra delay produce a large end-to-end regression with no local outlier. Only a trace reconstructs the one request's path and shows where the milliseconds accumulated. On alerting: CPU is a cause, and this failure had no CPU signature — which is the general problem with cause alerts. An SLO on the thing users experience (checkout latency) with a burn-rate alert fires whenever users are losing something, regardless of which unanticipated mechanism caused it. Grepping six log streams by timestamp is what people do when they have no correlation id, and it is why correlation ids exist."
+    }
+  ],
+  "related": [
+    "circuit-breaker",
+    "microservices",
+    "api-gateway",
+    "message-queue",
+    "load-balancer"
+  ]
+}

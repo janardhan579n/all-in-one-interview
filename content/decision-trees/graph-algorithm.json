@@ -1,0 +1,83 @@
+{
+  "id": "graph-algorithm",
+  "title": "Which graph algorithm?",
+  "start": "n1",
+  "nodes": {
+    "n1": {
+      "type": "question",
+      "text": "What are you actually asking of the graph?",
+      "options": [
+        {
+          "label": "Shortest path",
+          "next": "n2"
+        },
+        {
+          "label": "Is it reachable / how many groups",
+          "next": "r-dfs"
+        },
+        {
+          "label": "A valid ordering of dependencies",
+          "next": "r-topo"
+        },
+        {
+          "label": "All paths satisfying a constraint",
+          "next": "r-backtrack"
+        }
+      ]
+    },
+    "n2": {
+      "type": "question",
+      "text": "Do the edges have different weights?",
+      "options": [
+        {
+          "label": "No — every edge costs the same",
+          "next": "r-bfs"
+        },
+        {
+          "label": "Yes, non-negative weights",
+          "next": "r-dijkstra"
+        },
+        {
+          "label": "Yes, and some are negative",
+          "next": "r-bellman"
+        }
+      ]
+    },
+    "r-bfs": {
+      "type": "result",
+      "text": "BFS",
+      "detail": "FIFO queue guarantees the first time you reach a node is by the fewest edges. O(V+E).",
+      "lessonId": "bfs"
+    },
+    "r-dijkstra": {
+      "type": "result",
+      "text": "Dijkstra",
+      "detail": "BFS with a priority queue ordered by cumulative cost. O((V+E) log V). Requires non-negative weights.",
+      "lessonId": "bfs"
+    },
+    "r-bellman": {
+      "type": "result",
+      "text": "Bellman-Ford",
+      "detail": "Relax every edge V-1 times; O(V·E). Handles negative weights and detects negative cycles.",
+      "lessonId": "graphs"
+    },
+    "r-dfs": {
+      "type": "result",
+      "text": "DFS (or BFS)",
+      "detail": "Either works for reachability. Start a fresh traversal from each unvisited node; the number of starts is the number of components.",
+      "lessonId": "dfs"
+    },
+    "r-topo": {
+      "type": "result",
+      "text": "Topological sort",
+      "detail": "Kahn's algorithm with in-degrees, or DFS recording nodes as they finish and reversing. Both detect cycles, which mean no valid ordering exists.",
+      "lessonId": "dfs"
+    },
+    "r-backtrack": {
+      "type": "result",
+      "text": "DFS with backtracking",
+      "detail": "Explore, record, undo. Prune as early as possible — enumeration without pruning is exponential.",
+      "lessonId": "backtracking"
+    }
+  }
+}

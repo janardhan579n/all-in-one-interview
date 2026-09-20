@@ -1,0 +1,10 @@
+{
+  "id": "two-pointers",
+  "title": "Two Pointers (टू पॉइंटर्स)",
+  "summary": "Data में एक के बजाय दो indices चलाइए, और data की किसी ख़ासियत (आमतौर पर sortedness) का इस्तेमाल करके तय कीजिए कि किसे आगे बढ़ाना है — इससे nested loop की जगह एक ही pass आ जाता है।",
+  "analogy": {
+    "beginner": "आप और आपका दोस्त दाम के हिसाब से लगी किताबों की shelf के दो सिरों पर खड़े हैं, और ऐसी दो किताबें ढूँढ रहे हैं जिनका दाम मिलाकर ठीक ₹500 हो। आप सबसे सस्ती और सबसे महँगी देखते हैं। दोनों मिलाकर बहुत महँगी? आपका दोस्त किसी सस्ती किताब पर चला जाता है। बहुत सस्ती? आप ऊपर बढ़ते हैं। आप दोनों में से कोई कभी पीछे नहीं चलता, इसलिए आप दोनों मिलकर shelf को सिर्फ़ एक बार पार करते हैं — बजाय इसके कि हर किताब की हर दूसरी किताब से तुलना करें।",
+    "interview": "किसी sequence पर दो indices रखिए और ordering या monotonicity की किसी ख़ासियत से ऐसा नियम निकालिए कि हर comparison candidate pairs की एक पूरी श्रेणी को ख़ारिज कर दे। चूँकि हर pointer एक ही दिशा में monotonically चलता है, कुल movement O(n) होता है।"
+  },
+  "intuition": "Pair वाली problems का brute force है 'हर i के साथ हर j' — O(n²)। Two pointers वही है जो आपको तब मिलता है जब data आपको इतनी जानकारी दे देता है कि एक ही comparison से बहुत सारे pairs ख़ारिज हो जाएँ।\n\nकिसी **sorted** array पर दोनों सिरों पर pointers रखकर: अगर `a[left] + a[right]` बहुत बड़ा है, तो `a[right]` के साथ left से आगे की *कोई भी* चीज़ जोड़ने पर भी वह बहुत बड़ा ही रहेगा, क्योंकि left से आगे सब कुछ ≥ a[left] है। इसलिए `right` को अंदर की ओर बढ़ाना एक ही कदम में comparison table का पूरा column फेंक देता है। n का factor वहीं जाता है।\n\nतीन आकार होते हैं, और असली कौशल यह पहचानना है कि आपको कौन-सा चाहिए:\n\n1. **दोनों सिरों से** (एक-दूसरे की ओर आते हुए) — sorted input, pair/triplet sums, palindromes, container वाली problems।\n2. **एक ही दिशा में** (fast और slow) — जगह पर ही deduplication, elements हटाना, partitioning। एक pointer पढ़ता है, एक लिखता है।\n3. **दो sequences** — sorted arrays merge करना, subsequences जाँचना, sorted lists का intersection निकालना।\n\nSliding window आकार 2 का एक ख़ास मामला है, जहाँ pointers के बीच का हिस्सा ही वह चीज़ है जिसकी आपको परवाह है।"
+}

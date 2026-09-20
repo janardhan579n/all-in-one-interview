@@ -1,0 +1,225 @@
+{
+  "id": "replication",
+  "title": "Replication",
+  "group": "Data",
+  "level": 2,
+  "estimatedMinutes": 28,
+  "summary": "Keep more than one copy of the data — for surviving failures, for serving more reads, and for serving them closer to users.",
+  "analogy": "A shop keeping its ledger in triplicate, in three different buildings. If one burns down, business continues. Clerks can read from whichever copy is nearest. But there is a catch: a sale written in the main ledger takes a moment to appear in the copies, so for a few seconds a clerk reading a copy may tell a customer the item is still in stock.",
+  "explanation": {
+    "beginner": "Running one database means that when it dies, everything stops, and all reads compete for one machine. Replication keeps synchronised copies: one primary takes the writes, and replicas receive a stream of those changes. Reads can be spread across the replicas, and if the primary fails a replica is promoted. The trade-off is replication lag — a replica is always a little behind, so a user can write something and then not see it if their next read goes to a lagging replica.",
+    "interview": "Single-leader replication is the common case: all writes go to the leader, which streams its log to followers. Synchronous replication guarantees durability at the cost of write latency bounded by the slowest replica; asynchronous is fast but can lose recently acknowledged writes on failover. Replication lag produces read-your-writes anomalies, mitigated by routing a user's reads to the leader for a period after their write, or by tracking a log position per session. Multi-leader and leaderless designs relax coordination further and require conflict resolution."
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "app",
+        "label": "App servers",
+        "type": "server",
+        "x": 130,
+        "y": 300
+      },
+      {
+        "id": "primary",
+        "label": "Primary\\n(all writes)",
+        "type": "db",
+        "x": 460,
+        "y": 300,
+        "note": "Single writer keeps ordering simple. It is also the write-capacity ceiling — which is what sharding later addresses.",
+        "why": {
+          "without": [
+            "One copy: its failure is total data unavailability, and possibly data loss"
+          ],
+          "with": [
+            "A replica can be promoted in seconds to minutes",
+            "Reads spread across copies"
+          ],
+          "conclusion": "Replication buys availability and read capacity — not write capacity."
+        }
+      },
+      {
+        "id": "r1",
+        "label": "Replica 1",
+        "type": "replica",
+        "x": 800,
+        "y": 180,
+        "note": "Serves reads. Typically milliseconds behind, but can fall far behind under write bursts."
+      },
+      {
+        "id": "r2",
+        "label": "Replica 2",
+        "type": "replica",
+        "x": 800,
+        "y": 300,
+        "note": "Also a standby for promotion on failover."
+      },
+      {
+        "id": "r3",
+        "label": "Replica 3 (other region)",
+        "type": "replica",
+        "x": 800,
+        "y": 430,
+        "note": "Serves local reads with low latency and survives a regional outage."
+      }
+    ],
+    "edges": [
+      {
+        "from": "app",
+        "to": "primary",
+        "label": "writes"
+      },
+      {
+        "from": "primary",
+        "to": "r1",
+        "label": "replication log"
+      },
+      {
+        "from": "primary",
+        "to": "r2",
+        "label": "replication log"
+      },
+      {
+        "from": "primary",
+        "to": "r3",
+        "label": "async",
+        "dashed": true
+      },
+      {
+        "from": "app",
+        "to": "r1",
+        "label": "reads",
+        "dashed": true
+      }
+    ]
+  },
+  "why": {
+    "without": [
+      "One machine's failure loses availability and possibly data",
+      "All reads contend with all writes on the same hardware",
+      "Distant users pay the full round trip to one region"
+    ],
+    "with": [
+      "Failover in seconds instead of a restore from backup in hours",
+      "Read capacity grows by adding replicas",
+      "Regional replicas cut read latency and survive a region loss"
+    ],
+    "conclusion": "Replication is how you get availability and read scale. It does nothing for write scale — that is what sharding is for."
+  },
+  "whenToUse": [
+    "Read-heavy workloads",
+    "You need failover, not a backup restore",
+    "Users are spread across regions",
+    "Running analytics without disturbing production traffic"
+  ],
+  "whenNotToUse": [
+    "Write-heavy workloads — every replica applies every write, so this adds no write capacity",
+    "Every read must be perfectly current and you cannot route those to the primary",
+    "The complexity is not yet justified — a single well-provisioned instance with good backups is a legitimate starting point"
+  ],
+  "tradeoffs": [
+    {
+      "option": "Synchronous replication",
+      "pros": [
+        "No data loss on failover — the write is on at least two machines before it is acknowledged"
+      ],
+      "cons": [
+        "Write latency is bounded by the slowest replica",
+        "If a replica stalls, writes stall (unless you fall back to async)"
+      ]
+    },
+    {
+      "option": "Asynchronous replication",
+      "pros": [
+        "Fast writes, unaffected by replica health",
+        "Works across regions"
+      ],
+      "cons": [
+        "Recently acknowledged writes can be lost if the primary dies before shipping them",
+        "Replication lag is visible to users"
+      ]
+    },
+    {
+      "option": "Semi-synchronous (one sync replica, rest async)",
+      "pros": [
+        "Durability of two copies without waiting for all"
+      ],
+      "cons": [
+        "More moving parts to reason about during an incident"
+      ]
+    },
+    {
+      "option": "Multi-leader / leaderless",
+      "pros": [
+        "Writes accepted in multiple regions; survives partitions"
+      ],
+      "cons": [
+        "Write conflicts are now your problem — last-write-wins silently loses data, and CRDTs or application merges are real work"
+      ]
+    }
+  ],
+  "keyNumbers": [
+    {
+      "label": "Same-region replication lag",
+      "value": "Typically < 100 ms"
+    },
+    {
+      "label": "Cross-region lag",
+      "value": "Hundreds of ms, seconds under load"
+    },
+    {
+      "label": "Automated failover",
+      "value": "Seconds to a few minutes"
+    },
+    {
+      "label": "RPO / RTO",
+      "value": "How much data you can lose / how long you can be down — decide these numbers before the incident"
+    }
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "architecture",
+      "question": "A user updates their profile then immediately reloads the page and sees the old values. What is happening and how do you fix it?",
+      "options": [
+        "The cache is stale; clear it",
+        "Replication lag — the read went to a replica that had not received the write yet. Route a user's reads to the primary for a short window after they write",
+        "The database is corrupted",
+        "The write failed silently"
+      ],
+      "answerIndex": 1,
+      "explanation": "This is the read-your-writes anomaly. Standard fixes: sticky-to-primary after a write, or tracking the user's last log position and requiring a replica at least that current."
+    },
+    {
+      "id": "q2",
+      "type": "architecture",
+      "question": "Your write throughput is saturated. Will adding read replicas help?",
+      "options": [
+        "Yes, it spreads the load",
+        "No — every replica must apply every write, so replication adds read capacity only. Write scaling needs sharding",
+        "Yes, if you add enough",
+        "Only with synchronous replication"
+      ],
+      "answerIndex": 1,
+      "explanation": "Replicas duplicate the write workload rather than dividing it. Partitioning the data across independent primaries is the only way to scale writes horizontally."
+    },
+    {
+      "id": "q3",
+      "type": "mcq",
+      "question": "What is the risk of asynchronous replication during a failover?",
+      "options": [
+        "None",
+        "Writes acknowledged by the old primary but not yet shipped to the replica are lost when the replica is promoted",
+        "Reads become slower",
+        "The schema diverges"
+      ],
+      "answerIndex": 1,
+      "explanation": "This is your RPO, and it must be an explicit decision. Synchronous replication trades write latency for a zero-data-loss guarantee."
+    }
+  ],
+  "related": [
+    "sharding",
+    "database",
+    "cap-theorem",
+    "cache"
+  ]
+}

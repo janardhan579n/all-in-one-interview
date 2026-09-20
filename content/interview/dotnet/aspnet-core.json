@@ -1,0 +1,231 @@
+{
+  "id": "dotnet-aspnet-core",
+  "trackId": "dotnet",
+  "topic": "aspnet-core",
+  "title": "ASP.NET Core",
+  "summary": "A pipeline where order is the behaviour, a container where lifetime is the bug, and the options you bound once and never reloaded.",
+  "questions": [
+    {
+      "id": "dac-01",
+      "level": "junior",
+      "type": "concept",
+      "question": "Explain the middleware pipeline. Why does the order of the Use* calls matter so much?",
+      "answer": "Every request goes through a chain of components you build in `Program.cs`. Each one gets the `HttpContext` and a `next` delegate; it can do work on the way in, call `next`, do work on the way out, or *not* call `next` and short-circuit the request. Registration order is execution order inbound, and exactly the reverse outbound — it is a nested set of function calls, not a list of handlers.\n\n```csharp\napp.Use(async (ctx, next) =>\n{\n    var sw = Stopwatch.StartNew();       // inbound\n    await next(ctx);                     // everything downstream\n    log.LogInformation(\"{ms}ms\", sw.ElapsedMilliseconds);  // outbound\n});\n```\n\nOrder matters because each component depends on what the ones before it have already done.\n\n- `UseExceptionHandler` has to be first, or it cannot catch what happens after it.\n- `UseStaticFiles` goes before routing so a CSS file short-circuits without touching auth or MVC.\n- `UseAuthentication` must run before `UseAuthorization` — authorization decides using an identity that authentication has to have already established. Put them the wrong way round and every request is anonymous.\n- `UseCors` sits after `UseRouting` and before authorization, because a rejected preflight must not get as far as an auth challenge.\n- Endpoint execution is last, because it is the terminal step.\n\nThe outbound half is where the subtle bug lives: once any middleware has written to the body, `Response.HasStarted` is true and headers are frozen. Middleware that tries to set a header after `await next(...)` throws or silently does nothing.\n\nJava engineers: this is the servlet filter chain, with `next` in place of `chain.doFilter`.",
+      "keyPoints": [
+        "Registration order is inbound order and the exact reverse outbound — nested calls, not a list",
+        "Not calling next short-circuits: that is how static files and auth challenges work",
+        "Authentication before authorization, exception handler first, endpoints last",
+        "CORS after routing and before authorization so preflights are answered, not challenged",
+        "Once the response has started (Response.HasStarted) headers can no longer be changed"
+      ],
+      "followUps": [
+        {
+          "q": "What is the difference between app.Use and app.Run?",
+          "a": "`Use` takes a `next` and is expected to pass the request along; `Run` is terminal — it has no `next` and ends the pipeline. `app.Map` branches on a path prefix and gives that branch its own pipeline. If you write `app.Run` in the middle of your configuration everything after it is dead code, which is an easy mistake to make while debugging."
+        },
+        {
+          "q": "Why is middleware constructor injection dangerous?",
+          "a": "Conventional middleware is instantiated **once**, at startup, so anything injected through its constructor is effectively a singleton. Injecting a scoped service there is a captive dependency. Scoped services belong as parameters on `InvokeAsync(HttpContext, IMyScopedService)`, which the framework resolves per request."
+        }
+      ],
+      "redFlags": [
+        "Describing the pipeline as a list of independent handlers with no ordering rules",
+        "Putting UseAuthorization before UseAuthentication",
+        "Not knowing that headers cannot be set after the response has started"
+      ],
+      "related": [
+        "java-rest-api",
+        "http"
+      ]
+    },
+    {
+      "id": "dac-02",
+      "level": "junior",
+      "type": "concept",
+      "question": "How does model binding work, and where does validation actually happen?",
+      "answer": "Model binding is the step that turns an HTTP request into the typed parameters of your action. For each parameter the framework picks a source — route values, query string, form fields, and for complex types the request body — and converts the raw strings into `int`, `DateTime`, an enum, a DTO. Anything it cannot convert becomes a `ModelState` error rather than an exception, so the action is still reachable with a half-populated model.\n\n`[ApiController]` changes the defaults in two useful ways: complex types are inferred to come `[FromBody]` and simple types from the route or query, and an invalid `ModelState` is turned into an automatic `400` with a `ProblemDetails` body before your action runs. You can still be explicit with `[FromRoute]`, `[FromQuery]`, `[FromHeader]`, `[FromForm]`, `[FromServices]`.\n\nValidation runs immediately after binding, driven by DataAnnotations (`[Required]`, `[Range]`, `[EmailAddress]`) plus `IValidatableObject` for rules that span several properties. With nullable reference types enabled, a non-nullable `string` property is treated as implicitly required — which surprises people who never wrote `[Required]`.\n\nTwo things worth saying out loud. First, minimal APIs in .NET 8 do **not** run DataAnnotations for you; you add an endpoint filter or something like FluentValidation. Second, binding straight onto your EF entity is an over-posting hole: a caller can set `IsAdmin` or `Balance` simply by including it in the JSON. Bind to a request DTO that contains only the fields a client is allowed to send.\n\nJava engineers: this is `@RequestBody`/`@PathVariable` plus `@Valid`, except invalid input lands in `ModelState` instead of throwing.",
+      "keyPoints": [
+        "Binding picks a source per parameter: route, query, form, header, or body for complex types",
+        "[ApiController] infers sources and auto-returns 400 ProblemDetails on invalid ModelState",
+        "Conversion failures become ModelState errors, not exceptions — the model can be partly populated",
+        "Nullable reference types make non-nullable properties implicitly required",
+        "Bind to DTOs, not entities, or clients can over-post fields they should not control"
+      ],
+      "followUps": [
+        {
+          "q": "Minimal APIs skip DataAnnotations. So what do you do?",
+          "a": "Validate explicitly. Either an `IEndpointFilter` that runs `Validator.TryValidateObject` (or FluentValidation) and returns `TypedResults.ValidationProblem` on failure, applied to a `MapGroup` so every endpoint in the group gets it, or validate inside the handler and return the problem yourself. What you should not do is assume the `[Required]` attributes on your DTO are doing anything."
+        },
+        {
+          "q": "Why can you only bind one parameter from the body?",
+          "a": "The request body is a forward-only stream and it is read once. Two `[FromBody]` parameters would need it read twice, so the framework rejects it at startup. If you genuinely need several things, make them properties of one request object — which is better API design anyway."
+        }
+      ],
+      "redFlags": [
+        "Binding directly onto EF Core entities in a public API",
+        "Assuming attribute validation runs in minimal APIs",
+        "Not checking ModelState in a controller that lacks [ApiController]"
+      ],
+      "related": [
+        "java-rest-api",
+        "api"
+      ]
+    },
+    {
+      "id": "dac-03",
+      "level": "mid",
+      "type": "concept",
+      "question": "Singleton, scoped and transient — what does each mean, and what is a captive dependency?",
+      "answer": "**Transient** gives you a new instance every time it is resolved, including twice within the same request. **Scoped** gives you one instance per scope, and ASP.NET Core creates a scope per request, so it means one per request. **Singleton** gives you one instance for the lifetime of the application, created from the root provider.\n\nPick by state: stateless helpers can be transient, anything holding per-request state (a `DbContext`, a unit of work, the current user's context) must be scoped, and anything expensive and genuinely shared (a cache, a client factory, an in-memory index) is a singleton — and therefore must be thread-safe, because many requests will be inside it at once.\n\nA **captive dependency** is a longer-lived service holding a reference to a shorter-lived one. A singleton that injects a scoped `DbContext` captures the very first request's instance and keeps it forever: after that request ends the context is disposed, and every later use either throws `ObjectDisposedException` or serves another request's tracked entities. The shorter lifetime has been *captured* by the longer one and effectively promoted to singleton.\n\nASP.NET Core catches most of this for you — scope validation is on by default in the **Development** environment, so `builder.Build()` throws \"Cannot consume scoped service from singleton\". It is off in Production. Turn it on everywhere:\n\n```csharp\nbuilder.Host.UseDefaultServiceProvider(o =>\n{\n    o.ValidateScopes = true;\n    o.ValidateOnBuild = true;\n});\n```\n\nJava engineers: Spring's default singleton beans get away with injecting request-scoped ones because Spring injects a *proxy*. .NET injects the real instance, so the bug is real.",
+      "keyPoints": [
+        "Transient = per resolve, scoped = per request, singleton = per application",
+        "Singletons must be thread-safe; scoped is the right home for per-request state",
+        "A captive dependency promotes a short lifetime to a long one by holding a reference",
+        "Scope validation is on in Development only — enable ValidateScopes and ValidateOnBuild everywhere",
+        "Spring hides this with scoped proxies; .NET does not, so the failure is genuine"
+      ],
+      "followUps": [
+        {
+          "q": "Who disposes services registered in the container?",
+          "a": "The container disposes any `IDisposable` it created, when the owning scope ends — scoped and transient services resolved inside a request scope go at the end of the request, singletons at shutdown. The trap is a **transient disposable resolved from the root provider**: nothing ends until the process does, so those instances accumulate for the lifetime of the app. That is a slow leak that only shows in long-running services."
+        },
+        {
+          "q": "How does a singleton legitimately use a scoped service?",
+          "a": "It creates its own scope. Inject `IServiceScopeFactory`, and per unit of work do `await using var scope = _scopeFactory.CreateAsyncScope();` then resolve from `scope.ServiceProvider`. This is the standard shape inside a `BackgroundService`, which is itself a singleton. For EF specifically, `IDbContextFactory<T>` exists for exactly this."
+        }
+      ],
+      "redFlags": [
+        "Registering DbContext as a singleton to \"avoid the overhead\"",
+        "Not knowing that a scope is per request in ASP.NET Core",
+        "Injecting IServiceProvider everywhere as a service locator to dodge lifetime rules"
+      ],
+      "related": [
+        "java-spring-core"
+      ]
+    },
+    {
+      "id": "dac-04",
+      "level": "mid",
+      "type": "tradeoff",
+      "question": "Filters or middleware? How do you decide where a cross-cutting concern belongs?",
+      "answer": "They are the same idea at two different altitudes, and the deciding question is: *does this concern need to know about the endpoint?*\n\nMiddleware sits in the raw HTTP pipeline. It sees every request, including static files, health checks and requests that never reach MVC at all. All it has is `HttpContext` — no model, no action arguments, no `ModelState`, and before `UseRouting` not even a selected endpoint. That breadth is the point. Correlation IDs, request logging, exception handling, response compression, tenant resolution from the host header, security headers — these apply to everything and belong in middleware.\n\nFilters run inside endpoint execution and know exactly what is executing. The MVC pipeline is ordered: authorization, resource, model binding, action, exception, result. An action filter can inspect and rewrite bound arguments before the action runs and the returned `IActionResult` afterwards; a result filter wraps serialization. Anything expressed in terms of *this action* — an attribute-driven permission check, validating a bound model, shaping a response envelope, action-level caching — is a filter, and it comes with per-action, per-controller and global application for free.\n\nThe important asymmetry is exception handling. A middleware `try`/`catch` catches everything, including failures in other middleware and in serialization. An exception filter only catches inside action execution. So global error handling is middleware — in .NET 8, `IExceptionHandler` with `AddExceptionHandler` and `AddProblemDetails` — even if you also have a filter for domain-specific translation.\n\nMinimal APIs have no MVC filters; the equivalent is `IEndpointFilter`, which you can apply to a whole `MapGroup`.\n\nJava engineers: middleware is a servlet `Filter`, filters are Spring's `HandlerInterceptor` and `@ControllerAdvice`.",
+      "keyPoints": [
+        "Middleware sees every request but only HttpContext; filters see the action, its arguments and its result",
+        "Endpoint-agnostic concerns (logging, correlation, security headers, errors) are middleware",
+        "Endpoint-aware concerns (validation, permissions by attribute, response shaping) are filters",
+        "Filter order is authorization → resource → action → exception → result",
+        "Exception filters miss anything outside action execution — global error handling stays middleware"
+      ],
+      "followUps": [
+        {
+          "q": "How do you inject services into a filter attribute?",
+          "a": "Attributes cannot take constructor arguments that are not compile-time constants, so you either separate the marker attribute from the implementation with `[ServiceFilter(typeof(MyFilter))]` / `[TypeFilter(typeof(MyFilter))]`, or implement `IFilterFactory` and resolve from the provider in `CreateInstance`. `[ServiceFilter]` requires the filter to be registered in DI; `[TypeFilter]` does not and activates it with its own arguments."
+        },
+        {
+          "q": "Where does authorization actually run?",
+          "a": "Both places. `UseAuthorization` middleware evaluates the policy attached to the selected endpoint's metadata, which is why it must come after `UseRouting`. Authorization filters are the MVC-level extension point layered on top. In modern code you write policies and requirements and let the middleware do the work rather than hand-rolling a filter."
+        }
+      ],
+      "redFlags": [
+        "Putting global exception handling in an exception filter and being surprised by uncaught failures",
+        "Writing middleware that needs the bound model",
+        "Not knowing filters exist and reimplementing them as middleware with path checks"
+      ]
+    },
+    {
+      "id": "dac-05",
+      "level": "mid",
+      "type": "tradeoff",
+      "question": "Minimal APIs or controllers for a new service in .NET 8?",
+      "answer": "Minimal APIs are not a beginner's version of MVC — they are a thinner host with fewer layers between the request and your delegate. There is no controller activation, no MVC filter pipeline unless you add endpoint filters, and less reflection at startup, so they trim and AOT-compile well and start faster. `MapGroup`, `TypedResults`, `[AsParameters]` and `IEndpointFilter` have closed most of the ergonomic gap, and route groups give you shared prefixes, filters and metadata without a class per endpoint.\n\nControllers earn their place on large surfaces. Conventions mean a new endpoint follows the existing shape without a decision; `[ApiController]` brings automatic validation responses and binding-source inference; `ModelState`, action filters, `[ControllerName]`-based conventions and application parts are all things minimal APIs simply do not have. If you need server-rendered views, they are not optional.\n\nWhat is genuinely missing from minimal APIs in .NET 8 is validation. There is no `ModelState` and DataAnnotations are not evaluated, so `[Required]` on your DTO does nothing until you add a filter. That single gap is the most common reason a team regrets the choice.\n\nThe honest performance line: the per-request saving is real but small, and for an I/O-bound service talking to a database it is noise next to the query. It matters for very high request rates, for cold start, and for native AOT, where controllers are not supported anyway.\n\nPractical rule: small services, internal APIs, functions-style endpoints and anything AOT — minimal. Large, long-lived, many-developer APIs, or anything that needs views — controllers. The one failure mode to avoid either way is a thousand-line `Program.cs`; split endpoints into extension methods per feature from day one.",
+      "keyPoints": [
+        "Minimal APIs skip controller activation and the MVC filter pipeline — thinner, AOT- and trim-friendly",
+        "Controllers give conventions, [ApiController] behaviours, ModelState, filters and views",
+        "In .NET 8 minimal APIs do not run DataAnnotations — you must add validation yourself",
+        "The throughput difference is real but small and irrelevant for I/O-bound services",
+        "Use MapGroup and per-feature extension methods, or Program.cs becomes the problem"
+      ],
+      "followUps": [
+        {
+          "q": "Can you mix both in one application?",
+          "a": "Yes, and it is common. `AddControllers` and `MapControllers` alongside `MapGet`/`MapPost` coexist fine — routing is shared and endpoint metadata works for both. Teams often keep a controller-based core API and use minimal endpoints for health, webhooks and small internal surfaces. The cost is two sets of conventions for cross-cutting concerns, so pick one place for each concern."
+        },
+        {
+          "q": "Why TypedResults instead of Results?",
+          "a": "`TypedResults.Ok(dto)` returns a concrete type rather than `IResult`, so the compiler knows the status codes and OpenAPI metadata is inferred without `[ProducesResponseType]`. It is also testable: you can assert on the returned type and its `Value` directly instead of casting. Use `Results<Ok<T>, NotFound>` as the return type when a handler has more than one outcome."
+        }
+      ],
+      "redFlags": [
+        "Choosing minimal APIs purely for a benchmark number",
+        "Assuming DataAnnotations validation works in minimal APIs",
+        "Treating minimal APIs as \"not for real applications\""
+      ],
+      "related": [
+        "java-rest-api"
+      ]
+    },
+    {
+      "id": "dac-06",
+      "level": "senior",
+      "type": "concept",
+      "question": "IOptions, IOptionsSnapshot and IOptionsMonitor — which do you inject, and why does it matter?",
+      "answer": "All three read the same bound configuration object. They differ in *lifetime and reload behaviour*, and choosing the wrong one produces either a startup crash or a setting that never changes.\n\n`IOptions<T>` is registered as a **singleton**. The value is computed once on first access and never re-read. It is the right choice for settings that cannot meaningfully change at runtime, and it is the only one of the three a singleton can safely inject.\n\n`IOptionsSnapshot<T>` is **scoped**: recomputed once per request, so a mid-flight configuration change cannot make the value shift between two reads in the same request. It also supports named options. Because it is scoped, injecting it into a singleton is a captive dependency and throws in Development.\n\n`IOptionsMonitor<T>` is a **singleton** whose `CurrentValue` is re-read when the underlying change token fires, plus an `OnChange` callback. It is what a singleton or a `BackgroundService` uses to pick up changes. Two cautions: read `CurrentValue` at the point of use rather than caching it in a field, or you have thrown away the reload; and `OnChange` frequently fires more than once for a single file save, because that is how file-system watchers behave — make the handler idempotent.\n\nValidation is the other half. Bind through `AddOptions<T>().Bind(section).ValidateDataAnnotations().ValidateOnStart()` so a missing connection string fails the process at boot instead of throwing on the first request that needs it. `IValidateOptions<T>` covers rules attributes cannot express.\n\nJava engineers: `IOptions` is `@ConfigurationProperties`, and `IOptionsMonitor` is roughly what `@RefreshScope` gives you in Spring Cloud.",
+      "keyPoints": [
+        "IOptions is a singleton read once; IOptionsSnapshot is scoped and per-request; IOptionsMonitor is a singleton that re-reads on change",
+        "IOptionsSnapshot in a singleton is a captive dependency and throws under scope validation",
+        "Cache IOptionsMonitor.CurrentValue in a field and you have silently disabled reload",
+        "OnChange can fire twice for one edit — the handler must be idempotent",
+        "ValidateDataAnnotations().ValidateOnStart() turns a bad config into a boot failure, not a runtime one"
+      ],
+      "followUps": [
+        {
+          "q": "Is reloading configuration something you actually want in production?",
+          "a": "Often not. A value that can change under a running request makes behaviour non-reproducible and log correlation harder, and most deployment models make a restart cheap. Reload earns its place for operational switches — log levels, feature flags, sampling rates — where you need the change *now*. For anything the code treats as invariant, `IOptions` plus a redeploy is the simpler, more debuggable choice."
+        },
+        {
+          "q": "Why inject IOptions<T> instead of the settings class directly?",
+          "a": "You can register the bound `T` directly, and for a simple immutable setting that is fine and removes a layer of indirection. What you give up is named options, reload, and validation wiring. The stronger argument is consistency: once part of the codebase takes `IOptionsMonitor<T>`, having some services take `T` and others the wrapper means two different reload semantics for one setting."
+        }
+      ],
+      "redFlags": [
+        "Injecting IOptionsSnapshot into a singleton or a BackgroundService",
+        "Storing CurrentValue in a constructor-assigned field and claiming hot reload works",
+        "Validating configuration inside the first request handler rather than at startup"
+      ]
+    },
+    {
+      "id": "dac-07",
+      "level": "senior",
+      "type": "scenario",
+      "question": "A service intermittently throws ObjectDisposedException on a DbContext, and support reports users occasionally seeing another customer's data. It never reproduces locally. Diagnose it.",
+      "answer": "Those two symptoms together — a disposed context *and* data bleeding across requests — are one bug: a singleton is holding a scoped `DbContext`.\n\n**The mechanism.** The singleton is constructed once, during the first request that needs it, and the container hands it that request's `DbContext`. When the request ends its scope is disposed and so is the context. Every later request uses the same captured instance. Sometimes it throws `ObjectDisposedException`; sometimes the change tracker still holds entities another user loaded and a lookup by key returns them from the identity map without going to the database; under concurrency you also get `InvalidOperationException: A second operation was started on this context instance...` because `DbContext` is not thread-safe. \"Intermittent\" is just which of the three you hit.\n\n**Why not locally.** Scope validation is enabled by default only in Development, so locally `builder.Build()` would have thrown at startup. But the capture can also be laundered through an injected `IServiceProvider` and a `GetRequiredService` call, a static field, or a cache of repositories — and validation cannot see any of those. It also needs concurrency and a second request to show at all.\n\n**Confirm it.** Turn `ValidateScopes` and `ValidateOnBuild` on in every environment and let the container tell you. Then grep the registrations: every `AddSingleton` whose constructor takes something registered as scoped, every `BackgroundService` or `IHostedService` touching a context, every `IServiceProvider` field, every static holder, every `IMemoryCache` storing a service rather than data.\n\n**Fix.** Either make the service scoped, or have it own a scope per unit of work: `await using var scope = _scopeFactory.CreateAsyncScope();`. For EF specifically, register `AddDbContextFactory<T>` and create a context per operation — that is what it exists for. Also stop caching the context; cache the *data*.\n\nJava engineers: Spring dodges this by injecting a thread-bound `EntityManager` proxy. .NET gives you the real object, so the capture is permanent.",
+      "keyPoints": [
+        "Disposed context plus cross-request data is the signature of a singleton capturing a scoped DbContext",
+        "Three faces of one bug: ObjectDisposedException, identity-map bleed, and the not-thread-safe second-operation error",
+        "Scope validation is Development-only by default and cannot see captures via IServiceProvider, statics or caches",
+        "Fix with IServiceScopeFactory per unit of work, IDbContextFactory<T>, or making the service scoped",
+        "Cache data, never a DbContext or a service that holds one"
+      ],
+      "followUps": [
+        {
+          "q": "A BackgroundService needs a DbContext. What is the correct shape?",
+          "a": "`BackgroundService` is a singleton, so it cannot take a `DbContext` in its constructor. Inject `IServiceScopeFactory`, and inside the loop create a scope per iteration: `await using var scope = _scopeFactory.CreateAsyncScope(); var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();`. A scope per iteration also keeps the change tracker from growing without bound across a long-running loop."
+        },
+        {
+          "q": "How would you stop this class of bug reaching production again?",
+          "a": "Enable `ValidateScopes` and `ValidateOnBuild` unconditionally so a bad registration fails at boot in every environment, and add a startup test that simply builds the host — that alone catches constructor-level captures in CI. For the cases validation cannot see, a review rule: no `IServiceProvider` in a constructor outside composition-root code."
+        }
+      ],
+      "redFlags": [
+        "Adding a lock around the DbContext to stop the concurrency error",
+        "Making the DbContext a singleton so it is never disposed",
+        "Catching ObjectDisposedException and retrying",
+        "Blaming it on the database or the connection pool without checking lifetimes"
+      ],
+      "related": [
+        "database",
+        "cache"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,254 @@
+{
+  "id": "dsa-pattern-map",
+  "title": "The DSA Pattern Map",
+  "description": "Click any node to open its lesson. Patterns are grouped by the structure they operate on; the colour of a node shows your progress.",
+  "root": {
+    "id": "dsa",
+    "label": "DSA",
+    "kind": "root",
+    "children": [
+      {
+        "id": "g-foundations",
+        "label": "Foundations",
+        "kind": "group",
+        "children": [
+          {
+            "id": "what-is-an-algorithm",
+            "label": "What Is an Algorithm?",
+            "kind": "lesson"
+          },
+          {
+            "id": "data-and-variables",
+            "label": "Data & Memory",
+            "kind": "lesson"
+          },
+          {
+            "id": "loops-and-functions",
+            "label": "Loops & Functions",
+            "kind": "lesson"
+          },
+          {
+            "id": "big-o",
+            "label": "Big-O",
+            "kind": "lesson"
+          },
+          {
+            "id": "recursion",
+            "label": "Recursion",
+            "kind": "lesson"
+          },
+          {
+            "id": "sorting",
+            "label": "Sorting",
+            "kind": "lesson"
+          }
+        ]
+      },
+      {
+        "id": "g-arrays",
+        "label": "Arrays & Strings",
+        "kind": "group",
+        "children": [
+          {
+            "id": "arrays",
+            "label": "Arrays",
+            "kind": "lesson"
+          },
+          {
+            "id": "hashing",
+            "label": "Hashing",
+            "kind": "lesson"
+          },
+          {
+            "id": "two-pointers",
+            "label": "Two Pointers",
+            "kind": "pattern"
+          },
+          {
+            "id": "sliding-window",
+            "label": "Sliding Window",
+            "kind": "pattern"
+          },
+          {
+            "id": "prefix-sum",
+            "label": "Prefix Sum",
+            "kind": "pattern"
+          },
+          {
+            "id": "matrix",
+            "label": "Matrix Traversal",
+            "kind": "pattern"
+          }
+        ]
+      },
+      {
+        "id": "g-search",
+        "label": "Binary Search",
+        "kind": "group",
+        "children": [
+          {
+            "id": "binary-search",
+            "label": "Binary Search",
+            "kind": "pattern"
+          }
+        ]
+      },
+      {
+        "id": "g-list",
+        "label": "Linked List",
+        "kind": "group",
+        "children": [
+          {
+            "id": "linked-list",
+            "label": "Linked List",
+            "kind": "lesson"
+          },
+          {
+            "id": "fast-slow-pointer",
+            "label": "Fast & Slow Pointer",
+            "kind": "pattern"
+          }
+        ]
+      },
+      {
+        "id": "g-stackqueue",
+        "label": "Stack & Queue",
+        "kind": "group",
+        "children": [
+          {
+            "id": "stack",
+            "label": "Stack",
+            "kind": "lesson"
+          },
+          {
+            "id": "queue",
+            "label": "Queue",
+            "kind": "lesson"
+          },
+          {
+            "id": "monotonic-stack",
+            "label": "Monotonic Stack",
+            "kind": "pattern"
+          }
+        ]
+      },
+      {
+        "id": "g-trees",
+        "label": "Trees",
+        "kind": "group",
+        "children": [
+          {
+            "id": "trees",
+            "label": "Trees & BST",
+            "kind": "lesson"
+          },
+          {
+            "id": "heap",
+            "label": "Heap / Priority Queue",
+            "kind": "lesson"
+          },
+          {
+            "id": "trie",
+            "label": "Trie",
+            "kind": "lesson"
+          }
+        ]
+      },
+      {
+        "id": "g-graphs",
+        "label": "Graphs",
+        "kind": "group",
+        "children": [
+          {
+            "id": "graphs",
+            "label": "Graph Basics",
+            "kind": "lesson"
+          },
+          {
+            "id": "bfs",
+            "label": "BFS",
+            "kind": "pattern"
+          },
+          {
+            "id": "dfs",
+            "label": "DFS",
+            "kind": "pattern"
+          },
+          {
+            "id": "union-find",
+            "label": "Union-Find",
+            "kind": "lesson"
+          },
+          {
+            "id": "topological-sort",
+            "label": "Topological Sort",
+            "kind": "pattern"
+          },
+          {
+            "id": "shortest-paths",
+            "label": "Shortest Paths",
+            "kind": "pattern"
+          }
+        ]
+      },
+      {
+        "id": "g-recursion",
+        "label": "Recursion & Backtracking",
+        "kind": "group",
+        "children": [
+          {
+            "id": "backtracking",
+            "label": "Backtracking",
+            "kind": "pattern"
+          }
+        ]
+      },
+      {
+        "id": "g-dp",
+        "label": "Dynamic Programming",
+        "kind": "group",
+        "children": [
+          {
+            "id": "dynamic-programming-basics",
+            "label": "DP Basics",
+            "kind": "pattern"
+          },
+          {
+            "id": "dp-patterns",
+            "label": "DP Patterns",
+            "kind": "pattern"
+          }
+        ]
+      },
+      {
+        "id": "g-intervals",
+        "label": "Sorting & Intervals",
+        "kind": "group",
+        "children": [
+          {
+            "id": "intervals",
+            "label": "Intervals",
+            "kind": "pattern"
+          },
+          {
+            "id": "greedy",
+            "label": "Greedy",
+            "kind": "pattern"
+          }
+        ]
+      },
+      {
+        "id": "g-bits",
+        "label": "Maths & Bits",
+        "kind": "group",
+        "children": [
+          {
+            "id": "bit-manipulation",
+            "label": "Bit Manipulation",
+            "kind": "pattern"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,128 @@
+{
+  "id": "path-with-maximum-probability",
+  "title": "Path with Maximum Probability",
+  "patternId": "shortest-paths",
+  "difficulty": "intermediate",
+  "tags": [
+    "shortest-paths",
+    "dijkstra",
+    "heap",
+    "graph"
+  ],
+  "statement": "You are given an undirected graph of n nodes numbered 0 to n-1, described by an edge list edges where edges[i] = [a, b], and a parallel array succProb where succProb[i] is the probability of successfully traversing that edge. Given a start node and an end node, return the maximum probability of getting from start to end, where the probability of a path is the product of its edge probabilities. Return 0 if no path exists.",
+  "realWorld": "Reliability routing: every hop in a network delivers a packet with some independent success probability, and you want the route most likely to get through - not the shortest one. The same computation picks the highest-yield sequence of manufacturing steps, or the chain of services with the best end-to-end success rate.",
+  "examples": [
+    {
+      "input": "n = 3, edges = [[0,1],[1,2],[0,2]], succProb = [0.5,0.5,0.2], start = 0, end = 2  (edge list with a parallel probability array)",
+      "output": "0.25",
+      "explanation": "The two-hop route 0 -> 1 -> 2 gives 0.5 * 0.5 = 0.25, which beats the single direct hop at 0.2. Fewer hops is not better."
+    },
+    {
+      "input": "n = 3, edges = [[0,1],[1,2],[0,2]], succProb = [0.5,0.5,0.3], start = 0, end = 2",
+      "output": "0.3",
+      "explanation": "The same graph with one probability raised. Now the direct hop at 0.3 beats the detour at 0.25, so the best route flips with the weights and not with the shape of the graph."
+    },
+    {
+      "input": "n = 3, edges = [[0,1]], succProb = [0.5], start = 0, end = 2",
+      "output": "0.0",
+      "explanation": "Node 2 is isolated. Exhausting the heap without ever popping the target is how unreachable is reported, and 0 is a genuine answer here rather than a sentinel."
+    }
+  ],
+  "constraints": [
+    "2 <= n <= 10^4",
+    "0 <= edges.length <= 2 * 10^4 and edges[i].length == 2",
+    "succProb.length == edges.length and 0 <= succProb[i] <= 1",
+    "There is at most one edge between any pair of nodes",
+    "0 <= start, end < n"
+  ],
+  "bruteForce": {
+    "idea": "Depth-first search every simple path from start to end, multiplying probabilities along the way, and keep the largest product seen.",
+    "code": [
+      "public static double maxProbability(int n, int[][] edges, double[] succProb, int start, int end) {",
+      "    List<List<double[]>> adj = new ArrayList<>();",
+      "    for (int i = 0; i < n; i++) adj.add(new ArrayList<>());",
+      "    for (int i = 0; i < edges.length; i++) {",
+      "        adj.get(edges[i][0]).add(new double[]{edges[i][1], succProb[i]});",
+      "        adj.get(edges[i][1]).add(new double[]{edges[i][0], succProb[i]});",
+      "    }",
+      "    return dfs(adj, new boolean[n], start, end, 1.0);",
+      "}",
+      "",
+      "private static double dfs(List<List<double[]>> adj, boolean[] onPath, int at, int end, double soFar) {",
+      "    if (at == end) return soFar;",
+      "    onPath[at] = true;",
+      "    double best = 0.0;",
+      "    for (double[] edge : adj.get(at)) {",
+      "        int next = (int) edge[0];",
+      "        if (onPath[next]) continue;",
+      "        best = Math.max(best, dfs(adj, onPath, next, end, soFar * edge[1]));",
+      "    }",
+      "    onPath[at] = false;",
+      "    return best;",
+      "}"
+    ],
+    "complexity": {
+      "time": "Exponential - one branch per simple path, up to O(n!) in a dense graph",
+      "space": "O(n)"
+    },
+    "whySlow": "The search re-explores the same tail over and over: every distinct way of arriving at node v re-runs the entire search from v onwards, even though the best continuation out of v does not depend in the slightest on how you got there. That one quantity - the best probability from v to the end - is recomputed once per prefix instead of once. Worse, the search has no sense of priority: a prefix already down at 0.001 is expanded with exactly the same enthusiasm as one still at 0.9, so most of the work is spent extending paths that cannot possibly win."
+  },
+  "patternIdentification": "One value per node (the best probability of reaching it), edges that combine that value with a weight, and a combining operation that can never improve a value by taking more steps - that is the shape of Dijkstra, whatever the operation happens to be. Here the combination is multiplication and the objective is a maximum, so the min-heap becomes a max-heap; but the reason the algorithm is still correct is unchanged. Every probability lies in [0, 1], so extending a path multiplies its value by something no greater than 1 and can therefore never increase it. That monotonicity is exactly what the non-negative-weight rule buys in ordinary Dijkstra, where adding a non-negative weight can never decrease a distance, and it is the whole licence for settling a node the moment it is popped: nothing discovered later can beat it. It is also precisely what a negative edge destroys - with a negative weight, or with a \"probability\" above 1, a longer path can beat a shorter one, a settled node can improve after the fact, and the one-pop-per-node guarantee is gone. When you meet a new combining operator, test it against this monotonicity question before reaching for a heap.",
+  "optimized": {
+    "idea": "Dijkstra with the additive machinery swapped for multiplicative. Keep best[v], the greatest probability known for reaching v, seeded with best[start] = 1.0 because a zero-hop path succeeds for certain. Push (node, probability) into a max-heap, and on each pop either return - if the node is the target, its value is final - or relax every neighbour with candidate = probability * edgeProbability, pushing only when that beats the neighbour best value. A stale pop, one whose probability is below the best now recorded for its node, is simply skipped: it is a leftover from before a better route was found.",
+    "code": [
+      "public static double maxProbability(int n, int[][] edges, double[] succProb, int start, int end) {",
+      "    List<List<double[]>> adj = new ArrayList<>();",
+      "    for (int i = 0; i < n; i++) adj.add(new ArrayList<>());",
+      "    for (int i = 0; i < edges.length; i++) {",
+      "        adj.get(edges[i][0]).add(new double[]{edges[i][1], succProb[i]});",
+      "        adj.get(edges[i][1]).add(new double[]{edges[i][0], succProb[i]});",
+      "    }",
+      "    double[] best = new double[n];",
+      "    best[start] = 1.0;",
+      "    PriorityQueue<double[]> heap = new PriorityQueue<>((x, y) -> Double.compare(y[1], x[1]));",
+      "    heap.offer(new double[]{start, 1.0});",
+      "    while (!heap.isEmpty()) {",
+      "        double[] top = heap.poll();",
+      "        int node = (int) top[0];",
+      "        double prob = top[1];",
+      "        if (node == end) return prob;",
+      "        if (prob < best[node]) continue;              // stale: this node was already settled higher",
+      "        for (double[] edge : adj.get(node)) {",
+      "            int next = (int) edge[0];",
+      "            double candidate = prob * edge[1];        // multiply, where ordinary Dijkstra adds",
+      "            if (candidate > best[next]) {",
+      "                best[next] = candidate;",
+      "                heap.offer(new double[]{next, candidate});",
+      "            }",
+      "        }",
+      "    }",
+      "    return 0.0;   // the heap emptied without ever popping the target",
+      "}"
+    ],
+    "complexity": {
+      "time": "O((V + E) log V)",
+      "space": "O(V + E)"
+    }
+  },
+  "commonMistakes": [
+    "Leaving the comparator as Double.compare(x[1], y[1]), so the structure is still a min-heap - the search settles the least likely node first and returns the worst route rather than the best, and on example 1 it answers 0.2, a real path and a plausible-looking number that no assertion catches.",
+    "Writing candidate = prob + edge[1] because the Dijkstra template in your head adds - any two-hop route then produces a value above 1.0, which is not a probability at all, and the bug only becomes visible when someone notices the impossible output.",
+    "Marking a node as visited when it is pushed rather than when it is popped - the first route found to a node blocks every later one, so on example 1 the direct edge fixes node 2 at 0.2 and the better 0.25 detour is never allowed to relax it. The answer is silently too low, never too high."
+  ],
+  "similar": [
+    "network-delay-time",
+    "cheapest-flights-k-stops",
+    "swim-in-rising-water",
+    "path-with-minimum-effort"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 1514,
+      "slug": "path-with-maximum-probability",
+      "title": "Path with Maximum Probability",
+      "url": "https://leetcode.com/problems/path-with-maximum-probability/",
+      "premium": false
+    }
+  }
+}

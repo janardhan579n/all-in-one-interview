@@ -1,0 +1,129 @@
+{
+  "id": "daily-temperatures",
+  "title": "Daily Temperatures",
+  "patternId": "monotonic-stack",
+  "difficulty": "beginner",
+  "tags": [
+    "array",
+    "stack",
+    "monotonic-stack"
+  ],
+  "statement": "Given an array of daily temperatures, return an array where answer[i] is the number of days you must wait after day i for a warmer temperature. If no later day is warmer, put 0.",
+  "realWorld": "'How long until the next spike above this level?' in monitoring and alerting, and 'how many ticks until the next higher bid' in order-book processing. The monotonic stack is standard equipment in time-series work.",
+  "examples": [
+    {
+      "input": "temperatures = [73,74,75,71,69,72,76,73]",
+      "output": "[1,1,4,2,1,1,0,0]",
+      "explanation": "Day 2 (75) waits until day 6 (76), which is 4 days. Days 6 and 7 never get warmer, so they are 0."
+    },
+    {
+      "input": "temperatures = [30,40,50,60]",
+      "output": "[1,1,1,0]",
+      "explanation": "Strictly increasing, so every day is answered by the next one and the stack never holds more than one index."
+    },
+    {
+      "input": "temperatures = [60,50,40,30]",
+      "output": "[0,0,0,0]",
+      "explanation": "Strictly decreasing — nothing is ever popped, all four indices are still on the stack at the end, and all four keep the default 0. This is also the brute force's worst case."
+    }
+  ],
+  "constraints": [
+    "1 <= temperatures.length <= 10^5",
+    "30 <= temperatures[i] <= 100"
+  ],
+  "bruteForce": {
+    "idea": "For each day, walk forward until a warmer day appears, then record the gap.",
+    "code": [
+      "int[] answer = new int[temperatures.length];",
+      "for (int i = 0; i < temperatures.length; i++) {",
+      "    for (int j = i + 1; j < temperatures.length; j++) {",
+      "        if (temperatures[j] > temperatures[i]) {",
+      "            answer[i] = j - i;",
+      "            break;",
+      "        }",
+      "    }",
+      "}",
+      "return answer;"
+    ],
+    "complexity": {
+      "time": "O(n^2)",
+      "space": "O(1) beyond the output"
+    },
+    "whySlow": "A long descending run makes every day scan nearly to the end — 10^10 operations at the upper constraint. And the work is repeated, not just plentiful: each scan re-reads exactly the days the previous scan already rejected as too cold."
+  },
+  "patternIdentification": "'How many days until something warmer' is 'next greater element' with the answer expressed as a distance — the monotonic-stack signature. The tell is that pending days resolve most-recent-first: when a warm day arrives it settles day 4, then day 3, then day 2, which is LIFO, which is a stack.",
+  "optimized": {
+    "idea": "Keep a stack of indices whose answer is still unknown, with temperatures decreasing from bottom to top. When a warmer day arrives, pop and resolve every index it beats — each popped day is then permanently useless, because any later day that would have wanted it prefers today, which is both warmer and nearer. Each index is pushed once and popped at most once.",
+    "code": [
+      "import java.util.ArrayDeque;",
+      "import java.util.Deque;",
+      "",
+      "public static int[] dailyTemperatures(int[] temperatures) {",
+      "    int n = temperatures.length;",
+      "    int[] answer = new int[n];                     // zero-filled: the 'never' answer",
+      "    Deque<Integer> pending = new ArrayDeque<>();   // indices, temps decreasing",
+      "",
+      "    for (int day = 0; day < n; day++) {",
+      "        while (!pending.isEmpty()",
+      "               && temperatures[day] > temperatures[pending.peek()]) {",
+      "            int earlier = pending.pop();",
+      "            answer[earlier] = day - earlier;       // resolved, and never revisited",
+      "        }",
+      "        pending.push(day);",
+      "    }",
+      "    return answer;   // anything left on the stack keeps its default 0",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n) — n pushes and at most n pops in total, so the nested while adds at most n units of work across the whole run, not per iteration",
+      "space": "O(n) for the stack, which holds every index when the input is strictly decreasing"
+    }
+  },
+  "visualization": {
+    "engine": "monotonicStack",
+    "input": {
+      "array": [
+        73,
+        74,
+        75,
+        71,
+        69,
+        72,
+        76,
+        73
+      ]
+    },
+    "code": [
+      "int[] ans = new int[n]; Deque<Integer> stack = new ArrayDeque<>();",
+      "for (int day = 0; day < n; day++) {",
+      "    while (!stack.isEmpty() && temps[day] > temps[stack.peek()]) {",
+      "        int earlier = stack.pop(); ans[earlier] = day - earlier;",
+      "    }",
+      "    stack.push(day);                  // no warmer day yet — wait here",
+      "}",
+      "return ans;                           // still waiting -> stays 0"
+    ]
+  },
+  "commonMistakes": [
+    "Storing temperatures on the stack instead of indices — you need the index to compute the gap `day - earlier`, and it cannot be recovered from the temperature.",
+    "Using `if` instead of `while`, so one warm day resolves only the single most recent pending day. Try [75, 71, 69, 76] and watch two answers stay wrong.",
+    "Claiming O(n^2) because of the nested while — the amortised argument (each index enters and leaves once) gives O(n). Interviewers ask this on purpose.",
+    "Forgetting that unresolved days keep the default 0, which Java's zero-initialised array gives for free; adding a cleanup loop for them is wasted code.",
+    "Using `>=` instead of `>` in the pop condition, which reports a wait of some days for an equal temperature — equal is not warmer."
+  ],
+  "similar": [
+    "next-greater-element",
+    "largest-rectangle-histogram",
+    "valid-parentheses",
+    "sliding-window-maximum"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 739,
+      "slug": "daily-temperatures",
+      "title": "Daily Temperatures",
+      "url": "https://leetcode.com/problems/daily-temperatures/",
+      "premium": false
+    }
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "id": "complexity-budget",
+  "title": "What complexity do the constraints allow?",
+  "start": "n1",
+  "nodes": {
+    "n1": {
+      "type": "question",
+      "text": "What is the maximum input size n in the constraints?",
+      "options": [
+        {
+          "label": "n ≤ 20",
+          "next": "r-exp"
+        },
+        {
+          "label": "n ≤ 5,000",
+          "next": "r-quad"
+        },
+        {
+          "label": "n ≤ 10^5 or 10^6",
+          "next": "r-nlogn"
+        },
+        {
+          "label": "n ≥ 10^7",
+          "next": "r-linear"
+        }
+      ]
+    },
+    "r-exp": {
+      "type": "result",
+      "text": "Exponential is intended — O(2ⁿ) or O(n!)",
+      "detail": "A tiny n is a deliberate signal: backtracking, subsets, permutations or bitmask DP.",
+      "lessonId": "backtracking"
+    },
+    "r-quad": {
+      "type": "result",
+      "text": "O(n²) is fine",
+      "detail": "25 million operations runs comfortably. Nested loops, 2-D DP, or an anchor loop wrapping two pointers.",
+      "lessonId": "big-o"
+    },
+    "r-nlogn": {
+      "type": "result",
+      "text": "O(n log n) or O(n)",
+      "detail": "O(n²) would be 10^10 operations and will time out. Sort, use a heap, binary search, or find a single-pass approach.",
+      "lessonId": "big-o"
+    },
+    "r-linear": {
+      "type": "result",
+      "text": "O(n) or better, and watch memory",
+      "detail": "At this size even the input may not fit comfortably. Think single pass, streaming, or O(1)-space tricks.",
+      "lessonId": "big-o"
+    }
+  }
+}

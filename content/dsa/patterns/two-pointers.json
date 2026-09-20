@@ -1,0 +1,317 @@
+{
+  "id": "two-pointers",
+  "kind": "pattern",
+  "title": "Two Pointers",
+  "group": "Arrays & Strings",
+  "level": 2,
+  "difficulty": "beginner",
+  "estimatedMinutes": 30,
+  "summary": "Walk two indices through the data instead of one, using a property of the data (usually sortedness) to decide which one to move — replacing a nested loop with a single pass.",
+  "prerequisites": [
+    "arrays"
+  ],
+  "tags": [
+    "array",
+    "string",
+    "sorted",
+    "level-2"
+  ],
+  "analogy": {
+    "beginner": "You and a friend stand at opposite ends of a shelf of books arranged by price, trying to find two books that together cost exactly ₹500. You look at the cheapest and the most expensive. Too expensive together? Your friend moves to a cheaper book. Too cheap? You move up. Neither of you ever walks backwards, so between you the shelf is crossed only once — instead of comparing every book with every other book.",
+    "interview": "Maintain two indices over a sequence and derive a rule, from an ordering or monotonicity property, that lets each comparison eliminate a whole class of candidate pairs. Because each pointer moves monotonically in one direction, the total movement is O(n)."
+  },
+  "intuition": "The brute force for pair problems is 'every i with every j' — O(n²). Two pointers is what you get when the data gives you enough information to rule out many pairs from a single comparison.\n\nOn a **sorted** array with pointers at both ends: if `a[left] + a[right]` is too large, then `a[right]` paired with *anything* from left onwards is also too large, because everything from left onwards is ≥ a[left]. So moving `right` inwards discards an entire column of the comparison table in one step. That is where the factor of n goes.\n\nThere are three shapes, and recognising which one you need is the actual skill:\n\n1. **Opposite ends** (converging) — sorted input, pair/triplet sums, palindromes, container problems.\n2. **Same direction** (fast and slow) — deduplication in place, removing elements, partitioning. One pointer reads, one writes.\n3. **Two sequences** — merging sorted arrays, checking subsequences, intersecting sorted lists.\n\nThe sliding window is a special case of shape 2 where the region between the pointers is the thing you care about.",
+  "problemFirst": {
+    "motivatingProblem": "Given a **sorted** array and a target, find two numbers that add up to the target. Return their indices.",
+    "bruteForce": {
+      "idea": "Check every pair.",
+      "code": [
+        "for (int i = 0; i < nums.length; i++) {",
+        "    for (int j = i + 1; j < nums.length; j++) {",
+        "        if (nums[i] + nums[j] == target) {",
+        "            return new int[]{i, j};",
+        "        }",
+        "    }",
+        "}"
+      ],
+      "complexity": {
+        "time": "O(n²)",
+        "space": "O(1)"
+      },
+      "whySlow": "It throws away the most useful fact we have: the array is sorted. It will happily compare 1 + 2 when the target is 500 and the array ends in 499."
+    },
+    "observation": "Start at the two extremes. Their sum is the largest possible involving the smallest element, and the smallest possible involving the largest element. If that sum is too big, the *largest* element cannot participate in any valid pair at all — every other partner is even smaller. So discard it entirely.",
+    "leap": "Each comparison eliminates one whole element from consideration, so at most n comparisons are needed. O(n) after an O(n log n) sort — or O(n) outright if the input is already sorted.",
+    "optimizedSketch": [
+      "int left = 0, right = nums.length - 1;",
+      "while (left < right) {",
+      "    int sum = nums[left] + nums[right];",
+      "    if (sum == target) return new int[]{left, right};",
+      "    if (sum < target) left++;      // need more: only bigger values can help",
+      "    else                right--;   // need less: only smaller values can help",
+      "}"
+    ]
+  },
+  "howItWorks": [
+    "**Opposite ends**: `left = 0`, `right = n-1`; loop while `left < right`; compare and move the pointer that can improve the situation.",
+    "**Same direction (read/write)**: `slow` marks where the next kept element goes, `fast` scans ahead. Write only when `fast` finds something worth keeping. This is how in-place removal works in O(1) space.",
+    "**Two sequences**: one index per array, advance whichever is behind. This is the merge step of merge sort.",
+    "**The decision rule is the whole pattern.** Justify in one sentence why moving that pointer cannot skip a valid answer — if you cannot, two pointers is the wrong tool.",
+    "**Sorting first is allowed** when the problem asks for values rather than original indices. Say so explicitly: it costs O(n log n) but unlocks O(n) scanning."
+  ],
+  "patternRecognition": {
+    "signals": [
+      "The array is **sorted**, or you are allowed to sort it",
+      "You are looking for a **pair or triplet** satisfying a condition",
+      "Palindrome checking — compare inwards from both ends",
+      "In-place modification with O(1) extra space: remove duplicates, move zeroes, partition",
+      "Merging or comparing two sorted sequences",
+      "The brute force is two nested loops over the same array"
+    ],
+    "antiSignals": [
+      "The array is unsorted and you must return original indices — sorting destroys them, so use a HashMap",
+      "The answer depends on a contiguous range's aggregate — that is a sliding window",
+      "There is no ordering or monotonic property to exploit; nothing justifies the pointer move"
+    ],
+    "decisionTreeId": "two-pointers"
+  },
+  "visualizations": [
+    {
+      "id": "two-sum-sorted",
+      "title": "Converging pointers — two sum on a sorted array",
+      "engine": "twoPointersOpposite",
+      "input": {
+        "array": [
+          1,
+          3,
+          4,
+          6,
+          8,
+          11
+        ],
+        "target": 14
+      },
+      "code": [
+        "int left = 0, right = nums.length - 1;",
+        "while (left < right) {",
+        "    int sum = nums[left] + nums[right];",
+        "    if (sum == target) return new int[]{left, right};",
+        "    if (sum < target) left++;",
+        "    else              right--;",
+        "}",
+        "return new int[]{-1, -1};"
+      ]
+    },
+    {
+      "id": "palindrome",
+      "title": "Palindrome check — same pattern, different comparison",
+      "engine": "twoPointersPalindrome",
+      "input": {
+        "text": "racecar"
+      },
+      "code": [
+        "int left = 0, right = s.length() - 1;",
+        "while (left < right) {",
+        "    if (s.charAt(left) != s.charAt(right)) return false;",
+        "    left++;",
+        "    right--;",
+        "}",
+        "return true;"
+      ]
+    },
+    {
+      "id": "dedupe",
+      "title": "Same-direction pointers — remove duplicates in place",
+      "engine": "twoPointersSameDirection",
+      "input": {
+        "array": [
+          1,
+          1,
+          2,
+          2,
+          2,
+          3,
+          4,
+          4
+        ]
+      },
+      "code": [
+        "int slow = 0;",
+        "for (int fast = 1; fast < nums.length; fast++) {",
+        "    if (nums[fast] != nums[slow]) {",
+        "        slow++;",
+        "        nums[slow] = nums[fast];",
+        "    }",
+        "}",
+        "return slow + 1;   // new length"
+      ]
+    }
+  ],
+  "implementations": [
+    {
+      "label": "Simple",
+      "language": "java",
+      "explanation": "The converging template. The comment on each branch is the justification — always be able to say why the discarded element can never be part of an answer.",
+      "code": [
+        "/** Two sum on a SORTED array. O(n) time, O(1) space. */",
+        "public static int[] twoSumSorted(int[] nums, int target) {",
+        "    int left = 0;",
+        "    int right = nums.length - 1;",
+        "",
+        "    while (left < right) {",
+        "        int sum = nums[left] + nums[right];",
+        "        if (sum == target) {",
+        "            return new int[]{left, right};",
+        "        } else if (sum < target) {",
+        "            left++;    // nums[left] is too small to pair with ANY remaining value",
+        "        } else {",
+        "            right--;   // nums[right] is too large to pair with ANY remaining value",
+        "        }",
+        "    }",
+        "    return new int[]{-1, -1};",
+        "}"
+      ]
+    },
+    {
+      "label": "Optimized",
+      "language": "java",
+      "explanation": "Three Sum is the classic application: sort, fix one element, and two-point the remainder. It is O(n²) rather than O(n³), and the duplicate-skipping is the part candidates usually miss.",
+      "code": [
+        "/** All unique triplets summing to zero. O(n log n + n^2) = O(n^2). */",
+        "public static List<List<Integer>> threeSum(int[] nums) {",
+        "    Arrays.sort(nums);",
+        "    List<List<Integer>> result = new ArrayList<>();",
+        "",
+        "    for (int i = 0; i < nums.length - 2; i++) {",
+        "        if (nums[i] > 0) break;                       // sorted: no way back to zero",
+        "        if (i > 0 && nums[i] == nums[i - 1]) continue; // skip duplicate anchors",
+        "",
+        "        int left = i + 1, right = nums.length - 1;",
+        "        while (left < right) {",
+        "            int sum = nums[i] + nums[left] + nums[right];",
+        "            if (sum < 0) {",
+        "                left++;",
+        "            } else if (sum > 0) {",
+        "                right--;",
+        "            } else {",
+        "                result.add(List.of(nums[i], nums[left], nums[right]));",
+        "                while (left < right && nums[left]  == nums[left + 1])  left++;",
+        "                while (left < right && nums[right] == nums[right - 1]) right--;",
+        "                left++;",
+        "                right--;",
+        "            }",
+        "        }",
+        "    }",
+        "    return result;",
+        "}"
+      ]
+    }
+  ],
+  "complexity": {
+    "time": "O(n) for a single two-pointer pass; O(n log n) if you must sort first; O(n²) for Three Sum (an anchor loop wrapping a two-pointer pass)",
+    "space": "O(1) — this is the pattern's other selling point. Unlike the HashMap approach to pair problems, it allocates nothing.",
+    "why": "Each comparison moves exactly one pointer, and pointers only move inwards (or only forwards), so the total number of iterations is bounded by n. The O(1) space matters in interviews: if you are asked for two sum on a sorted array, the map solution is O(n) space and the two-pointer solution is O(1), so the pointers win. On unsorted input where original indices matter, that reverses — the map is the right answer."
+  },
+  "commonMistakes": [
+    {
+      "mistake": "Using `left <= right` in the converging loop",
+      "fix": "That lets an element pair with itself. For distinct pairs, `left < right`."
+    },
+    {
+      "mistake": "Applying opposite-end pointers to an unsorted array",
+      "fix": "The pointer-move rule is justified only by ordering. Without it, moving `left` can skip the answer. Sort first, or use a HashMap."
+    },
+    {
+      "mistake": "Sorting when the problem needs original indices",
+      "fix": "Sorting destroys them. Either store (value, index) pairs, or use a HashMap."
+    },
+    {
+      "mistake": "Forgetting to skip duplicates in Three Sum",
+      "fix": "You emit the same triplet repeatedly. Skip equal anchors, and skip equal values after recording a hit."
+    },
+    {
+      "mistake": "Moving both pointers when the sum matches",
+      "fix": "Fine for two sum, but in Three Sum you must also skip duplicates or you loop on the same values."
+    }
+  ],
+  "realWorldUses": [
+    "Merging sorted result sets — the merge step of merge sort, and how databases combine sorted index scans.",
+    "Streaming joins over two sorted inputs, without loading either into memory.",
+    "In-place compaction: garbage collectors and log compaction use read/write pointers to squeeze out dead entries.",
+    "Diff algorithms walk two sequences with independent indices."
+  ],
+  "interviewNotes": [
+    "Ask whether the input is sorted before you design anything. If yes, two pointers or binary search is almost always intended.",
+    "Emphasise O(1) space — it is the standard follow-up after you give the HashMap solution.",
+    "Justify each pointer move out loud: 'nums[right] is too large to pair with anything remaining, so it can be discarded'. That sentence is the proof of correctness."
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "mcq",
+      "question": "Why can't you use opposite-end two pointers on an unsorted array for two sum?",
+      "options": [
+        "It would be too slow",
+        "Without ordering there is no justification that moving a pointer cannot skip a valid pair",
+        "Unsorted arrays cannot be indexed from both ends",
+        "You can — it works fine"
+      ],
+      "answerIndex": 1,
+      "explanation": "The correctness argument is 'everything to the right is larger, so this element cannot help'. Remove sortedness and that reasoning evaporates; a valid pair could sit on either side of wherever you move."
+    },
+    {
+      "id": "q2",
+      "type": "identify-pattern",
+      "question": "'Remove duplicates from a sorted array in place and return the new length, using O(1) extra space.' Which shape?",
+      "options": [
+        "Opposite-end pointers",
+        "Same-direction read/write pointers",
+        "Sliding window",
+        "Binary search"
+      ],
+      "answerIndex": 1,
+      "explanation": "`fast` reads every element; `slow` marks where the next kept element belongs. Writing only on a change compacts the array in place with no extra allocation."
+    },
+    {
+      "id": "q3",
+      "type": "complexity",
+      "question": "What is the complexity of Three Sum using sort + two pointers?",
+      "options": [
+        "O(n)",
+        "O(n log n)",
+        "O(n²)",
+        "O(n³)"
+      ],
+      "answerIndex": 2,
+      "explanation": "An O(n) two-pointer scan inside an O(n) anchor loop gives O(n²); the O(n log n) sort is dominated by it. Brute force over all triplets would be O(n³)."
+    },
+    {
+      "id": "q4",
+      "type": "mcq",
+      "question": "For two sum on an *unsorted* array where you must return the original indices, what is the best approach?",
+      "options": [
+        "Sort, then two pointers",
+        "HashMap of value → index, one pass",
+        "Nested loops",
+        "Binary search"
+      ],
+      "answerIndex": 1,
+      "explanation": "Sorting would destroy the indices. A HashMap gives O(n) time at the cost of O(n) space — the correct trade when identity, not just value, matters."
+    }
+  ],
+  "practiceProblems": [
+    "two-sum-sorted",
+    "remove-duplicates-sorted",
+    "squares-of-sorted-array",
+    "valid-palindrome",
+    "container-with-most-water",
+    "three-sum",
+    "trapping-rain-water"
+  ],
+  "related": [
+    "sliding-window",
+    "fast-slow-pointer",
+    "binary-search",
+    "hashing"
+  ]
+}

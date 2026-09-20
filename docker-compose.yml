@@ -1,0 +1,36 @@
+# Runs the whole platform with one command:
+#
+#   docker compose up --build     → http://localhost:3000
+#
+# Both images are built from the repository root so they can see /content.
+# Nothing here needs a network connection at run time; the build needs one once.
+services:
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: learnplatform-api
+    environment:
+      # Override to use H2 instead of SQLite: SPRING_PROFILES_ACTIVE=h2
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-default}
+    volumes:
+      # Progress, notes and bookmarks survive `docker compose down`.
+      - learnplatform-data:/data
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: learnplatform-web
+    ports:
+      - "3000:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  learnplatform-data:

@@ -1,0 +1,121 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Semantic colour tokens. Components reference roles (surface, ink, brand) rather than
+ * palette values, so dark mode is a token swap rather than a per-component override.
+ */
+@layer base {
+  :root {
+    --surface: 250 250 249;
+    --surface-raised: 255 255 255;
+    --surface-sunken: 244 244 243;
+    --ink: 24 24 27;
+    --ink-muted: 82 82 91;
+    --ink-faint: 133 133 142;
+    --line: 224 224 222;
+    --brand: 79 70 229;
+    --brand-soft: 238 238 255;
+    --good: 21 128 61;
+    --warn: 180 83 9;
+    --bad: 185 28 28;
+    --info: 3 105 161;
+    color-scheme: light;
+  }
+
+  .dark {
+    --surface: 17 18 21;
+    --surface-raised: 26 27 32;
+    --surface-sunken: 33 34 40;
+    --ink: 240 240 242;
+    --ink-muted: 168 168 178;
+    --ink-faint: 122 122 134;
+    --line: 51 52 60;
+    --brand: 129 122 255;
+    --brand-soft: 40 38 78;
+    --good: 74 200 130;
+    --warn: 230 168 78;
+    --bad: 240 120 120;
+    --info: 96 178 235;
+    color-scheme: dark;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  /* Accessibility: honour the OS setting, and the in-app switch sets .reduce-motion. */
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+    }
+  }
+
+  .reduce-motion *,
+  .reduce-motion *::before,
+  .reduce-motion *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+
+  body {
+    @apply bg-surface text-ink antialiased;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+
+  :focus-visible {
+    @apply outline outline-2 outline-offset-2 outline-brand;
+  }
+
+  ::selection {
+    background: rgb(var(--brand) / 0.25);
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-line bg-surface-raised;
+  }
+
+  .prose-content {
+    @apply text-[15px] leading-relaxed text-ink-muted;
+  }
+
+  .prose-content strong {
+    @apply font-semibold text-ink;
+  }
+
+  .prose-content code {
+    @apply rounded bg-surface-sunken px-1 py-0.5 font-mono text-[13px] text-ink;
+  }
+
+  .skip-link {
+    @apply absolute left-2 top-2 z-50 -translate-y-16 rounded-lg bg-brand px-3 py-2 text-sm text-white transition-transform focus:translate-y-0;
+  }
+}
+
+/* Thin, unobtrusive scrollbars that respect the theme. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--line)) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: rgb(var(--line));
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}

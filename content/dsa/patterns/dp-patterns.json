@@ -1,0 +1,489 @@
+{
+  "id": "dp-patterns",
+  "kind": "pattern",
+  "title": "DP Patterns — The Classic Shapes",
+  "group": "Dynamic Programming",
+  "level": 5,
+  "difficulty": "advanced",
+  "estimatedMinutes": 60,
+  "summary": "Four table shapes cover most DP interview questions: 0/1 knapsack, unbounded knapsack, longest common subsequence and longest increasing subsequence. Recognise the shape and the state, transition and base case come with it.",
+  "prerequisites": [
+    "dynamic-programming-basics",
+    "recursion",
+    "binary-search"
+  ],
+  "tags": [
+    "dp",
+    "knapsack",
+    "lcs",
+    "lis",
+    "coin-change",
+    "subsequence",
+    "level-5"
+  ],
+  "analogy": {
+    "beginner": "A carpenter does not invent a new joint for every piece of furniture. There are half a dozen joints — mortise and tenon, dovetail, lap — and the skill is looking at a job and knowing which one it wants. DP is the same: there are a handful of table shapes, and almost every problem you will be asked is one of them wearing a costume. Learning the shapes is what turns a twenty-minute struggle into a two-minute recognition plus ten minutes of careful indexing.",
+    "interview": "Beyond the basics, DP competence is classification, not derivation. Given a problem, decide which canonical recurrence it instantiates — subset selection with a capacity axis (0/1 knapsack), selection with repetition (unbounded knapsack), alignment of two sequences (LCS/edit distance), or an optimum over subsequences of one sequence (LIS). Each shape fixes the state, the transition and the base case, and each has a known space optimisation whose correctness depends on iteration order."
+  },
+  "intuition": "After the basics lesson you can build a DP table when someone tells you what the state is. The remaining skill — the one that separates a candidate who solves the problem from one who stares at it — is recognising *which* table a new problem wants. There are not many.\n\nHere is the whole lesson in one table. Everything below is commentary on it.\n\n```\nSHAPE                 STATE                              TRANSITION                                              BASE CASE\n--------------------  ---------------------------------  ------------------------------------------------------  -------------------------\n0/1 knapsack          dp[i][c] = best value using the    skip:  dp[i-1][c]                                        dp[0][c] = 0\n  (choose or skip,      first i items with capacity c    take:  dp[i-1][c-w[i]] + v[i]   (only if w[i] <= c)       (no items -> no value)\n   each item once)                                       dp[i][c] = max(skip, take)\n\nUnbounded knapsack    dp[c] = best/fewest for            dp[c] = min(dp[c], dp[c-coin] + 1)                        dp[0] = 0\n  (coin change,         exact amount c                   inner loop FORWARDS -> the same coin may be reused        rest = +infinity sentinel\n   reuse allowed)\n\nLCS                   dp[i][j] = LCS length of           match:    dp[i-1][j-1] + 1                               dp[0][j] = dp[i][0] = 0\n  (two sequences,       a[0..i) and b[0..j)              mismatch: max(dp[i-1][j], dp[i][j-1])                     (empty prefix -> 0)\n   one axis each)\n\nLIS                   dp[i] = length of the longest      dp[i] = 1 + max(dp[j]) over j < i with nums[j] < nums[i]  dp[i] = 1\n  (subsequence over     increasing subsequence that      (O(n^2)); or patience sorting with binary search          (the element alone)\n   one sequence)        ENDS at index i                  over a tails array (O(n log n))\n```\n\nThree observations are worth more than the table itself.\n\n**The second dimension is the constraint.** In climbing stairs the state was one number, the position. In knapsack you carry a second number — the remaining capacity — because a choice made early restricts choices made later, and position alone no longer determines the future. Whenever you catch yourself thinking 'but that depends on how much I have already spent/used/taken', that budget *is* the second dimension.\n\n**Loop order is a semantic choice, not a style choice.** The 0/1 and unbounded knapsack tables are literally the same array with the same update line. The difference is that 0/1 runs the capacity loop **backwards** and unbounded runs it **forwards**, and that single character decides whether an item can be used twice. Nothing else in DP compresses so much meaning into so little syntax, and it is a favourite interview probe.\n\n**Two sequences means two axes.** The moment a problem hands you two strings or two arrays and asks how well they line up, the table is `dp[i][j]` over prefixes, the transition splits into match and mismatch, and the base row and column are the empty-prefix cases. LCS, edit distance, regular-expression matching, shortest common supersequence and 'is s3 an interleaving of s1 and s2' are all this shape.",
+  "problemFirst": {
+    "motivatingProblem": "The 0/1 knapsack. You have n items, item i weighing `weight[i]` and worth `value[i]`, and a bag that holds `capacity` units. Each item may be taken at most once and cannot be split. Maximise the total value in the bag.",
+    "bruteForce": {
+      "idea": "Every item is in the bag or out of it, so enumerate all 2^n subsets, discard the ones that are too heavy, and keep the most valuable survivor.",
+      "code": [
+        "int best = 0;",
+        "",
+        "// One bit of `mask` per item: 1 = take it, 0 = leave it.",
+        "for (int mask = 0; mask < (1 << n); mask++) {",
+        "    int weight = 0, value = 0;",
+        "    for (int i = 0; i < n; i++) {",
+        "        if ((mask & (1 << i)) != 0) {",
+        "            weight += weights[i];",
+        "            value  += values[i];",
+        "        }",
+        "    }",
+        "    if (weight <= capacity) best = Math.max(best, value);",
+        "}",
+        "return best;"
+      ],
+      "complexity": {
+        "time": "O(2ⁿ · n)",
+        "space": "O(1)"
+      },
+      "whySlow": "Every subset is rebuilt from scratch. With n = 40 that is over a trillion subsets — hours of work — and yet the algorithm keeps rediscovering the same intermediate facts. The subsets {A, B} and {A, B, C} share the whole prefix {A, B}, and there are only n × capacity genuinely distinct situations to be in: 'I have decided about the first i items and have c capacity left.' Exponential effort is spent on a polynomial amount of information."
+    },
+    "observation": "Once you have decided about the first i items, the *only* thing that matters about those decisions is how much capacity you have left. Two different subsets of the first i items that weigh the same are interchangeable for everything that follows — so 'best value from the first i items with capacity c' is a complete description of the situation.",
+    "leap": "That sentence is the state: `dp[i][c]`. At item i you either skip it (`dp[i-1][c]`) or take it (`dp[i-1][c - weight[i]] + value[i]`), and you keep the larger. There are n × (capacity + 1) states and each costs O(1), so 2^n collapses to O(n · capacity). The second dimension is not decoration — it is the constraint, promoted to an axis.",
+    "optimizedSketch": [
+      "int[][] dp = new int[n + 1][capacity + 1];   // dp[i][c] = best value, first i items, capacity c",
+      "",
+      "for (int i = 1; i <= n; i++) {",
+      "    for (int c = 0; c <= capacity; c++) {",
+      "        dp[i][c] = dp[i - 1][c];                                   // skip item i",
+      "        if (weight[i - 1] <= c) {                                  // take it, if it fits",
+      "            dp[i][c] = Math.max(dp[i][c], dp[i - 1][c - weight[i - 1]] + value[i - 1]);",
+      "        }",
+      "    }",
+      "}",
+      "return dp[n][capacity];"
+    ]
+  },
+  "howItWorks": [
+    "**Shape 1 — 0/1 knapsack (choose or skip, each item once).** State: `dp[i][c]` = the best value obtainable from the first `i` items with capacity `c`. Transition: `dp[i][c] = max(dp[i-1][c], dp[i-1][c - w[i]] + v[i])`, the second branch only when `w[i] <= c`. Base: `dp[0][c] = 0` for every `c` — no items, no value. Recognise it by 'each item at most once' plus a budget: subset sum, partition into two equal halves, target sum, and any 'pick a subset subject to a limit' phrasing.",
+    "**Shape 1b — the one-row space optimisation, and why the inner loop runs backwards.** Row `i` only ever reads row `i-1`, so a single `int[] dp` of length `capacity + 1` suffices: `for (int c = capacity; c >= w[i]; c--) dp[c] = max(dp[c], dp[c - w[i]] + v[i]);`. The descending loop is the whole trick. When you update `dp[c]`, the cell `dp[c - w[i]]` lies to its *left*, and because you are moving right-to-left that cell has not been touched yet this round — so it still holds the previous row's value, meaning 'before item i was considered'. Run the loop forwards and `dp[c - w[i]]` would already include item i, and the item would be silently taken twice. Same array, same update, opposite meaning.",
+    "**Shape 2 — unbounded knapsack / coin change (unlimited copies).** State: `dp[c]` = the best answer for exact amount `c`. Transition for fewest coins: `dp[c] = min(dp[c], dp[c - coin] + 1)`. Base: `dp[0] = 0`, every other cell initialised to a sentinel above any real answer. The only difference from Shape 1b is that the inner loop runs **forwards**: `dp[c - coin]` has then already been updated with this coin, so the coin can be used again — which is precisely what 'unlimited copies' means. One loop direction encodes the entire difference between the two problems.",
+    "**Shape 2b — counting, and the order that decides combinations vs permutations.** For *how many ways*, the update is `ways[c] += ways[c - coin]` with `ways[0] = 1`. Loop coins on the outside and amounts on the inside and each coin is considered once overall, so {1,2} and {2,1} are counted once — combinations. Swap the loops so amounts are outside and you count ordered sequences — permutations. Neither is 'correct': read the problem statement and say out loud which one it wants.",
+    "**Shape 3 — longest common subsequence (two sequences, one axis each).** State: `dp[i][j]` = the LCS length of `a[0..i)` and `b[0..j)`. Transition: if `a[i-1] == b[j-1]` then `dp[i][j] = dp[i-1][j-1] + 1` — the matched pair is consumed from both and can never be paired again; otherwise `dp[i][j] = max(dp[i-1][j], dp[i][j-1])` — drop one character from one side and take the better outcome. Base: row 0 and column 0 are all zeros, since an empty prefix shares nothing. The `i-1`/`j-1` offset is what the 'plus one' row and column buy you: no special case for the first character.",
+    "**Shape 3b — edit distance is the same table with a different objective.** State and axes are identical; only the transition changes: equal characters cost nothing and copy `dp[i-1][j-1]` through, while unequal characters cost one plus the cheapest of replace (`dp[i-1][j-1]`), delete (`dp[i-1][j]`) and insert (`dp[i][j-1]`). The base cases stop being zeros — `dp[i][0] = i` and `dp[0][j] = j`, the cost of deleting or inserting a whole prefix. If you can write LCS you can write edit distance, regex matching and interleaving strings.",
+    "**Shape 4 — longest increasing subsequence, O(n²).** State: `dp[i]` = the length of the longest increasing subsequence **ending exactly at index i**. That 'ending at' is doing all the work; `dp[i]` = 'the answer for the first i elements' does not give a usable transition, because you cannot tell whether the next element may be appended. Transition: `dp[i] = 1 + max(dp[j])` over all `j < i` with `nums[j] < nums[i]`, defaulting to 1. Base: every `dp[i]` starts at 1 — the element by itself. The answer is `max(dp)`, not `dp[n-1]`, because the best subsequence need not end at the last element.",
+    "**Shape 4b — LIS in O(n log n) by patience sorting.** Keep an array `tails` where `tails[k]` is the **smallest possible final element** of any increasing subsequence of length `k+1`. For each `x`, binary search for the first index whose tail is `>= x` and overwrite it with `x`; if no such index exists, append. `tails` is sorted by construction, which is what makes the binary search legal. Be honest about the caveat, because interviewers ask: **`tails` is not itself a valid subsequence of the input** — it is a set of best-known endings assembled from different subsequences, so its *length* is the answer but its *contents* generally are not. Reconstructing the actual subsequence needs a parallel array of predecessor indices.",
+    "**How to use the table in a live interview.** Say which shape it is and why, state the state as an English sentence, write the transition, write the base cases, then code. If you cannot name a shape, fall back to the basics method — write the honest recursion, find the repetition, memoise — and the shape usually reveals itself in the recursion's parameter list. The parameters of the recursive function *are* the dimensions of the table."
+  ],
+  "patternRecognition": {
+    "signals": [
+      "'Each item at most once' plus a weight, budget, capacity or exact target → 0/1 knapsack; the budget becomes the second dimension",
+      "'Unlimited supply', 'you may reuse', 'as many as you like' → unbounded knapsack; same table, forward inner loop",
+      "Two strings or two arrays compared or aligned → dp[i][j] over prefixes: LCS, edit distance, regex matching, interleaving",
+      "'Subsequence' (not substring) of one sequence with an ordering condition → LIS family",
+      "'Can this subset reach exactly X?', 'partition into two equal halves', 'count the ways to make X' → knapsack in disguise",
+      "n is a few thousand and the constraint value is a few thousand — O(n · capacity) is being invited",
+      "The brute force is 'try every subset' or 'try every split point'"
+    ],
+    "antiSignals": [
+      "The elements must be **contiguous** → sliding window or prefix sum, not a subsequence DP",
+      "Items are divisible and you may take fractions → fractional knapsack is greedy (best value per unit weight), and DP is the wrong tool",
+      "The coin system is canonical and the question is not adversarial — greedy still needs proof, so do not assume it, but say why you considered it",
+      "You must output every optimal selection rather than count or measure them → backtracking",
+      "The capacity is around 10⁹ → the table is pseudo-polynomial and infeasible; look for meet-in-the-middle, a greedy argument, or a different formulation",
+      "n ≤ 20 and the structure is irregular → bitmask enumeration or bitmask DP over subsets may be simpler than finding a clean recurrence"
+    ],
+    "decisionTreeId": "dp-or-not"
+  },
+  "visualizations": [
+    {
+      "id": "two-axis-table",
+      "title": "The two-dimensional shape — every cell answers 'best over this prefix, at this budget'",
+      "engine": "dpGrid",
+      "input": {},
+      "code": [
+        "int[][] dp = new int[rows][cols];       // two axes: items × capacity, or a × b",
+        "for (int r = 0; r < rows; r++) {",
+        "    for (int c = 0; c < cols; c++) {",
+        "        if (r == 0 || c == 0) dp[r][c] = 1;                // base row and column",
+        "        else dp[r][c] = dp[r - 1][c] + dp[r][c - 1];       // transition: two neighbours",
+        "    }",
+        "}",
+        "return dp[rows - 1][cols - 1];          // the answer lives in the far corner"
+      ]
+    },
+    {
+      "id": "one-row-table",
+      "title": "The one-dimensional shape — the row that knapsack and coin change collapse into",
+      "engine": "dp1d",
+      "input": {},
+      "code": [
+        "int[] dp = new int[n + 1];          // one axis: dp[c] = answer at budget/position c",
+        "dp[0] = 1;                          // base case",
+        "dp[1] = 1;                          // base case",
+        "for (int i = 2; i <= n; i++) {",
+        "    dp[i] = dp[i - 1] + dp[i - 2];  // transition reaches back a fixed distance",
+        "}",
+        "return dp[n];"
+      ]
+    }
+  ],
+  "implementations": [
+    {
+      "label": "Simple",
+      "language": "java",
+      "explanation": "The two knapsack shapes side by side. Read the two inner loops together: the arrays are identical, the update lines are identical, and the direction of the loop is the entire difference between 'each item once' and 'unlimited copies'.",
+      "code": [
+        "/**",
+        " * 0/1 knapsack, full table. O(n · capacity) time and space.",
+        " * dp[i][c] = best value using the first i items with capacity c.",
+        " */",
+        "public static int knapsack01(int[] weight, int[] value, int capacity) {",
+        "    int n = weight.length;",
+        "    int[][] dp = new int[n + 1][capacity + 1];   // row 0 is all zeros: no items, no value",
+        "",
+        "    for (int i = 1; i <= n; i++) {",
+        "        int w = weight[i - 1], v = value[i - 1];   // the +1 offset: item i is index i-1",
+        "        for (int c = 0; c <= capacity; c++) {",
+        "            dp[i][c] = dp[i - 1][c];                              // skip item i",
+        "            if (w <= c) {                                         // take it, if it fits",
+        "                dp[i][c] = Math.max(dp[i][c], dp[i - 1][c - w] + v);",
+        "            }",
+        "        }",
+        "    }",
+        "    return dp[n][capacity];",
+        "}",
+        "",
+        "/**",
+        " * 0/1 knapsack, one row. O(n · capacity) time, O(capacity) space.",
+        " *",
+        " * The inner loop MUST run backwards. Updating dp[c] reads dp[c - w], which sits to the",
+        " * left; moving right-to-left guarantees that cell has not been touched yet this round, so",
+        " * it still means 'before item i'. Run it forwards and dp[c - w] already includes item i,",
+        " * and the item gets taken twice — which is exactly the unbounded problem below.",
+        " */",
+        "public static int knapsack01Rolling(int[] weight, int[] value, int capacity) {",
+        "    int[] dp = new int[capacity + 1];",
+        "    for (int i = 0; i < weight.length; i++) {",
+        "        for (int c = capacity; c >= weight[i]; c--) {          // BACKWARDS",
+        "            dp[c] = Math.max(dp[c], dp[c - weight[i]] + value[i]);",
+        "        }",
+        "    }",
+        "    return dp[capacity];",
+        "}",
+        "",
+        "/**",
+        " * Unbounded knapsack: fewest coins summing to `amount`, or -1 if impossible.",
+        " * Same array, same update, FORWARD loop — so dp[c - coin] already accounts for this",
+        " * coin and the coin may be reused. O(amount · coins) time, O(amount) space.",
+        " */",
+        "public static int coinChange(int[] coins, int amount) {",
+        "    int[] dp = new int[amount + 1];",
+        "    Arrays.fill(dp, amount + 1);        // sentinel above any real answer; 0 would win min()",
+        "    dp[0] = 0;                          // zero coins make zero",
+        "",
+        "    for (int coin : coins) {",
+        "        for (int c = coin; c <= amount; c++) {                 // FORWARDS",
+        "            dp[c] = Math.min(dp[c], dp[c - coin] + 1);",
+        "        }",
+        "    }",
+        "    return dp[amount] > amount ? -1 : dp[amount];",
+        "}",
+        "",
+        "/**",
+        " * Counting version. Coins outside, amounts inside → each coin is offered once overall,",
+        " * so {1,2} and {2,1} are one combination. Swap the loops and you count permutations.",
+        " */",
+        "public static long coinCombinations(int[] coins, int amount) {",
+        "    long[] ways = new long[amount + 1];",
+        "    ways[0] = 1;                        // one way to make nothing: take nothing",
+        "    for (int coin : coins) {",
+        "        for (int c = coin; c <= amount; c++) {",
+        "            ways[c] += ways[c - coin];",
+        "        }",
+        "    }",
+        "    return ways[amount];",
+        "}"
+      ]
+    },
+    {
+      "label": "Optimized",
+      "language": "java",
+      "explanation": "The two sequence shapes. LCS is the template for every two-string problem; LIS is given twice, because the O(n²) version is what you should write first and the O(n log n) version is what the follow-up asks for.",
+      "code": [
+        "/**",
+        " * Longest common subsequence. O(a·b) time, O(a·b) space (one row is enough if you only",
+        " * need the length). dp[i][j] = LCS length of a[0..i) and b[0..j).",
+        " */",
+        "public static int longestCommonSubsequence(String a, String b) {",
+        "    int n = a.length(), m = b.length();",
+        "    int[][] dp = new int[n + 1][m + 1];   // row/col 0 stay zero: an empty prefix shares nothing",
+        "",
+        "    for (int i = 1; i <= n; i++) {",
+        "        for (int j = 1; j <= m; j++) {",
+        "            if (a.charAt(i - 1) == b.charAt(j - 1)) {",
+        "                dp[i][j] = dp[i - 1][j - 1] + 1;              // match: consume from both",
+        "            } else {",
+        "                dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);  // mismatch: drop one side",
+        "            }",
+        "        }",
+        "    }",
+        "    return dp[n][m];",
+        "}",
+        "",
+        "/**",
+        " * Edit distance — the same table, a different objective and non-zero base cases.",
+        " * O(a·b) time and space.",
+        " */",
+        "public static int editDistance(String a, String b) {",
+        "    int n = a.length(), m = b.length();",
+        "    int[][] dp = new int[n + 1][m + 1];",
+        "",
+        "    for (int i = 0; i <= n; i++) dp[i][0] = i;   // delete the whole prefix of a",
+        "    for (int j = 0; j <= m; j++) dp[0][j] = j;   // insert the whole prefix of b",
+        "",
+        "    for (int i = 1; i <= n; i++) {",
+        "        for (int j = 1; j <= m; j++) {",
+        "            if (a.charAt(i - 1) == b.charAt(j - 1)) {",
+        "                dp[i][j] = dp[i - 1][j - 1];                     // free: characters agree",
+        "            } else {",
+        "                int replace = dp[i - 1][j - 1];",
+        "                int delete  = dp[i - 1][j];",
+        "                int insert  = dp[i][j - 1];",
+        "                dp[i][j] = 1 + Math.min(replace, Math.min(delete, insert));",
+        "            }",
+        "        }",
+        "    }",
+        "    return dp[n][m];",
+        "}",
+        "",
+        "/**",
+        " * LIS, O(n²). dp[i] = length of the longest increasing subsequence ENDING at index i.",
+        " * The answer is the maximum over the whole array, not dp[n-1].",
+        " */",
+        "public static int lisQuadratic(int[] nums) {",
+        "    if (nums.length == 0) return 0;",
+        "    int[] dp = new int[nums.length];",
+        "    Arrays.fill(dp, 1);                   // every element is a subsequence of length 1",
+        "    int best = 1;",
+        "",
+        "    for (int i = 1; i < nums.length; i++) {",
+        "        for (int j = 0; j < i; j++) {",
+        "            if (nums[j] < nums[i]) dp[i] = Math.max(dp[i], dp[j] + 1);",
+        "        }",
+        "        best = Math.max(best, dp[i]);",
+        "    }",
+        "    return best;",
+        "}",
+        "",
+        "/**",
+        " * LIS, O(n log n) — patience sorting.",
+        " *",
+        " * tails[k] = the SMALLEST possible last element of an increasing subsequence of length",
+        " * k+1 seen so far. Keeping the ending as small as possible leaves the most room for",
+        " * future elements, and tails is sorted by construction, which licenses the binary search.",
+        " *",
+        " * Honest caveat: `tails` is NOT itself a subsequence of the input. Its entries are best",
+        " * known endings gathered from different subsequences, so `size` is the right answer but",
+        " * the contents of `tails` usually are not a valid LIS. Reconstructing the actual",
+        " * subsequence needs a parallel array of predecessor indices.",
+        " */",
+        "public static int lisNLogN(int[] nums) {",
+        "    int[] tails = new int[nums.length];",
+        "    int size = 0;",
+        "",
+        "    for (int x : nums) {",
+        "        // First index with tails[index] >= x (a hand-written lower_bound over [0, size)).",
+        "        int lo = 0, hi = size;",
+        "        while (lo < hi) {",
+        "            int mid = (lo + hi) >>> 1;        // >>> avoids overflow on large indices",
+        "            if (tails[mid] < x) lo = mid + 1;",
+        "            else hi = mid;",
+        "        }",
+        "        tails[lo] = x;                        // extend, or improve an existing ending",
+        "        if (lo == size) size++;               // x was larger than everything: new length",
+        "    }",
+        "    return size;",
+        "}"
+      ]
+    }
+  ],
+  "complexity": {
+    "time": "0/1 knapsack O(n · capacity); unbounded knapsack / coin change O(amount · coins); LCS and edit distance O(a · b); LIS O(n²) naively or O(n log n) with patience sorting",
+    "space": "Full tables are O(n · capacity) and O(a · b); knapsack and coin change collapse to O(capacity); LCS and edit distance collapse to O(min(a, b)) when only the value is needed; LIS is O(n) either way",
+    "why": "Every line above is the same formula from the basics lesson — states × work per state — with the state count read off the table's dimensions and O(1) work per cell. Two subtleties are worth stating explicitly in an interview. First, knapsack and coin change are **pseudo-polynomial**: the capacity axis is sized by the *value* of an input number, not by the length of the input, so capacity = 10⁹ is intractable even though n may be tiny. Say this rather than claiming 'polynomial'. Second, the space collapses are possible exactly when each row reads only the row before it — true for all four shapes — but the collapse costs you the ability to reconstruct the chosen items, because the earlier rows are gone. If the problem asks *which* items, keep the full table or a parent array. LIS's O(n log n) is a different kind of saving: it is not a smaller table but a smaller search, replacing the inner linear scan over j with a binary search over a sorted tails array."
+  },
+  "commonMistakes": [
+    {
+      "mistake": "Running the 0/1 knapsack rolling loop forwards",
+      "fix": "Forwards means `dp[c - w]` already includes the current item, so the item is used twice and you have silently solved the unbounded problem. Descending capacity is what keeps the row meaning 'before item i'."
+    },
+    {
+      "mistake": "Defining the LIS state as 'the answer for the first i elements'",
+      "fix": "That state cannot be extended, because it does not say what the subsequence ends with. Use 'longest increasing subsequence ending exactly at i', and take the maximum over the whole dp array at the end."
+    },
+    {
+      "mistake": "Returning `dp[n-1]` for LIS",
+      "fix": "The optimal subsequence need not end at the last element. The answer is `max(dp)`."
+    },
+    {
+      "mistake": "Claiming the tails array in the O(n log n) LIS is the subsequence",
+      "fix": "It is a table of best endings drawn from different subsequences and is usually not a subsequence of the input at all. Only its length is meaningful; keep predecessor indices if you must output the sequence."
+    },
+    {
+      "mistake": "Getting the ±1 offset wrong in two-sequence tables",
+      "fix": "With an extra row and column for the empty prefix, `dp[i][j]` compares `a.charAt(i-1)` with `b.charAt(j-1)`. Write that mapping in a comment before the loops."
+    },
+    {
+      "mistake": "Using zeros as the base row of edit distance",
+      "fix": "LCS's base is zero, edit distance's is not: `dp[i][0] = i` and `dp[0][j] = j`, the cost of deleting or inserting a whole prefix. Same table, different base cases."
+    },
+    {
+      "mistake": "Swapping the coin and amount loops without noticing",
+      "fix": "Coins outside counts combinations; amounts outside counts permutations. For the *minimum* number of coins either order works, but for counting they answer different questions."
+    },
+    {
+      "mistake": "Initialising a minimisation table to 0",
+      "fix": "0 wins every `Math.min` and poisons the table. Use a sentinel strictly larger than any achievable answer — `amount + 1` for coin change — and translate it back at the end."
+    },
+    {
+      "mistake": "Assuming greedy works on coin change",
+      "fix": "Greedy is optimal only for canonical coin systems. With coins {1, 3, 4} and amount 6, greedy takes 4+1+1 = 3 coins while the optimum is 3+3 = 2."
+    },
+    {
+      "mistake": "Collapsing to one row and then being asked which items were chosen",
+      "fix": "The collapse destroys the history. Keep the full table, or record a parent/choice array alongside, and walk it backwards from the final cell."
+    }
+  ],
+  "realWorldUses": [
+    "`diff`, `git merge` and every code-review tool compute a longest common subsequence over lines.",
+    "Spell check, fuzzy search and record deduplication rank candidates by edit distance.",
+    "Bioinformatics sequence alignment (Needleman–Wunsch, Smith–Waterman) is LCS with scoring matrices.",
+    "Budget and portfolio allocation under a hard spending cap is 0/1 knapsack; cargo loading and ad-slot selection are the same shape.",
+    "Cash dispensing in ATMs and change-making in point-of-sale systems are coin change, with denominations chosen so greedy happens to be safe.",
+    "Resource scheduling in cluster managers — fit jobs into a node's memory and CPU without splitting them — is multi-dimensional knapsack.",
+    "Patience sorting, the engine of the O(n log n) LIS, is also the basis of the Timsort-adjacent 'natural runs' idea and of longest-chain queries in versioned data."
+  ],
+  "interviewNotes": [
+    "Open by naming the shape: 'this is 0/1 knapsack with the target as the capacity axis'. Classification out loud is the signal that separates a level-5 answer from a level-3 one.",
+    "State the state as an English sentence before any code, exactly as in the basics lesson. For the knapsack family it is 'best result using the first i items with budget c'.",
+    "When you write the rolling-array knapsack, say why the loop descends *before* you write it. Interviewers frequently probe precisely this line, and pre-empting it is free credit.",
+    "For LIS, give the O(n²) DP first, confirm the interviewer wants better, then derive patience sorting — and volunteer that the tails array is not itself a subsequence. Volunteering the caveat reads as depth; being caught by it reads as memorisation.",
+    "Call knapsack and coin change pseudo-polynomial and explain what that means. Very few candidates do, and it is a genuine discriminator.",
+    "Ask early whether the answer is a value, a count or the actual selection. The third needs a parent array and rules out the space optimisation.",
+    "Common follow-ups: 'now items can be used k times', 'now there are two capacity constraints', 'reconstruct the chosen items', 'the strings are a million characters — what changes?'"
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "mcq",
+      "question": "In the one-row 0/1 knapsack, why must the capacity loop run from `capacity` down to `weight[i]`?",
+      "options": [
+        "It is faster in that direction because of cache locality",
+        "So that `dp[c - weight[i]]` still holds the previous row's value, keeping the item usable only once",
+        "Because array indices cannot be decremented otherwise",
+        "It makes no difference; either direction is correct"
+      ],
+      "answerIndex": 1,
+      "explanation": "Going right-to-left means the cell you read, `dp[c - weight[i]]`, has not been updated yet in this round, so it still means 'before item i was considered'. Forwards it would already include item i and the item would be taken repeatedly — which is the unbounded knapsack, not the 0/1 one."
+    },
+    {
+      "id": "q2",
+      "type": "mcq",
+      "question": "Coin change with unlimited coins uses the same array and the same update as the one-row 0/1 knapsack. What is the difference?",
+      "options": [
+        "The array is two-dimensional instead of one",
+        "The inner loop runs forwards instead of backwards",
+        "It uses `max` instead of `min`",
+        "The base case is different"
+      ],
+      "answerIndex": 1,
+      "explanation": "Forwards, `dp[c - coin]` has already been updated with this coin, so the coin can be reused — exactly what 'unlimited supply' means. A single loop direction encodes the whole distinction between the two problems."
+    },
+    {
+      "id": "q3",
+      "type": "mcq",
+      "question": "What is the LCS transition when `a.charAt(i-1) == b.charAt(j-1)`?",
+      "options": [
+        "dp[i][j] = max(dp[i-1][j], dp[i][j-1])",
+        "dp[i][j] = dp[i-1][j-1] + 1",
+        "dp[i][j] = dp[i-1][j-1]",
+        "dp[i][j] = 1 + min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1])"
+      ],
+      "answerIndex": 1,
+      "explanation": "A match pairs those two characters and consumes one from each side, so the answer is the LCS of the shorter prefixes plus one. The `max` form is the mismatch branch, and the `1 + min(...)` form is edit distance."
+    },
+    {
+      "id": "q4",
+      "type": "mcq",
+      "question": "In the O(n log n) LIS, what does `tails[k]` hold, and is `tails` a valid subsequence of the input?",
+      "options": [
+        "The k-th element of the LIS; yes, it is the answer itself",
+        "The smallest possible ending element of an increasing subsequence of length k+1; no, it is generally not a subsequence of the input",
+        "The largest element seen so far; yes",
+        "A count of subsequences of length k; no"
+      ],
+      "answerIndex": 1,
+      "explanation": "Entries of `tails` are best-known endings collected from different subsequences, so the array's length is the correct LIS length while its contents typically do not appear in that order in the input. For `[10, 9, 2, 5, 3, 7]`, tails ends as [2, 3, 7] by coincidence, but on other inputs it does not — reconstructing the real subsequence needs predecessor indices."
+    },
+    {
+      "id": "q5",
+      "type": "complexity",
+      "question": "What is the time complexity of the 0/1 knapsack DP, and why is calling it 'polynomial' misleading?",
+      "options": [
+        "O(n log n); it is genuinely polynomial",
+        "O(2ⁿ); DP does not help here",
+        "O(n · capacity); it is pseudo-polynomial because the capacity axis is sized by an input *value*, not by the input's length",
+        "O(n²); capacity does not affect the running time"
+      ],
+      "answerIndex": 2,
+      "explanation": "The table has n × (capacity + 1) cells at O(1) each. But `capacity` is a number in the input, and writing it takes only log(capacity) bits — so the running time is exponential in the input *size*. Capacity of 10⁹ with n = 5 is intractable despite the tiny item count."
+    },
+    {
+      "id": "q6",
+      "type": "identify-pattern",
+      "question": "'Given an array of positive integers, can it be partitioned into two subsets with equal sums?' Which shape?",
+      "options": [
+        "Unbounded knapsack — each value may be reused",
+        "0/1 knapsack — each number is taken at most once, with target = total/2 as the capacity axis",
+        "Longest common subsequence over the array and its reverse",
+        "Sliding window over the array"
+      ],
+      "answerIndex": 1,
+      "explanation": "If one subset sums to half the total, the rest does too, so the question is 'can a subset hit exactly total/2?' — subset sum, which is 0/1 knapsack with value = weight and a boolean table. An odd total is an immediate no."
+    },
+    {
+      "id": "q7",
+      "type": "mcq",
+      "question": "For counting the ways to make an amount from unlimited coins, why does looping coins on the outside and amounts on the inside matter?",
+      "options": [
+        "It is only a performance optimisation",
+        "It counts each combination once; the reverse order counts ordered permutations, so {1,2} and {2,1} would be two answers",
+        "It avoids integer overflow",
+        "It has no effect on the result"
+      ],
+      "answerIndex": 1,
+      "explanation": "With coins outside, a coin is offered to the whole table once and never revisited, so a multiset is built in one fixed order — combinations. With amounts outside, every coin is reconsidered at each amount, which distinguishes orderings. Decide which the problem statement wants and say so."
+    }
+  ],
+  "practiceProblems": [
+    "longest-increasing-subsequence",
+    "longest-common-subsequence",
+    "target-sum",
+    "edit-distance",
+    "best-time-buy-sell-cooldown",
+    "partition-equal-subset-sum",
+    "coin-change"
+  ],
+  "related": [
+    "dynamic-programming-basics",
+    "recursion",
+    "binary-search",
+    "backtracking",
+    "big-o"
+  ]
+}

@@ -1,0 +1,116 @@
+{
+  "id": "binary-search-basic",
+  "title": "Binary Search",
+  "patternId": "binary-search",
+  "difficulty": "beginner",
+  "tags": [
+    "array",
+    "binary-search",
+    "sorted"
+  ],
+  "statement": "Given a sorted array of distinct integers and a target, return the index of the target, or -1 if it is not present. Your algorithm must run in O(log n).",
+  "realWorld": "Every index lookup in a database, every version resolution in a package manager, and `git bisect` are this algorithm with a different predicate.",
+  "examples": [
+    {
+      "input": "nums = [-1,0,3,5,9,12], target = 9",
+      "output": "4",
+      "explanation": ""
+    },
+    {
+      "input": "nums = [-1,0,3,5,9,12], target = 2",
+      "output": "-1",
+      "explanation": "Not present."
+    }
+  ],
+  "constraints": [
+    "1 <= nums.length <= 10^4",
+    "All values are distinct and sorted ascending"
+  ],
+  "bruteForce": {
+    "idea": "Scan from the start until you find the target.",
+    "code": [
+      "for (int i = 0; i < nums.length; i++) {",
+      "    if (nums[i] == target) return i;",
+      "}",
+      "return -1;"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(1)"
+    },
+    "whySlow": "It discards sortedness. Comparing against the middle element reveals which half the answer is in; a linear scan learns nothing from each comparison beyond that one cell."
+  },
+  "patternIdentification": "Sorted input plus an explicit O(log n) requirement. The halving structure is being asked for by name.",
+  "optimized": {
+    "idea": "Track a candidate range. Compare with the midpoint and discard the half that cannot contain the target.",
+    "code": [
+      "public static int search(int[] nums, int target) {",
+      "    int low = 0;",
+      "    int high = nums.length - 1;",
+      "",
+      "    while (low <= high) {",
+      "        int mid = low + (high - low) / 2;   // overflow-safe",
+      "        if (nums[mid] == target) {",
+      "            return mid;",
+      "        } else if (nums[mid] < target) {",
+      "            low = mid + 1;",
+      "        } else {",
+      "            high = mid - 1;",
+      "        }",
+      "    }",
+      "    return -1;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(log n)",
+      "space": "O(1)"
+    }
+  },
+  "visualization": {
+    "engine": "binarySearch",
+    "input": {
+      "array": [
+        2,
+        5,
+        8,
+        12,
+        16,
+        23,
+        38,
+        56,
+        72,
+        91
+      ],
+      "target": 23
+    },
+    "code": [
+      "int low = 0, high = nums.length - 1;",
+      "while (low <= high) {",
+      "    int mid = low + (high - low) / 2;",
+      "    if (nums[mid] == target) return mid;",
+      "    if (nums[mid] < target) low = mid + 1;",
+      "    else                    high = mid - 1;",
+      "}",
+      "return -1;"
+    ]
+  },
+  "commonMistakes": [
+    "mid = (low + high) / 2 overflows for large indices — a real JDK bug for nine years.",
+    "Using low < high with mid +/- 1, which can skip the final candidate.",
+    "Assigning low = mid instead of mid + 1, producing an infinite loop."
+  ],
+  "similar": [
+    "search-rotated-array",
+    "koko-eating-bananas"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 704,
+      "slug": "binary-search",
+      "title": "Binary Search",
+      "url": "https://leetcode.com/problems/binary-search/",
+      "premium": false
+    },
+    "note": "LeetCode 704 is exactly this problem: an exact-match search on a sorted array."
+  }
+}

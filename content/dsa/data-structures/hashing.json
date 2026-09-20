@@ -1,0 +1,311 @@
+{
+  "id": "hashing",
+  "kind": "data-structure",
+  "title": "Hashing — HashMap & HashSet",
+  "group": "Arrays & Strings",
+  "level": 1,
+  "difficulty": "beginner",
+  "estimatedMinutes": 30,
+  "summary": "Turn a key into an array index with a hash function, and lookup by key becomes O(1) instead of O(n) — the single most useful trade of memory for time in interviews.",
+  "prerequisites": [
+    "arrays"
+  ],
+  "tags": [
+    "hashmap",
+    "hashset",
+    "hashing",
+    "lookup",
+    "level-1"
+  ],
+  "analogy": {
+    "beginner": "A coat check at a theatre. Without one, finding your coat means searching every hook. With one, the attendant looks at your ticket number and walks straight to that hook. The ticket number *is* the location. Hashing invents a ticket number from the coat itself, so you don't have to be given one.",
+    "interview": "A hash table maps keys to buckets via `index = hash(key) mod capacity`, giving expected O(1) lookup, insert and delete under a bounded load factor. Collisions are resolved by chaining (Java: linked nodes, converting to a red-black tree past 8 entries in a bucket) or open addressing. Worst case degrades to O(n), or O(log n) in Java's treeified buckets."
+  },
+  "intuition": "Arrays already give O(1) lookup — but only by *position*. Hashing extends that to lookup by *anything*: a name, an order ID, a whole object.\n\nThe trick is to compute a number from the key and use it as the index. `\"aruna\"` hashes to some integer; take it modulo the table size and you get a slot. Storing and retrieving both run the same computation, so they land on the same slot.\n\nTwo keys can land on the same slot — a collision — which is unavoidable because there are infinitely many possible keys and finitely many slots. So each slot holds a small list. As long as collisions stay rare (Java resizes when the table is 75% full), those lists stay short and lookup stays effectively constant.\n\nThe practical payoff: whenever your inner loop exists only to answer *'have I seen this? what was it paired with? how many times did it appear?'*, a hash structure deletes that loop, and O(n²) becomes O(n).",
+  "problemFirst": {
+    "motivatingProblem": "Given an array of numbers and a target, return the indices of the two numbers that add up to the target.",
+    "bruteForce": {
+      "idea": "Try every pair. For each element, scan the rest of the array looking for the partner that completes the target.",
+      "code": [
+        "for (int i = 0; i < nums.length; i++) {",
+        "    for (int j = i + 1; j < nums.length; j++) {",
+        "        if (nums[i] + nums[j] == target) {",
+        "            return new int[]{i, j};",
+        "        }",
+        "    }",
+        "}",
+        "return new int[]{-1, -1};"
+      ],
+      "complexity": {
+        "time": "O(n²)",
+        "space": "O(1)"
+      },
+      "whySlow": "n(n-1)/2 pairs. At n = 100,000 that is 5 billion comparisons — minutes, not milliseconds. And notice the inner loop re-scans elements we have already walked past many times over."
+    },
+    "observation": "The inner loop is asking one question: 'is the value `target - nums[i]` somewhere in this array?' That question does not need a scan — it needs a lookup.",
+    "leap": "Remember every value we have already passed in a HashMap from value → index. Then the partner check is O(1), one pass is enough, and n² collapses to n.",
+    "optimizedSketch": [
+      "Map<Integer, Integer> seen = new HashMap<>();",
+      "for (int i = 0; i < nums.length; i++) {",
+      "    int need = target - nums[i];",
+      "    if (seen.containsKey(need)) return new int[]{seen.get(need), i};",
+      "    seen.put(nums[i], i);",
+      "}"
+    ]
+  },
+  "howItWorks": [
+    "`hashCode()` turns the key into a 32-bit int. Java then mixes the high bits down (`h ^ (h >>> 16)`) so that poorly distributed hashes still spread out.",
+    "`index = hash & (capacity - 1)` — capacity is always a power of two, so the mask is a cheap replacement for modulo.",
+    "If the bucket is empty, store the entry. If not, it's a collision: append to that bucket's chain (Java converts a chain of 8+ into a red-black tree, bounding the worst case at O(log n)).",
+    "Lookup repeats the same computation, then walks the (short) chain comparing with `equals()`.",
+    "When size exceeds `capacity × 0.75`, the table doubles and every entry is rehashed — an O(n) event, amortised to O(1) per insert.",
+    "**`HashSet` is a `HashMap` with a dummy value.** Same mechanics, keys only."
+  ],
+  "patternRecognition": {
+    "signals": [
+      "'have I seen this before?' — duplicates, first unique, cycle detection on values",
+      "'how many times does each X appear?' — frequency counting",
+      "'find the pair/group that satisfies…' — complement lookup, anagram grouping",
+      "You are about to write a nested loop whose inner loop only searches"
+    ],
+    "antiSignals": [
+      "You need sorted order or range queries (use a TreeMap, O(log n))",
+      "Memory is tight — a hash map costs roughly 32–48 bytes of overhead per entry",
+      "Keys are dense small integers — a plain array is faster and smaller"
+    ],
+    "decisionTreeId": "which-data-structure"
+  },
+  "visualizations": [
+    {
+      "id": "hash-buckets",
+      "title": "Hash, bucket, collision, chain",
+      "engine": "hashingOps",
+      "input": {
+        "capacity": 8,
+        "operations": [
+          {
+            "op": "put",
+            "key": "aruna",
+            "value": 1
+          },
+          {
+            "op": "put",
+            "key": "nirmala",
+            "value": 2
+          },
+          {
+            "op": "put",
+            "key": "raj",
+            "value": 3
+          },
+          {
+            "op": "put",
+            "key": "sita",
+            "value": 4
+          },
+          {
+            "op": "get",
+            "key": "raj"
+          },
+          {
+            "op": "get",
+            "key": "absent"
+          },
+          {
+            "op": "remove",
+            "key": "nirmala"
+          }
+        ]
+      },
+      "code": [
+        "int h = key.hashCode();",
+        "h = h ^ (h >>> 16);            // mix high bits down",
+        "int index = h & (capacity - 1); // cheap modulo for power-of-two capacity",
+        "// bucket empty  -> store here",
+        "// bucket taken  -> walk the chain, compare with equals()"
+      ]
+    },
+    {
+      "id": "two-sum-map",
+      "title": "Two Sum: one pass with a map",
+      "engine": "twoSumHash",
+      "input": {
+        "array": [
+          2,
+          7,
+          11,
+          15,
+          3
+        ],
+        "target": 18
+      },
+      "code": [
+        "Map<Integer, Integer> seen = new HashMap<>();",
+        "for (int i = 0; i < nums.length; i++) {",
+        "    int need = target - nums[i];",
+        "    if (seen.containsKey(need)) {",
+        "        return new int[]{ seen.get(need), i };",
+        "    }",
+        "    seen.put(nums[i], i);",
+        "}",
+        "return new int[]{-1, -1};"
+      ]
+    }
+  ],
+  "implementations": [
+    {
+      "label": "Simple",
+      "language": "java",
+      "explanation": "The three uses that cover most interview questions: membership, counting, and grouping.",
+      "code": [
+        "// 1. Membership — 'have I seen this?'",
+        "Set<Integer> seen = new HashSet<>();",
+        "for (int x : nums) {",
+        "    if (!seen.add(x)) return true;   // add() returns false if already present",
+        "}",
+        "return false;",
+        "",
+        "// 2. Frequency counting",
+        "Map<Character, Integer> freq = new HashMap<>();",
+        "for (char c : s.toCharArray()) {",
+        "    freq.put(c, freq.getOrDefault(c, 0) + 1);",
+        "}",
+        "",
+        "// 3. Grouping by a derived key",
+        "Map<String, List<String>> groups = new HashMap<>();",
+        "for (String word : words) {",
+        "    char[] letters = word.toCharArray();",
+        "    Arrays.sort(letters);",
+        "    String key = new String(letters);",
+        "    groups.computeIfAbsent(key, k -> new ArrayList<>()).add(word);",
+        "}"
+      ]
+    },
+    {
+      "label": "Optimized",
+      "language": "java",
+      "explanation": "Idiomatic, allocation-aware versions. `merge` and `computeIfAbsent` do one hash lookup instead of two or three. For counting characters in ASCII strings, an `int[128]` beats any HashMap — same O(1), zero boxing, perfect cache behaviour.",
+      "code": [
+        "// One lookup instead of get-then-put",
+        "freq.merge(c, 1, Integer::sum);",
+        "groups.computeIfAbsent(key, k -> new ArrayList<>()).add(word);",
+        "",
+        "// For a small, known key space, skip hashing entirely",
+        "int[] count = new int[26];",
+        "for (char c : s.toCharArray()) count[c - 'a']++;",
+        "",
+        "// Pre-size to avoid rehashing when you know roughly how many entries",
+        "Map<String, Integer> m = new HashMap<>(expectedSize * 4 / 3 + 1);",
+        "",
+        "// Custom keys MUST override hashCode and equals together",
+        "record Point(int x, int y) { }   // records generate both correctly"
+      ]
+    }
+  ],
+  "complexity": {
+    "time": "Average O(1) for get/put/remove/contains; worst case O(n), or O(log n) in Java once a bucket treeifies",
+    "space": "O(n), with meaningful constant-factor overhead per entry",
+    "why": "Average O(1) holds because the load factor is bounded at 0.75, so the expected chain length is under 1 — a lookup touches roughly one entry no matter how large the map is. The worst case arises when every key collides (a pathological or adversarial hash function); Java mitigates this by treeifying long buckets. Resizing is O(n) but happens only when the map doubles, so it amortises to O(1) per insert."
+  },
+  "commonMistakes": [
+    {
+      "mistake": "Overriding `equals` but not `hashCode`",
+      "fix": "Two 'equal' objects then land in different buckets and the map loses them. Always override both — or use a `record`."
+    },
+    {
+      "mistake": "Mutating a key after inserting it",
+      "fix": "Its hash changes, so it is now in the wrong bucket and is unreachable. Use immutable keys."
+    },
+    {
+      "mistake": "Assuming iteration order",
+      "fix": "`HashMap` order is unspecified and changes on resize. Use `LinkedHashMap` for insertion order, `TreeMap` for sorted order."
+    },
+    {
+      "mistake": "`map.get(key)` returning null and NPE-ing on unboxing",
+      "fix": "Use `getOrDefault`, or keep the value as `Integer` and null-check."
+    },
+    {
+      "mistake": "Using a HashMap where an array would do",
+      "fix": "For keys 0…25 or 0…127, an array is faster, smaller, and simpler."
+    }
+  ],
+  "realWorldUses": [
+    "Database indexes (hash indexes), in-memory caches, and Redis itself are hash tables at heart.",
+    "Request de-duplication and idempotency keys in payment systems — 'have I processed this request ID?'",
+    "Consistent hashing distributes keys across shards or cache nodes — see the Sharding lesson in System Design.",
+    "Compilers use hash maps for symbol tables; routers use them for flow tables."
+  ],
+  "interviewNotes": [
+    "'Can you do it in one pass?' almost always means 'use a hash map'.",
+    "Be ready to state the space cost — O(n) extra memory is the price of removing the inner loop, and interviewers want you to name the trade.",
+    "Know the worst case and why Java treeifies buckets; it separates people who have read the implementation from people who have not."
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "mcq",
+      "question": "What is the average time complexity of `HashMap.get`?",
+      "options": [
+        "O(1)",
+        "O(log n)",
+        "O(n)",
+        "O(n log n)"
+      ],
+      "answerIndex": 0,
+      "explanation": "With a bounded load factor the expected bucket chain is under one entry, so a lookup costs a constant number of operations independent of map size."
+    },
+    {
+      "id": "q2",
+      "type": "mcq",
+      "question": "You override `equals` on a class and use it as a HashMap key, but lookups fail. Why?",
+      "options": [
+        "HashMap does not support custom classes",
+        "You did not also override `hashCode`, so equal objects hash to different buckets",
+        "The map needs to be sorted first",
+        "You must implement Comparable"
+      ],
+      "answerIndex": 1,
+      "explanation": "Lookup finds the bucket by hash first and only then compares with equals. If hashCode is inconsistent with equals, the lookup never reaches the right bucket."
+    },
+    {
+      "id": "q3",
+      "type": "identify-pattern",
+      "question": "'Find the first character in a string that appears exactly once.' What is the natural approach?",
+      "options": [
+        "Sort the string",
+        "Two nested loops",
+        "One pass to count frequencies in a map, a second pass to find the first with count 1",
+        "Binary search"
+      ],
+      "answerIndex": 2,
+      "explanation": "Two O(n) passes with O(1) lookups = O(n) total, versus O(n²) for nested loops. This count-then-scan shape covers a large family of string problems."
+    },
+    {
+      "id": "q4",
+      "type": "mcq",
+      "question": "When should you prefer a TreeMap over a HashMap?",
+      "options": [
+        "When you need faster lookups",
+        "When you need keys in sorted order or range queries like 'all keys between 10 and 50'",
+        "When keys are strings",
+        "When the map is small"
+      ],
+      "answerIndex": 1,
+      "explanation": "TreeMap is O(log n) rather than O(1), so you pay for the ordering. You pay it only when you actually need sorted iteration, floor/ceiling, or range views."
+    }
+  ],
+  "practiceProblems": [
+    "two-sum",
+    "contains-duplicate",
+    "first-unique-character",
+    "valid-anagram",
+    "group-anagrams",
+    "four-sum-count",
+    "longest-consecutive-sequence"
+  ],
+  "related": [
+    "arrays",
+    "big-o",
+    "sliding-window"
+  ]
+}

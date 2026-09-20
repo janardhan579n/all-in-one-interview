@@ -1,0 +1,87 @@
+{
+  "id": "binary-search",
+  "title": "Can I binary search this?",
+  "start": "n1",
+  "nodes": {
+    "n1": {
+      "type": "question",
+      "text": "Is there an ordered search space — a sorted array, or a range of candidate answers?",
+      "options": [
+        {
+          "label": "Yes",
+          "next": "n2"
+        },
+        {
+          "label": "No",
+          "next": "r-no"
+        }
+      ]
+    },
+    "n2": {
+      "type": "question",
+      "text": "Is there a yes/no test that, once it flips, never flips back (a monotonic predicate)?",
+      "options": [
+        {
+          "label": "Yes",
+          "next": "n3"
+        },
+        {
+          "label": "No",
+          "next": "r-no"
+        }
+      ]
+    },
+    "n3": {
+      "type": "question",
+      "text": "Are you searching an array for a value, or searching a range of possible answers?",
+      "options": [
+        {
+          "label": "An array",
+          "next": "n4"
+        },
+        {
+          "label": "A range of answers ('minimum X such that…')",
+          "next": "r-answer"
+        }
+      ]
+    },
+    "n4": {
+      "type": "question",
+      "text": "Do you need an exact match, or the first/last position satisfying a condition?",
+      "options": [
+        {
+          "label": "Exact match",
+          "next": "r-exact"
+        },
+        {
+          "label": "A boundary",
+          "next": "r-boundary"
+        }
+      ]
+    },
+    "r-exact": {
+      "type": "result",
+      "text": "Classic binary search",
+      "detail": "while (low <= high) with low = mid+1 / high = mid-1. Use the overflow-safe midpoint.",
+      "lessonId": "binary-search"
+    },
+    "r-boundary": {
+      "type": "result",
+      "text": "Lower/upper bound binary search",
+      "detail": "while (low < high) with high = mid (keep mid — it may be the boundary) and low = mid+1. `low` is the answer on exit.",
+      "lessonId": "binary-search"
+    },
+    "r-answer": {
+      "type": "result",
+      "text": "Binary search on the answer",
+      "detail": "Binary search the candidate range; each probe runs a feasibility check. Total O(n log range). Watch for overflow in the feasibility function.",
+      "lessonId": "binary-search"
+    },
+    "r-no": {
+      "type": "result",
+      "text": "Binary search does not apply",
+      "detail": "Without monotonicity, halving can discard the answer. Consider hashing, a linear scan, or sorting first if you will search many times.",
+      "lessonId": "big-o"
+    }
+  }
+}

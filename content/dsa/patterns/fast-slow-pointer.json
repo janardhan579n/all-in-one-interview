@@ -1,0 +1,340 @@
+{
+  "id": "fast-slow-pointer",
+  "kind": "pattern",
+  "title": "Fast & Slow Pointer (Floyd's Cycle Detection)",
+  "group": "Linked List",
+  "level": 2,
+  "difficulty": "intermediate",
+  "estimatedMinutes": 30,
+  "summary": "Move one pointer twice as fast as the other; if there is a loop they must meet, and when the fast one finishes the slow one is exactly halfway.",
+  "prerequisites": [
+    "linked-list",
+    "two-pointers"
+  ],
+  "tags": [
+    "linked-list",
+    "cycle",
+    "tortoise-hare",
+    "level-2"
+  ],
+  "analogy": {
+    "beginner": "Two runners on a track, one twice as fast as the other. On a straight road the fast one finishes and that's that. On a circular track the fast runner eventually laps the slow one — and they end up standing at the same point. So: if they ever meet, the track was a loop. That single observation needs no extra paper, no list of places you've been.",
+    "interview": "Floyd's tortoise-and-hare. Advance slow by one and fast by two. In a ρ-shaped list the hare enters the cycle and closes the gap to the tortoise by one node per step, so a meeting is guaranteed in O(n) steps with O(1) auxiliary space — as opposed to the O(n)-space HashSet approach."
+  },
+  "intuition": "Two very different results come from the same three lines of code.\n\n**Cycle detection.** Once both pointers are inside a loop, the gap between them shrinks by exactly one per step (fast gains 2, slow gains 1). A gap that decreases by one every step and lives on a finite ring must reach zero. So a meeting is not luck — it is arithmetic. And crucially, no meeting means no cycle.\n\n**Finding the middle.** When fast has travelled 2k steps, slow has travelled k. So at the moment fast hits the end, slow is at the midpoint. One pass, no length calculation.\n\nThe reason this pattern is worth its own lesson is the **space**. You could detect a cycle with a `HashSet` of visited nodes in O(n) memory, and for most purposes that is fine. But two pointers do it in O(1) — and 'can you do it in constant space?' is the follow-up question in roughly every linked-list interview.\n\nThe cycle-*entry* proof is the elegant part, and it is worth understanding rather than memorising: let the tail before the cycle be length `a`, and let the meeting point be `b` nodes into the cycle of length `c`. Slow has walked `a + b`; fast has walked `a + b + mc` for some whole number of extra laps `m`. Fast walked twice as far, so `2(a + b) = a + b + mc`, which gives `a + b = mc`, i.e. `a = mc - b`. In words: **the distance from the head to the cycle entry equals the distance from the meeting point onwards to the cycle entry** (modulo whole laps). So restart one pointer at the head, step both one at a time, and they meet precisely at the entry.",
+  "problemFirst": {
+    "motivatingProblem": "Determine whether a linked list loops back on itself. Naively traversing it would run forever.",
+    "bruteForce": {
+      "idea": "Remember every node you have visited. If you arrive somewhere twice, there is a cycle.",
+      "code": [
+        "Set<Node> seen = new HashSet<>();",
+        "for (Node cur = head; cur != null; cur = cur.next) {",
+        "    if (!seen.add(cur)) {",
+        "        return true;   // arrived somewhere we have already been",
+        "    }",
+        "}",
+        "return false;"
+      ],
+      "complexity": {
+        "time": "O(n)",
+        "space": "O(n)"
+      },
+      "whySlow": "The time is already optimal — the problem is the memory. Storing a reference for every node doubles the footprint of the structure you are inspecting, which is unacceptable for a huge list and is exactly what the interviewer will push back on."
+    },
+    "observation": "We do not actually need the *identity* of every visited node. We only need to know whether the path loops. And on a loop, a faster traveller must eventually catch a slower one.",
+    "leap": "Two pointers, speeds 1 and 2. Meeting proves a cycle; reaching the end proves none. O(1) space, no bookkeeping at all."
+  },
+  "howItWorks": [
+    "**Set up**: `slow = head`, `fast = head`.",
+    "**Loop while** `fast != null && fast.next != null` — both checks are required, because you are about to do `fast.next.next`.",
+    "**Advance**: `slow = slow.next; fast = fast.next.next;`",
+    "**Cycle detection** — if `slow == fast` at any point, there is a cycle. Exiting the loop means no cycle.",
+    "**Middle node** — when the loop exits, `slow` is at the middle. Starting `fast = head` gives the first of two middles for an even-length list; starting `fast = head.next` gives the second.",
+    "**Cycle entry** — after a meeting, reset one pointer to `head` and advance both by one; they meet at the entry node.",
+    "**Cycle length** — from the meeting point, walk one pointer around until it returns; count the steps.",
+    "**Beyond lists** — the same trick works on any 'function iteration' sequence, such as `next = nums[nums[i]]` in Find the Duplicate Number, or the digit-square sequence in Happy Number."
+  ],
+  "patternRecognition": {
+    "signals": [
+      "'Does this linked list have a cycle?' / 'where does the cycle start?'",
+      "'Find the middle of the linked list' in one pass",
+      "'Nth node from the end' — offset the pointers by n instead of using different speeds",
+      "The follow-up 'can you do it with O(1) extra space?'",
+      "Any sequence defined by repeatedly applying a function, where you need to detect repetition"
+    ],
+    "antiSignals": [
+      "You need to know *which* nodes were visited, not just that a repeat happened",
+      "Random access is available (an array index cycle can be detected by marking values in place)",
+      "The structure is a tree — trees are acyclic by definition"
+    ],
+    "decisionTreeId": null
+  },
+  "visualizations": [
+    {
+      "id": "find-middle",
+      "title": "Finding the middle in one pass",
+      "engine": "fastSlowPointer",
+      "input": {
+        "values": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "mode": "middle"
+      },
+      "code": [
+        "Node slow = head, fast = head;",
+        "while (fast != null && fast.next != null) {",
+        "    slow = slow.next;",
+        "    fast = fast.next.next;",
+        "}",
+        "return slow;   // fast walked 2k, slow walked k"
+      ]
+    },
+    {
+      "id": "detect-cycle",
+      "title": "Cycle detection — the gap closes by one each step",
+      "engine": "fastSlowPointer",
+      "input": {
+        "values": [
+          3,
+          2,
+          0,
+          -4,
+          9,
+          6
+        ],
+        "cycleAt": 2,
+        "mode": "cycle"
+      },
+      "code": [
+        "Node slow = head, fast = head;",
+        "while (fast != null && fast.next != null) {",
+        "    slow = slow.next;",
+        "    fast = fast.next.next;",
+        "    if (slow == fast) {",
+        "        return true;   // they met: there is a cycle",
+        "    }",
+        "}",
+        "return false;          // fast reached the end: no cycle"
+      ]
+    },
+    {
+      "id": "cycle-entry",
+      "title": "Finding where the cycle begins",
+      "engine": "fastSlowPointer",
+      "input": {
+        "values": [
+          3,
+          2,
+          0,
+          -4,
+          9,
+          6
+        ],
+        "cycleAt": 2,
+        "mode": "entry"
+      },
+      "code": [
+        "// phase 1: find the meeting point",
+        "// phase 2: reset one pointer to head, step both by ONE",
+        "Node p = head;",
+        "while (p != slow) {",
+        "    p = p.next;",
+        "    slow = slow.next;",
+        "}",
+        "return p;   // the cycle entry"
+      ]
+    }
+  ],
+  "implementations": [
+    {
+      "label": "Simple",
+      "language": "java",
+      "explanation": "The two core uses. The loop guard `fast != null && fast.next != null` is doing real work — it is what makes the code safe for both odd and even lengths, and Java's short-circuit `&&` is what stops the second check from NPE-ing.",
+      "code": [
+        "/** True if the list contains a cycle. O(n) time, O(1) space. */",
+        "public static boolean hasCycle(Node head) {",
+        "    Node slow = head, fast = head;",
+        "    while (fast != null && fast.next != null) {",
+        "        slow = slow.next;",
+        "        fast = fast.next.next;",
+        "        if (slow == fast) return true;",
+        "    }",
+        "    return false;",
+        "}",
+        "",
+        "/** Middle node. For even length returns the SECOND middle. O(n) time, O(1) space. */",
+        "public static Node middleNode(Node head) {",
+        "    Node slow = head, fast = head;",
+        "    while (fast != null && fast.next != null) {",
+        "        slow = slow.next;",
+        "        fast = fast.next.next;",
+        "    }",
+        "    return slow;",
+        "}"
+      ]
+    },
+    {
+      "label": "Optimized",
+      "language": "java",
+      "explanation": "The full Floyd algorithm: detect, then locate the entry, then measure the cycle. Phase 2 is the part worth being able to justify — see the algebra in the intuition section.",
+      "code": [
+        "/** First node of the cycle, or null. O(n) time, O(1) space. */",
+        "public static Node cycleStart(Node head) {",
+        "    Node slow = head, fast = head;",
+        "",
+        "    // Phase 1 — find a meeting point inside the cycle",
+        "    while (fast != null && fast.next != null) {",
+        "        slow = slow.next;",
+        "        fast = fast.next.next;",
+        "        if (slow == fast) {",
+        "            // Phase 2 — a = mc - b, so walking from head and from the",
+        "            // meeting point at the same speed converges on the entry",
+        "            Node walker = head;",
+        "            while (walker != slow) {",
+        "                walker = walker.next;",
+        "                slow   = slow.next;",
+        "            }",
+        "            return walker;",
+        "        }",
+        "    }",
+        "    return null;   // no cycle",
+        "}",
+        "",
+        "/** Number of nodes in the cycle, or 0. */",
+        "public static int cycleLength(Node meetingPoint) {",
+        "    if (meetingPoint == null) return 0;",
+        "    int length = 1;",
+        "    for (Node cur = meetingPoint.next; cur != meetingPoint; cur = cur.next) {",
+        "        length++;",
+        "    }",
+        "    return length;",
+        "}",
+        "",
+        "/** Same idea without a list: Find the Duplicate Number, O(1) space. */",
+        "public static int findDuplicate(int[] nums) {",
+        "    int slow = nums[0], fast = nums[0];",
+        "    do {",
+        "        slow = nums[slow];",
+        "        fast = nums[nums[fast]];",
+        "    } while (slow != fast);",
+        "",
+        "    slow = nums[0];",
+        "    while (slow != fast) {",
+        "        slow = nums[slow];",
+        "        fast = nums[fast];",
+        "    }",
+        "    return slow;",
+        "}"
+      ]
+    }
+  ],
+  "complexity": {
+    "time": "O(n)",
+    "space": "O(1)",
+    "why": "Before the cycle, the hare covers the `a`-node tail in a/2 steps. Inside the cycle the gap closes by exactly one node per step, so at most `c` more steps are needed for a cycle of length c. Both are bounded by n, giving O(n) overall. Phase 2 walks at most `a` steps. The space is genuinely constant — two references, regardless of list size — which is the entire reason to prefer this over the HashSet solution."
+  },
+  "commonMistakes": [
+    {
+      "mistake": "Guarding only with `fast != null`",
+      "fix": "`fast.next.next` then NPEs on even-length lists. You need `fast != null && fast.next != null`, in that order."
+    },
+    {
+      "mistake": "Starting `fast = head.next` and comparing before advancing",
+      "fix": "The pointers start unequal, which changes the meeting condition. Start both at `head` and compare *after* moving."
+    },
+    {
+      "mistake": "Expecting the meeting point to be the cycle entry",
+      "fix": "It almost never is. Phase 2 — restart from the head at equal speed — is required."
+    },
+    {
+      "mistake": "Returning the wrong middle for even-length lists",
+      "fix": "`fast = head` gives the second middle; `fast = head.next` gives the first. Decide which the problem wants and say so."
+    },
+    {
+      "mistake": "Comparing node values instead of references",
+      "fix": "`slow.val == fast.val` is true for duplicate values without any cycle. Compare with `==` on the references."
+    }
+  ],
+  "realWorldUses": [
+    "Detecting reference cycles in memory — garbage collectors and leak detectors need exactly this.",
+    "Finding loops in linked data: symlink loops in filesystems, circular imports, redirect loops in HTTP.",
+    "Cycle detection in pseudo-random number generator sequences, and in Pollard's rho integer factorisation.",
+    "Deadlock detection on a wait-for graph reduces to finding a cycle."
+  ],
+  "interviewNotes": [
+    "Give the HashSet solution first, state its O(n) space, then produce the O(1) version. That sequence shows you can optimise deliberately rather than only reciting a trick.",
+    "Be ready to justify why a meeting is guaranteed — 'the gap shrinks by one per step inside a finite cycle' is enough.",
+    "Find the Duplicate Number is the question that reveals whether you understood the pattern or memorised the linked-list case."
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "mcq",
+      "question": "Why must fast and slow meet if the list contains a cycle?",
+      "options": [
+        "Because the list is finite",
+        "Once both are inside the cycle, the gap between them shrinks by exactly one node per step and cannot skip zero",
+        "Because fast moves twice as fast",
+        "They might not meet — it is probabilistic"
+      ],
+      "answerIndex": 1,
+      "explanation": "Fast gains one net node per step. A non-negative gap on a finite ring that decreases by exactly one each step must reach zero — it cannot jump over it."
+    },
+    {
+      "id": "q2",
+      "type": "complexity",
+      "question": "What is the space complexity of Floyd's cycle detection?",
+      "options": [
+        "O(1)",
+        "O(log n)",
+        "O(n)",
+        "O(n²)"
+      ],
+      "answerIndex": 0,
+      "explanation": "Two references, regardless of list length. That is the entire advantage over the HashSet approach, which is also O(n) time but O(n) space."
+    },
+    {
+      "id": "q3",
+      "type": "predict-output",
+      "question": "For the list 1→2→3→4→5→6 (no cycle), where is `slow` when the loop `while (fast != null && fast.next != null)` exits, starting both at head?",
+      "options": [
+        "At 3",
+        "At 4",
+        "At 5",
+        "At null"
+      ],
+      "answerIndex": 1,
+      "explanation": "Steps: slow 1→2→3→4, fast 1→3→5→null. With an even length and both starting at the head, slow lands on the second middle, node 4."
+    },
+    {
+      "id": "q4",
+      "type": "mcq",
+      "question": "After the pointers meet inside a cycle, how do you find the cycle's first node?",
+      "options": [
+        "The meeting point is the first node",
+        "Reset one pointer to the head, then advance both one step at a time until they meet",
+        "Walk backwards from the meeting point",
+        "It cannot be done in O(1) space"
+      ],
+      "answerIndex": 1,
+      "explanation": "From 2(a+b) = a+b+mc we get a = mc-b: the head-to-entry distance equals the meeting-point-to-entry distance modulo whole laps. Equal-speed walking therefore converges exactly at the entry."
+    }
+  ],
+  "practiceProblems": [
+    "middle-of-linked-list",
+    "happy-number",
+    "linked-list-cycle",
+    "palindrome-linked-list",
+    "find-duplicate-number"
+  ],
+  "related": [
+    "linked-list",
+    "two-pointers"
+  ]
+}

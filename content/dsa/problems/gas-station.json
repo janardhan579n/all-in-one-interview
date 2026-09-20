@@ -1,0 +1,111 @@
+{
+  "id": "gas-station",
+  "title": "Gas Station",
+  "patternId": "greedy",
+  "difficulty": "advanced",
+  "tags": [
+    "array",
+    "greedy",
+    "prefix-sum",
+    "circular"
+  ],
+  "statement": "There are n gas stations arranged in a circle. Station i has gas[i] units of fuel, and travelling from station i to station i+1 costs cost[i] units. Starting with an empty tank at some station and driving clockwise, return the index of the only station from which you can complete the full circuit, or -1 if no such station exists. The answer is guaranteed to be unique when it exists.",
+  "realWorld": "Any circular route with a budget that is replenished and spent along the way: delivery loops with refuelling depots, a token-bucket rate limiter deciding whether a request cycle survives a full period, or a cash-flow schedule asking which month you can start from without ever going into overdraft.",
+  "examples": [
+    {
+      "input": "gas = [1,2,3,4,5], cost = [3,4,5,1,2]",
+      "output": "3",
+      "explanation": "Net gains are [-2,-2,-2,3,3], which sum to 0, so a solution exists. The tank goes negative at stations 0, 1 and 2 in turn, each time restarting; from station 3 the running balance is 3, then 6, then 4, then 2, then 0 — never negative."
+    },
+    {
+      "input": "gas = [2,3,4], cost = [3,4,3]",
+      "output": "-1",
+      "explanation": "Nets are [-1,-1,1], summing to -1. The circuit consumes more fuel than it provides, so no starting point can work — and the total check alone decides this before any candidate is examined."
+    },
+    {
+      "input": "gas = [5,1,2,3,4], cost = [4,4,1,5,1]",
+      "output": "4",
+      "explanation": "Nets are [1,-3,1,-2,3], total 0. Start 0 fails at station 1 (balance 1 then -2), so 1 becomes the candidate; 1 fails immediately; 2 survives to 3 then fails; 4 is the candidate that finishes. Note that every station before the answer has been eliminated without ever being tried as a start."
+    }
+  ],
+  "constraints": [
+    "n == gas.length == cost.length",
+    "1 <= n <= 10^5",
+    "0 <= gas[i], cost[i] <= 10^4",
+    "The answer is unique when one exists"
+  ],
+  "bruteForce": {
+    "idea": "Try every station as the start and simulate the whole loop from it.",
+    "code": [
+      "for (int start = 0; start < n; start++) {",
+      "    int tank = 0;",
+      "    boolean ok = true;",
+      "    for (int step = 0; step < n; step++) {",
+      "        int i = (start + step) % n;",
+      "        tank += gas[i] - cost[i];",
+      "        if (tank < 0) { ok = false; break; }   // discards everything learned",
+      "    }",
+      "    if (ok) return start;",
+      "}",
+      "return -1;"
+    ],
+    "complexity": {
+      "time": "O(n^2)",
+      "space": "O(1)"
+    },
+    "whySlow": "n starts, each simulating up to n steps — 10^10 operations at the constraint. The waste is specific and fixable: when a run starting at s fails on reaching station f, the simulation throws that fact away and restarts at s+1, re-walking the very stretch it just proved cannot be survived."
+  },
+  "patternIdentification": "Two greedy facts, each with a one-line proof, collapse the quadratic search to a single pass. Feasibility first: the circuit is possible at all only if total gas >= total cost, since a full loop returns the tank to its starting level. Then the elimination: if a run beginning at s runs dry on arrival at station f, then no station between s and f can be a valid start either — each of them began with a tank that was non-negative at that point in the s-run, so starting there gives no more fuel than the s-run had, and it must fail by f as well. So the next candidate is f, not s+1, and the scan never revisits a station.",
+  "optimized": {
+    "idea": "One pass computing two running numbers: the total net gain over all stations, which decides whether any answer exists, and the tank since the current candidate start. Whenever the tank goes negative at station i, every station from the candidate through i is eliminated, so set the candidate to i+1 and reset the tank to zero. If the total is non-negative, the surviving candidate is the unique answer.",
+    "code": [
+      "/** O(n) time, O(1) space — one pass, two accumulators, no modular arithmetic. */",
+      "public static int canCompleteCircuit(int[] gas, int[] cost) {",
+      "    int total = 0;      // net over the whole circle: decides whether ANY start works",
+      "    int tank = 0;       // net since the current candidate start",
+      "    int start = 0;      // current candidate",
+      "",
+      "    for (int i = 0; i < gas.length; i++) {",
+      "        int net = gas[i] - cost[i];",
+      "        total += net;",
+      "        tank += net;",
+      "",
+      "        if (tank < 0) {",
+      "            // Ran dry arriving at i. Every station from `start` to i is eliminated:",
+      "            // each of them entered this stretch with a tank >= 0 in the current run,",
+      "            // so starting there gives no more fuel and fails no later than i.",
+      "            start = i + 1;",
+      "            tank = 0;",
+      "        }",
+      "    }",
+      "    return total >= 0 ? start : -1;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n) — a single pass; the elimination argument means each station is examined once as part of exactly one candidate run and is never revisited",
+      "space": "O(1) — three ints, and no modular wraparound is needed because the total check proves the tail of the array can always be bridged back to the front"
+    }
+  },
+  "commonMistakes": [
+    "Restarting at start + 1 after a failure instead of at i + 1. That is the O(n^2) simulation with extra steps; the whole gain comes from eliminating the entire failed stretch at once.",
+    "Returning the candidate without checking the total. With gas = [2,3,4], cost = [3,4,3] the sweep leaves a plausible-looking candidate, but the circuit is impossible and the answer is -1.",
+    "Simulating the wraparound with `% n`. It is unnecessary: if total >= 0, the stations after the final candidate are exactly the prefix the candidate's run has already shown to be survivable in aggregate, so no second lap is needed.",
+    "Confusing `tank` with `total`. One resets on failure and one never does — merging them into a single variable is the most common way this solution silently breaks.",
+    "Assuming the station with the most gas, or the largest single net gain, is the answer. Neither is: the answer depends on the sequence of partial sums, not on any one station's value."
+  ],
+  "similar": [
+    "jump-game",
+    "non-overlapping-intervals",
+    "subarray-sum-equals-k",
+    "running-sum"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 134,
+      "slug": "gas-station",
+      "title": "Gas Station",
+      "url": "https://leetcode.com/problems/gas-station/",
+      "premium": false
+    }
+  }
+}

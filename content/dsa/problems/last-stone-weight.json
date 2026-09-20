@@ -1,0 +1,142 @@
+{
+  "id": "last-stone-weight",
+  "title": "Last Stone Weight",
+  "patternId": "heap",
+  "difficulty": "beginner",
+  "tags": [
+    "heap",
+    "priority-queue",
+    "simulation"
+  ],
+  "statement": "You are given an array of stone weights. On each turn, pick the two heaviest stones, x and y with x <= y, and smash them together: if x == y both are destroyed, otherwise the stone of weight x is destroyed and the stone of weight y becomes y - x. Repeat until at most one stone remains. Return the weight of that last stone, or 0 if none remains.",
+  "realWorld": "The shape of any 'repeatedly combine the two largest pending items' loop: a compaction job that merges the two biggest segments, a load balancer that repeatedly pairs off the two most loaded shards to rebalance them, or a tournament bracket where the two strongest remaining entrants meet next.",
+  "examples": [
+    {
+      "input": "stones = [2,7,4,1,8,1]",
+      "output": "1",
+      "explanation": "8 and 7 leave 1, so the set is [2,4,1,1,1]. Then 4 and 2 leave 2 -> [2,1,1,1]. Then 2 and 1 leave 1 -> [1,1,1]. Then 1 and 1 cancel -> [1]. One stone of weight 1 remains."
+    },
+    {
+      "input": "stones = [2,2]",
+      "output": "0",
+      "explanation": "The two stones are equal, so both are destroyed and nothing is left. This is the case a solution that blindly returns the heap's root gets wrong."
+    },
+    {
+      "input": "stones = [3,7,2]",
+      "output": "2",
+      "explanation": "7 and 3 leave 4 -> [4,2]. Then 4 and 2 leave 2. Note that the second smash pairs 4 with 2 — a stone created this turn can be one of the two heaviest next turn, which is why the collection has to stay ordered as it changes."
+    }
+  ],
+  "constraints": [
+    "1 <= stones.length <= 30",
+    "1 <= stones[i] <= 1000",
+    "Every intermediate stone weight is non-negative, so no new value ever falls outside the original range"
+  ],
+  "bruteForce": {
+    "idea": "Keep the stones in a plain array. Each turn, sort it (or scan twice for the two largest), remove those two, push back the difference if it is non-zero, and repeat.",
+    "code": [
+      "List<Integer> pile = new ArrayList<>();",
+      "for (int stone : stones) pile.add(stone);",
+      "while (pile.size() > 1) {",
+      "    Collections.sort(pile, Collections.reverseOrder());   // re-sort the whole pile every turn",
+      "    int y = pile.remove(0);",
+      "    int x = pile.remove(0);",
+      "    if (y != x) pile.add(y - x);",
+      "}",
+      "return pile.isEmpty() ? 0 : pile.get(0);"
+    ],
+    "complexity": {
+      "time": "O(n^2 log n)",
+      "space": "O(n)"
+    },
+    "whySlow": "A smash changes at most two of the n values, yet the re-sort rebuilds the relative order of all of them. Almost every comparison it performs was already answered in the previous round and nothing since has invalidated it: the stones that were not touched are still in exactly the same order. Over n - 1 rounds you pay for a total ordering n times to learn one fact each time — which stone is currently the heaviest."
+  },
+  "patternIdentification": "You repeatedly need the extreme element of a set that keeps changing under you. Sorting hands you the entire order when you only ever look at one end of it, and it has to be redone after every change. A heap maintains exactly enough order to answer 'what is the largest?' in O(1) and repairs itself in O(log n) after an insert or a removal — that is the trade you are looking for whenever a loop reads 'take the max, modify the set, repeat'.",
+  "optimized": {
+    "idea": "Put every stone in a max-heap. Each turn poll twice to get the two heaviest, and offer back the difference when it is non-zero. The heap only ever repairs the one path from the root down, so each turn costs O(log n) instead of a full re-sort.",
+    "code": [
+      "public static int lastStoneWeight(int[] stones) {",
+      "    PriorityQueue<Integer> heaviest = new PriorityQueue<>(Comparator.reverseOrder());   // MAX-heap: Java's default is a min-heap",
+      "    for (int stone : stones) heaviest.offer(stone);",
+      "    while (heaviest.size() > 1) {",
+      "        int y = heaviest.poll();",
+      "        int x = heaviest.poll();",
+      "        if (y != x) heaviest.offer(y - x);",
+      "    }",
+      "    return heaviest.isEmpty() ? 0 : heaviest.peek();",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n log n)",
+      "space": "O(n)"
+    }
+  },
+  "visualization": {
+    "engine": "heapOps",
+    "title": "The machinery underneath: insert climbs, extract sinks. Shown as a min-heap (its root is the smallest); the max-heap this problem needs is the identical code with one comparison flipped, and that flip is the only difference.",
+    "input": {
+      "operations": [
+        {
+          "op": "insert",
+          "value": 2
+        },
+        {
+          "op": "insert",
+          "value": 7
+        },
+        {
+          "op": "insert",
+          "value": 4
+        },
+        {
+          "op": "insert",
+          "value": 1
+        },
+        {
+          "op": "insert",
+          "value": 8
+        },
+        {
+          "op": "extract"
+        },
+        {
+          "op": "extract"
+        }
+      ]
+    },
+    "code": [
+      "PriorityQueue<Integer> heap = new PriorityQueue<>();   // the heap IS this array",
+      "heap[size++] = value;                        // offer(): append at the end, tree stays complete",
+      "int i = size - 1;",
+      "while (i > 0 && heap[parent(i)] > heap[i]) { // sift up while it beats its parent",
+      "    swap(heap, i, parent(i));",
+      "    i = parent(i);                           // climb; stop at the root",
+      "}",
+      "int top = heap[0];                           // poll(): the root is the extreme element",
+      "heap[0] = heap[--size];                      // last element to the root, then sift it down",
+      "int j = 0, child;",
+      "while ((child = smallerChild(j)) != -1 && heap[child] < heap[j]) { swap(heap, j, child); j = child; }",
+      "// property restored — a smash is two polls and one offer, each O(log n), not a re-sort"
+    ]
+  },
+  "commonMistakes": [
+    "Writing `new PriorityQueue<>()` and forgetting that Java's default is a MIN-heap — the code compiles and runs, but it smashes the two *lightest* stones every turn and pushes negative differences back in; [2,7,4,1,8,1] returns -17 instead of 1.",
+    "Looping on `while (!heaviest.isEmpty())` instead of `while (heaviest.size() > 1)` — on the last turn the first poll empties the heap, the second returns null, and unboxing it to int throws NullPointerException on any input that reduces to a single stone.",
+    "Reversing the subtraction: polling `int a = poll(); int b = poll();` and offering `b - a`. The first poll is the *heavier* stone, so this pushes negative weights that sink to the bottom of the max-heap and never get smashed; [2,7,4,1,8,1] returns -1."
+  ],
+  "similar": [
+    "kth-largest-element",
+    "k-closest-points",
+    "top-k-frequent",
+    "merge-k-sorted-lists"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 1046,
+      "slug": "last-stone-weight",
+      "title": "Last Stone Weight",
+      "url": "https://leetcode.com/problems/last-stone-weight/",
+      "premium": false
+    }
+  }
+}

@@ -1,0 +1,158 @@
+{
+  "id": "evaluate-rpn",
+  "title": "Evaluate Reverse Polish Notation",
+  "patternId": "stack",
+  "difficulty": "intermediate",
+  "tags": [
+    "stack",
+    "string",
+    "math"
+  ],
+  "statement": "Evaluate an arithmetic expression given in Reverse Polish (postfix) notation. The tokens are integers and the four operators +, -, * and /. Each operator applies to the two values immediately preceding it, division truncates toward zero, and the expression is always valid.",
+  "realWorld": "Postfix is what a shunting-yard parser emits and what stack virtual machines execute directly — the JVM's own operand stack, PostScript, Forth, and most spreadsheet formula engines all work this way. Evaluating RPN is literally the interpreter's inner loop, which is why compilers convert to it: the machine that runs it needs no lookahead and no parentheses.",
+  "examples": [
+    {
+      "input": "tokens = [\"2\",\"1\",\"+\",\"3\",\"*\"]",
+      "output": "9",
+      "explanation": "((2 + 1) * 3). The '+' consumes the two values before it, leaves 3, and the '*' consumes that result together with the literal 3."
+    },
+    {
+      "input": "tokens = [\"4\",\"13\",\"5\",\"/\",\"+\"]",
+      "output": "6",
+      "explanation": "13 / 5 truncates to 2, then 4 + 2 = 6. Note the operand order: the value popped first is the right-hand side, so this is 13/5, not 5/13."
+    },
+    {
+      "input": "tokens = [\"5\",\"1\",\"2\",\"+\",\"4\",\"*\",\"+\",\"3\",\"-\"]",
+      "output": "14",
+      "explanation": "(5 + ((1 + 2) * 4)) - 3. Two results sit on the stack simultaneously here, which is what rules out a pair of scalar variables."
+    }
+  ],
+  "constraints": [
+    "1 <= tokens.length <= 10^4",
+    "Each token is an operator in {+, -, *, /} or an integer in [-200, 200]",
+    "The expression is always a valid RPN expression",
+    "Division by zero never occurs and every intermediate result fits in a 32-bit int"
+  ],
+  "bruteForce": {
+    "idea": "Repeatedly scan the token list from the start for the first operator whose two predecessors are both numbers, replace those three tokens with the computed value, and start over.",
+    "code": [
+      "List<String> work = new ArrayList<>(Arrays.asList(tokens));",
+      "while (work.size() > 1) {",
+      "    for (int i = 2; i < work.size(); i++) {",
+      "        if (isOperator(work.get(i)) && !isOperator(work.get(i - 1)) && !isOperator(work.get(i - 2))) {",
+      "            int left = Integer.parseInt(work.get(i - 2));",
+      "            int right = Integer.parseInt(work.get(i - 1));",
+      "            work.set(i - 2, String.valueOf(apply(work.get(i), left, right)));",
+      "            work.remove(i);",
+      "            work.remove(i - 1);",
+      "            break;",
+      "        }",
+      "    }",
+      "}",
+      "return Integer.parseInt(work.get(0));"
+    ],
+    "complexity": {
+      "time": "O(n^2)",
+      "space": "O(n)"
+    },
+    "whySlow": "Every reduction restarts the scan at index 0 and then shifts the whole tail of the list left to close the gap. There are about n/3 reductions, and each one re-reads a prefix of tokens that has not changed since the last pass and re-confirms what the previous pass already established — that those tokens are plain numbers waiting for an operator. The search for 'the next reducible triple' is re-run from scratch when the only place a new one can have appeared is exactly where the last reduction happened."
+  },
+  "patternIdentification": "An operator always applies to the two most recently completed values, never to something further back that has already been consumed. Whenever the question 'which earlier item does this one pair with?' is always answered by 'the most recent unconsumed one', the searching disappears: keep the unconsumed items in a stack, and the pairing is a pop. The giveaway is nesting without an explicit depth counter — postfix, bracket matching and function call frames are the same shape.",
+  "optimized": {
+    "idea": "Walk the tokens once. A number is work not yet consumed, so push it. An operator's operands are by definition the top two entries, so pop two, combine, push the result back — the result is itself an unconsumed value and re-enters the stack as a peer of the literals. When the tokens run out, the single remaining entry is the answer. The one detail that bites: for the non-commutative operators the first pop is the *right*-hand operand.",
+    "code": [
+      "public static int evalRPN(String[] tokens) {",
+      "    Deque<Integer> stack = new ArrayDeque<>();",
+      "    for (String token : tokens) {",
+      "        switch (token) {",
+      "            case \"+\" -> stack.push(stack.pop() + stack.pop());",
+      "            case \"*\" -> stack.push(stack.pop() * stack.pop());",
+      "            case \"-\" -> {",
+      "                int right = stack.pop();   // the FIRST pop is the right operand: the operands come off in reverse order",
+      "                stack.push(stack.pop() - right);",
+      "            }",
+      "            case \"/\" -> {",
+      "                int right = stack.pop();",
+      "                stack.push(stack.pop() / right);",
+      "            }",
+      "            default -> stack.push(Integer.parseInt(token));",
+      "        }",
+      "    }",
+      "    return stack.pop();",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(n)"
+    }
+  },
+  "visualization": {
+    "engine": "stackOps",
+    "input": {
+      "operations": [
+        {
+          "op": "push",
+          "value": 2
+        },
+        {
+          "op": "push",
+          "value": 1
+        },
+        {
+          "op": "pop"
+        },
+        {
+          "op": "pop"
+        },
+        {
+          "op": "push",
+          "value": 3
+        },
+        {
+          "op": "push",
+          "value": 3
+        },
+        {
+          "op": "pop"
+        },
+        {
+          "op": "pop"
+        },
+        {
+          "op": "push",
+          "value": 9
+        },
+        {
+          "op": "peek"
+        }
+      ]
+    },
+    "code": [
+      "Deque<Integer> stack = new ArrayDeque<>();",
+      "if (!isOperator(token)) stack.push(Integer.parseInt(token));",
+      "int answer = stack.peek();",
+      "int right = stack.pop();   // operands come off in reverse order",
+      "stack.push(apply(token, stack.pop(), right));"
+    ]
+  },
+  "commonMistakes": [
+    "Popping the operands in source order for '-' and '/' — writing `int left = stack.pop(); int right = stack.pop();` computes 5/13 instead of 13/5, so [\"4\",\"13\",\"5\",\"/\",\"+\"] returns 4 instead of 6 while every test built only from '+' and '*' still passes.",
+    "Deciding 'is this an operator?' with `!Character.isDigit(token.charAt(0))` — a negative literal like \"-11\" is routed into the subtraction branch, which pops an empty or half-filled stack and crashes with NoSuchElementException on an input that is perfectly valid.",
+    "Reaching for Math.floorDiv 'to be safe' instead of Java's `/` — RPN division truncates toward zero, so [\"-7\",\"2\",\"/\"] must be -3, and floorDiv quietly returns -4. The answer drifts only on negative operands, so it survives every non-negative test case."
+  ],
+  "similar": [
+    "min-stack",
+    "valid-parentheses",
+    "decode-string",
+    "asteroid-collision"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 150,
+      "slug": "evaluate-reverse-polish-notation",
+      "title": "Evaluate Reverse Polish Notation",
+      "url": "https://leetcode.com/problems/evaluate-reverse-polish-notation/",
+      "premium": false
+    }
+  }
+}

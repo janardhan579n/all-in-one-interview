@@ -1,0 +1,97 @@
+{
+  "id": "product-of-array-except-self",
+  "title": "Product of Array Except Self",
+  "patternId": "arrays",
+  "difficulty": "intermediate",
+  "tags": [
+    "array",
+    "prefix",
+    "suffix"
+  ],
+  "statement": "Given an integer array nums, return an array answer where answer[i] is the product of every element of nums except nums[i]. You must run in O(n) time and you may NOT use the division operator. The output array does not count towards extra space.",
+  "realWorld": "Leave-one-out weighting shows up wherever a combined score must be recomputed without one contributor: the end-to-end success rate of a pipeline if one stage were removed, or the joint probability of a set of independent signals with one signal held out for scoring. Division is exactly the wrong tool there, because a single zero — a stage that failed every request — is the case you most want an answer for.",
+  "examples": [
+    {
+      "input": "nums = [1,2,3,4]",
+      "output": "[24,12,8,6]",
+      "explanation": "answer[0] = 2*3*4 = 24, answer[1] = 1*3*4 = 12, and so on. Note 24 = (everything left of index 0, which is nothing, so 1) * (everything right of it, 24)."
+    },
+    {
+      "input": "nums = [-1,1,0,-3,3]",
+      "output": "[0,0,9,0,0]",
+      "explanation": "Every position except index 2 has the zero somewhere in its product, so it is 0. Index 2 excludes the zero and gets (-1)*1*(-3)*3 = 9. This is the case that kills the divide-the-total shortcut."
+    }
+  ],
+  "constraints": [
+    "2 <= nums.length <= 10^5",
+    "-30 <= nums[i] <= 30",
+    "The product of any prefix or suffix of nums fits in a 32-bit integer",
+    "Division is not allowed; the required time is O(n)"
+  ],
+  "bruteForce": {
+    "idea": "For each index, multiply every other element together.",
+    "code": [
+      "int n = nums.length;",
+      "int[] answer = new int[n];",
+      "for (int i = 0; i < n; i++) {",
+      "    int product = 1;",
+      "    for (int j = 0; j < n; j++) {",
+      "        if (j != i) product *= nums[j];",
+      "    }",
+      "    answer[i] = product;",
+      "}",
+      "return answer;"
+    ],
+    "complexity": {
+      "time": "O(n^2)",
+      "space": "O(1)"
+    },
+    "whySlow": "The product for index i multiplies the whole block nums[0..i-1] that index i-1 has just finished multiplying, and the block nums[i+1..n-1] that index i+1 is about to multiply again. Each element is multiplied n-1 separate times, although it only ever contributes two facts to the entire answer: the product of everything before it and the product of everything after it. Those two families of products are each n numbers long and each takes one pass to build."
+  },
+  "patternIdentification": "answer[i] depends on 'everything to the left of i' and 'everything to the right of i'. Whenever that is the shape, build the two families of running aggregates once — a left-to-right sweep and a right-to-left sweep — and combine them per index. The ban on division is what forces the shape into view, and it is also what makes the result survive zeros: nothing is ever undone, only accumulated.",
+  "optimized": {
+    "idea": "Two sweeps, no extra arrays. The first sweep fills answer[i] with the product of everything strictly to the left of i — answer[0] is 1 because nothing is to the left of index 0. The second sweep walks backwards carrying a single running suffix product in a variable and multiplies it into each slot before folding nums[i] into it. Each answer[i] therefore ends up as left product times right product.",
+    "code": [
+      "public static int[] productExceptSelf(int[] nums) {",
+      "    int n = nums.length;",
+      "    int[] answer = new int[n];",
+      "",
+      "    answer[0] = 1;",
+      "    for (int i = 1; i < n; i++) {",
+      "        answer[i] = answer[i - 1] * nums[i - 1];   // product of everything strictly LEFT of i",
+      "    }",
+      "",
+      "    int suffix = 1;",
+      "    for (int i = n - 1; i >= 0; i--) {",
+      "        answer[i] *= suffix;",
+      "        suffix *= nums[i];",
+      "    }",
+      "    return answer;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(1)"
+    }
+  },
+  "commonMistakes": [
+    "Computing the total product and dividing it by nums[i]: quite apart from being banned, [1,2,0,4] throws ArithmeticException at index 2, and the usual patch — count the zeros and special-case one of them — still returns the wrong answer for two zeros unless that case is special-cased as well.",
+    "Writing answer[i] = suffix in the backward sweep instead of answer[i] *= suffix: the prefix pass is silently thrown away and the output becomes a pure suffix-product array, which is right at index 0 and wrong at every other index — so [1,2,3,4] comes back [24,12,4,1].",
+    "Forgetting answer[0] = 1 and relying on Java's default: the prefix sweep then multiplies forward from 0, every slot becomes 0, and the output is all zeros — which looks convincingly like a zero somewhere in the input rather than an uninitialised sentinel."
+  ],
+  "similar": [
+    "trapping-rain-water",
+    "range-sum-query",
+    "running-sum",
+    "best-time-to-buy-sell-stock"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 238,
+      "slug": "product-of-array-except-self",
+      "title": "Product of Array Except Self",
+      "url": "https://leetcode.com/problems/product-of-array-except-self/",
+      "premium": false
+    }
+  }
+}

@@ -1,0 +1,158 @@
+{
+  "id": "insert-interval",
+  "title": "Insert Interval",
+  "patternId": "intervals",
+  "difficulty": "intermediate",
+  "tags": [
+    "array",
+    "intervals",
+    "two-pointers",
+    "greedy"
+  ],
+  "statement": "You are given a list of non-overlapping intervals sorted by start time, and one new interval. Insert the new interval so that the list stays sorted and non-overlapping, merging with any intervals it overlaps. Return the resulting list. You may not modify the input in place.",
+  "realWorld": "Adding a booking to a calendar that is already tidy. The stored blocks are sorted and disjoint by construction, so re-sorting everything to add one meeting is wasted work — the insert should cost a single pass, and on a calendar with thousands of blocks, a binary search for the landing spot makes it cheaper still.",
+  "examples": [
+    {
+      "input": "intervals = [[1,3],[6,9]], newInterval = [2,5]",
+      "output": "[[1,5],[6,9]]",
+      "explanation": "[2,5] overlaps [1,3] (2 <= 3), so they merge into [1,5]. [6,9] starts after 5 and is untouched."
+    },
+    {
+      "input": "intervals = [[1,2],[3,5],[6,7],[8,10],[12,16]], newInterval = [4,8]",
+      "output": "[[1,2],[3,10],[12,16]]",
+      "explanation": "[4,8] overlaps [3,5], [6,7] and [8,10]. Their union is [3,10]; [1,2] and [12,16] are untouched."
+    },
+    {
+      "input": "intervals = [[1,5]], newInterval = [2,3]",
+      "output": "[[1,5]]",
+      "explanation": "The new interval is fully contained. The merged end must remain 5, which is what Math.max guarantees."
+    }
+  ],
+  "constraints": [
+    "0 <= intervals.length <= 10^4",
+    "intervals[i].length == newInterval.length == 2",
+    "0 <= start_i <= end_i <= 10^5",
+    "intervals is sorted by start_i ascending and its members do not overlap each other"
+  ],
+  "bruteForce": {
+    "idea": "Append the new interval to the list, sort everything by start, and run the standard merge sweep.",
+    "code": [
+      "int[][] all = Arrays.copyOf(intervals, intervals.length + 1);",
+      "all[intervals.length] = newInterval;",
+      "Arrays.sort(all, (a, b) -> Integer.compare(a[0], b[0]));   // re-sorting an already-sorted list",
+      "List<int[]> merged = new ArrayList<>();",
+      "for (int[] current : all) {",
+      "    int[] open = merged.isEmpty() ? null : merged.get(merged.size() - 1);",
+      "    if (open == null || current[0] > open[1]) merged.add(new int[]{ current[0], current[1] });",
+      "    else open[1] = Math.max(open[1], current[1]);",
+      "}",
+      "return merged.toArray(new int[0][]);"
+    ],
+    "complexity": {
+      "time": "O(n log n)",
+      "space": "O(n)"
+    },
+    "whySlow": "It is correct, and in an interview it is a fine first answer to state before improving. But it throws away the one thing the problem hands you for free: the list is already sorted and already disjoint. Sorting n+1 elements to place one of them is paying O(n log n) for information you were given."
+  },
+  "patternIdentification": "Sorted and disjoint input means the intervals fall into exactly three consecutive runs relative to the new one: those that end before it starts, those that overlap it, and those that start after it ends. Because the list is sorted, those runs are contiguous — so one left-to-right pass with three phases does the job, and no comparison is ever needed between two existing intervals.",
+  "optimized": {
+    "idea": "Walk the list once in three phases. Copy every interval ending strictly before the new one starts. Then absorb every interval that overlaps, widening the new interval with `min` of the starts and `max` of the ends, and append it once the run is over. Finally copy the rest unchanged.",
+    "code": [
+      "public static int[][] insert(int[][] intervals, int[] newInterval) {",
+      "    List<int[]> result = new ArrayList<>();",
+      "    int i = 0;",
+      "    int n = intervals.length;",
+      "    int start = newInterval[0];",
+      "    int end = newInterval[1];",
+      "",
+      "    // 1. Everything that finishes before the new interval begins is unaffected.",
+      "    while (i < n && intervals[i][1] < start) {",
+      "        result.add(intervals[i]);",
+      "        i++;",
+      "    }",
+      "",
+      "    // 2. Everything starting at or before the (growing) end overlaps — absorb it.",
+      "    while (i < n && intervals[i][0] <= end) {",
+      "        start = Math.min(start, intervals[i][0]);",
+      "        end = Math.max(end, intervals[i][1]);   // max: a contained interval must not shrink it",
+      "        i++;",
+      "    }",
+      "    result.add(new int[]{ start, end });",
+      "",
+      "    // 3. The tail starts after the merged block ends; nothing left to do.",
+      "    while (i < n) {",
+      "        result.add(intervals[i]);",
+      "        i++;",
+      "    }",
+      "    return result.toArray(new int[0][]);",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n) — each interval is visited by exactly one of the three phases",
+      "space": "O(n) for the output; O(1) beyond it"
+    }
+  },
+  "visualization": {
+    "engine": "mergeIntervals",
+    "input": {
+      "intervals": [
+        [
+          1,
+          2
+        ],
+        [
+          3,
+          5
+        ],
+        [
+          6,
+          7
+        ],
+        [
+          8,
+          10
+        ],
+        [
+          12,
+          16
+        ],
+        [
+          4,
+          8
+        ]
+      ]
+    },
+    "code": [
+      "List<int[]> out = new ArrayList<>();",
+      "Arrays.sort(iv, (a, b) -> Integer.compare(a[0], b[0]));   // the sorted list, with [4,8] dropped in",
+      "for (int[] cur : iv) {",
+      "    if (out.isEmpty() || cur[0] > out.get(out.size() - 1)[1]) out.add(new int[]{ cur[0], cur[1] });",
+      "    // otherwise it overlaps the block being built, so stretch that block's end",
+      "    else out.get(out.size() - 1)[1] = Math.max(out.get(out.size() - 1)[1], cur[1]);",
+      "}",
+      "return out.toArray(new int[0][]);"
+    ]
+  },
+  "commonMistakes": [
+    "Using `intervals[i][1] <= start` in phase 1. With inclusive ends, an interval ending exactly at the new start touches it and must be absorbed, not copied; the strict `<` is what sends it into phase 2.",
+    "Comparing against the original `newInterval[1]` in phase 2 instead of the running `end`. The new interval grows as it absorbs, and the next interval must be tested against the widened block.",
+    "Appending the merged interval inside the phase-2 loop, which emits it once per absorbed interval. It is appended exactly once, after the loop.",
+    "Forgetting the empty-input and no-overlap cases: with `intervals = []` the answer is just the new interval, and a new interval that overlaps nothing still has to be inserted in the right place.",
+    "Mutating the input arrays when widening — `intervals[i][1] = end` writes through to the caller's data. Build a fresh `int[]` for the merged block.",
+    "Assuming a binary search for the insertion point changes the complexity. It finds the start faster, but phase 2 may still absorb O(n) intervals and the copy is O(n) regardless; it is a constant-factor win, not an asymptotic one."
+  ],
+  "similar": [
+    "merge-intervals",
+    "meeting-rooms-ii",
+    "binary-search-basic"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 57,
+      "slug": "insert-interval",
+      "title": "Insert Interval",
+      "url": "https://leetcode.com/problems/insert-interval/",
+      "premium": false
+    }
+  }
+}

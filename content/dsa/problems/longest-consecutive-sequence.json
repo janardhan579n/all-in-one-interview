@@ -1,0 +1,166 @@
+{
+  "id": "longest-consecutive-sequence",
+  "title": "Longest Consecutive Sequence",
+  "patternId": "hashing",
+  "difficulty": "intermediate",
+  "tags": [
+    "hashing",
+    "array",
+    "set"
+  ],
+  "statement": "Given an unsorted array of integers, return the length of the longest run of consecutive integers that appear in it. The elements of the run need not be adjacent in the array, and may appear in any order. Aim for O(n) time.",
+  "realWorld": "Finding the longest unbroken stretch in a set of sparse identifiers is a real reporting query: the longest run of consecutive sequence numbers actually received (so the first gap is the first loss), the longest streak of days on which a user was active, the longest contiguous block of free ids available for allocation. The input arrives as an unordered set of what exists, and the question is about adjacency, not order.",
+  "examples": [
+    {
+      "input": "nums = [100,4,200,1,3,2]",
+      "output": "4",
+      "explanation": "1, 2, 3, 4 are all present, scattered across the array. 100 and 200 are each runs of length 1."
+    },
+    {
+      "input": "nums = [0,3,7,2,5,8,4,6,0,1]",
+      "output": "9",
+      "explanation": "0 through 8 are all present. Note the duplicate 0 — it must not be counted twice and must not cause the run starting at 0 to be walked twice."
+    },
+    {
+      "input": "nums = [1,2,0,1]",
+      "output": "3",
+      "explanation": "0, 1, 2 form the run. The extra 1 contributes nothing, and the answer is a run whose head (0) appears late in the array."
+    }
+  ],
+  "constraints": [
+    "0 <= nums.length <= 10^5",
+    "-10^9 <= nums[i] <= 10^9",
+    "Duplicates are allowed",
+    "An empty array has answer 0"
+  ],
+  "bruteForce": {
+    "idea": "Sort the array, then walk it once, counting the current run and resetting whenever the gap to the previous value is neither 0 (a duplicate) nor 1.",
+    "code": [
+      "if (nums.length == 0) return 0;",
+      "Arrays.sort(nums);",
+      "int best = 1, run = 1;",
+      "for (int i = 1; i < nums.length; i++) {",
+      "    if (nums[i] == nums[i - 1]) continue;",
+      "    if (nums[i] == nums[i - 1] + 1) run++;",
+      "    else run = 1;",
+      "    best = Math.max(best, run);",
+      "}",
+      "return best;"
+    ],
+    "complexity": {
+      "time": "O(n log n)",
+      "space": "O(1) beyond the sort"
+    },
+    "whySlow": "Sorting produces a total order over all n values — it settles, for every pair, which comes first — and the question needs only adjacency: is x + 1 present? Establishing that 100 precedes 200 is a fact the answer never consults, and so is every comparison that arranged the values inside a run relative to values in some other run. We pay n log n comparisons to learn a complete ordering and then discard nearly all of it in the single linear pass that follows. The gap between what sorting produces and what the problem asks for is the waste, not the exponent."
+  },
+  "patternIdentification": "'Is this specific value present?' is a membership question, and membership is a hash-set lookup — never a search, and never a reason to sort. That gets the ordering cost to zero but leaves a second problem: walking a run upward from every element re-walks the same run once per member. The fix is the second half of the signal, and it generalises well beyond this problem — before starting an expensive expansion, find the cheap local test that identifies the *one* element worth expanding from. Here, a value is the head of its run exactly when its predecessor is absent, which is itself a set lookup. With that guard every run is walked exactly once across the entire algorithm, so the total inner work is bounded by the number of distinct elements rather than by their product.",
+  "optimized": {
+    "idea": "Put every value in a hash set, which also collapses duplicates. Then for each distinct value, check whether value - 1 is in the set; if it is, this value sits in the middle of a run and some smaller element will walk over it, so skip it immediately. If it is not, this value is the head of a run — count upward with set lookups until the run breaks. The guard is what makes this O(n): expansion only ever happens from run heads, and the total number of steps taken across all heads is the total length of all runs, which is at most the number of distinct elements. Without it the code still returns the right answer while quietly running in O(n^2).",
+    "code": [
+      "public static int longestConsecutive(int[] nums) {",
+      "    Set<Integer> present = new HashSet<>();",
+      "    for (int n : nums) present.add(n);",
+      "    int best = 0;",
+      "    for (int n : present) {",
+      "        if (present.contains(n - 1)) continue;   // not a run head — this is the guard that makes the whole thing linear",
+      "        int length = 1;",
+      "        while (present.contains(n + length)) length++;",
+      "        best = Math.max(best, length);",
+      "    }",
+      "    return best;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(n)"
+    }
+  },
+  "visualization": {
+    "engine": "hashingOps",
+    "input": {
+      "capacity": 8,
+      "operations": [
+        {
+          "op": "put",
+          "key": "100",
+          "value": 1
+        },
+        {
+          "op": "put",
+          "key": "4",
+          "value": 1
+        },
+        {
+          "op": "put",
+          "key": "200",
+          "value": 1
+        },
+        {
+          "op": "put",
+          "key": "1",
+          "value": 1
+        },
+        {
+          "op": "put",
+          "key": "3",
+          "value": 1
+        },
+        {
+          "op": "put",
+          "key": "2",
+          "value": 1
+        },
+        {
+          "op": "get",
+          "key": "0"
+        },
+        {
+          "op": "get",
+          "key": "2"
+        },
+        {
+          "op": "get",
+          "key": "3"
+        },
+        {
+          "op": "get",
+          "key": "4"
+        },
+        {
+          "op": "get",
+          "key": "5"
+        }
+      ]
+    },
+    "code": [
+      "Set<Integer> present = new HashSet<>(Arrays.asList(boxed));",
+      "for (int n : present) {",
+      "    if (present.contains(n - 1)) continue;   // only expand from run heads",
+      "    int length = 1;",
+      "    while (present.contains(n + length)) length++;",
+      "    best = Math.max(best, length);",
+      "}"
+    ]
+  },
+  "commonMistakes": [
+    "Dropping the `present.contains(n - 1)` guard and counting upward from every element — the answers are all correct, so the tests pass, but [1,2,3,...,n] walks the full run from each of its n members and a 10^5-element input times out instead of failing.",
+    "Iterating `nums` instead of the set — duplicates re-walk the same run, so [0,0,0,...,0,1] degrades sharply, and a variant that increments `best` per element rather than recomputing per run reports a length larger than the number of distinct values.",
+    "Initialising `best` to 1 so that a non-empty array always reports at least one — an empty array then returns 1 instead of 0. Initialise to 0 and let the loop body raise it."
+  ],
+  "similar": [
+    "contains-duplicate",
+    "two-sum",
+    "group-anagrams",
+    "find-duplicate-number",
+    "top-k-frequent"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 128,
+      "slug": "longest-consecutive-sequence",
+      "title": "Longest Consecutive Sequence",
+      "url": "https://leetcode.com/problems/longest-consecutive-sequence/",
+      "premium": false
+    }
+  }
+}

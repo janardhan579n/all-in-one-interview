@@ -1,0 +1,296 @@
+{
+  "id": "sql-transactions",
+  "trackId": "sql",
+  "topic": "transactions",
+  "title": "Transactions",
+  "summary": "ACID, isolation levels and locking — what the database guarantees, what it does not, and the bugs in the gap.",
+  "questions": [
+    {
+      "id": "st-01",
+      "level": "junior",
+      "type": "concept",
+      "question": "What does ACID mean? Give me a concrete example of each letter.",
+      "answer": "**Atomicity** — the transaction happens entirely or not at all. Transferring money debits one account and credits another; if the process is killed between the two statements, recovery replays the write-ahead log and rolls the whole thing back, so there is never a moment where the money exists nowhere. The unit of failure is the transaction, not the statement.\n\n**Isolation** — concurrent transactions do not see each other's half-finished work. While that transfer is in progress, a balance report running at the same time sees either both sides or neither, never the debit alone. How strictly this holds is exactly what isolation levels control, so this is the letter with a dial on it.\n\n**Durability** — once `COMMIT` returns, the change survives a crash. The mechanism is that the log record is flushed to stable storage before the commit is acknowledged, which is why commit latency is bounded by an fsync. It is also the letter people trade away: PostgreSQL's `synchronous_commit = off` and MySQL's `innodb_flush_log_at_trx_commit = 2` both buy throughput by risking the last fraction of a second. And durability means durable on that machine — surviving the loss of the machine needs synchronous replication.\n\n**Consistency** is the odd one out and worth saying so. It means the transaction takes the database from one valid state to another, where valid means your declared constraints hold — foreign keys, unique, check. The engine enforces what you declared; it has no idea that a balance should never go negative unless you told it. Most of C is the schema designer's job, which is why it is the letter candidates fumble.",
+      "keyPoints": [
+        "Atomicity: all or nothing, implemented by the write-ahead log and rollback",
+        "Isolation: concurrent transactions do not observe each other's intermediate states",
+        "Durability: committed means flushed before the acknowledgement — commit costs an fsync",
+        "Consistency is about your declared constraints, not something the engine invents",
+        "Durability is per machine unless replication is synchronous"
+      ],
+      "followUps": [
+        {
+          "q": "Which letter is weakened most often in practice, and why?",
+          "a": "Isolation, deliberately — almost every production system runs at READ COMMITTED rather than SERIALIZABLE because the throughput difference is large and the anomalies are usually tolerable. Durability is the second, through asynchronous commit or asynchronous replication. Both are legitimate trades as long as they are decisions rather than defaults nobody read."
+        },
+        {
+          "q": "Do NoSQL databases have transactions?",
+          "a": "Many now do, within a limited scope. MongoDB has multi-document transactions, DynamoDB has transactional writes, and most give you atomicity within a single document or partition key for free. The historical distinction was never really ACID versus not — it was the scope over which atomicity is offered, and how much it costs across nodes."
+        }
+      ],
+      "redFlags": [
+        "Reciting the four words with no example",
+        "Describing Consistency as something the database guarantees by itself",
+        "Not knowing durability involves flushing a log before acknowledging"
+      ],
+      "related": [
+        "database",
+        "cap-theorem"
+      ]
+    },
+    {
+      "id": "st-02",
+      "level": "junior",
+      "type": "concept",
+      "question": "Name the isolation levels and exactly which anomaly each one prevents.",
+      "answer": "Three anomalies define the standard levels. A **dirty read** is reading data another transaction has written but not committed. A **non-repeatable read** is reading the same row twice in one transaction and getting different values because someone committed an update in between. A **phantom read** is re-running the same range query and finding rows that were not there before.\n\nREAD UNCOMMITTED allows all three. READ COMMITTED prevents dirty reads only. REPEATABLE READ additionally prevents non-repeatable reads. SERIALIZABLE prevents all three, and is defined as producing a result equivalent to running the transactions one at a time.\n\nThe important caveat is that this table describes what a level must *not* allow, not what any particular engine does — and the gaps are large enough to matter. PostgreSQL does not implement READ UNCOMMITTED at all; asking for it gets you READ COMMITTED. Its REPEATABLE READ is snapshot isolation: the whole transaction sees one snapshot, so phantoms do not occur even though the standard permits them. What it does permit is **write skew** — two transactions each read a set, each check an invariant, and each write based on what they read, producing a state neither would have allowed alone. That anomaly is not in the ANSI table at all, and it is the reason SERIALIZABLE exists.\n\nPostgreSQL's SERIALIZABLE uses serializable snapshot isolation: it detects dangerous read-write patterns and aborts a transaction with SQLSTATE 40001, so your application must retry. SQL Server takes range locks instead, so it blocks rather than aborts. Same guarantee, very different operational behaviour.",
+      "keyPoints": [
+        "Dirty read, non-repeatable read, phantom — the three anomalies the levels are defined by",
+        "READ COMMITTED stops dirty reads; REPEATABLE READ also stops non-repeatable reads",
+        "PostgreSQL has no READ UNCOMMITTED, and its REPEATABLE READ has no phantoms",
+        "Write skew is not in the ANSI table and only SERIALIZABLE prevents it",
+        "PostgreSQL SERIALIZABLE aborts with 40001 and needs retries; SQL Server blocks"
+      ],
+      "followUps": [
+        {
+          "q": "Give me a write-skew example.",
+          "a": "The on-call rota. Two doctors are on call; each independently runs a transaction that counts the on-call doctors, sees two, concludes it is safe to go off call, and updates their own row. Both commit. Nobody is on call. Neither transaction touched the row the other wrote, so no lock and no snapshot conflict caught it — only SERIALIZABLE, or an explicit lock on something they share, prevents it."
+        },
+        {
+          "q": "Which level would you actually use?",
+          "a": "READ COMMITTED for almost everything, because it is the default and the anomalies it allows are usually handled by writing careful statements — a single atomic `UPDATE ... WHERE qty >= 1` rather than a read followed by a write. Raise specific transactions to SERIALIZABLE when there is a real cross-row invariant, and accept that you must code the retry loop."
+        }
+      ],
+      "redFlags": [
+        "Quoting the ANSI table as if every engine implements it literally",
+        "Not knowing a SERIALIZABLE transaction can be aborted and must be retried",
+        "Confusing non-repeatable reads with phantoms"
+      ],
+      "related": [
+        "database"
+      ]
+    },
+    {
+      "id": "st-03",
+      "level": "mid",
+      "type": "concept",
+      "question": "How does MVCC differ from lock-based concurrency control?",
+      "answer": "Under two-phase locking, readers take shared locks and writers take exclusive ones, so readers block writers and writers block readers. It is correct and simple, and on a read-heavy workload it is a throughput disaster: one long report can stall every writer behind it.\n\nMulti-version concurrency control removes that interaction by keeping more than one version of each row. A writer creates a new version rather than overwriting; each transaction reads whichever version was visible to its snapshot. So **readers never block writers and writers never block readers**. Writers still conflict with writers on the same row — that part needs a real lock.\n\nIn PostgreSQL every tuple carries the transaction ids that created and deleted it, and an `UPDATE` is physically an insert of a new tuple plus a mark on the old one. Visibility is decided by comparing those ids against your snapshot. The cost is the dead tuples: they occupy space until `VACUUM` reclaims it, and vacuum cannot remove any version that a still-running transaction might need. That is the whole reason a long-running transaction is dangerous in PostgreSQL — it pins the horizon and the bloat accumulates everywhere, not just in the tables it touched.\n\nInnoDB makes a different trade: old versions live in the undo log rather than in the table, so the table does not bloat the same way, but a long transaction grows the history list and every read that has to reconstruct an old version gets slower.\n\nSQL Server is lock-based by default and offers MVCC behaviour opt-in through `READ_COMMITTED_SNAPSHOT` and SNAPSHOT isolation, with the versions kept in tempdb.",
+      "keyPoints": [
+        "2PL makes readers and writers block each other; MVCC removes that interaction",
+        "Writers still block writers on the same row",
+        "PostgreSQL keeps versions in the table, so VACUUM must reclaim dead tuples",
+        "InnoDB keeps versions in the undo log — no table bloat, but a growing history list",
+        "SQL Server is locking by default, snapshot isolation is opt-in via tempdb versioning"
+      ],
+      "followUps": [
+        {
+          "q": "If readers never block, what does a reader see when a row is being updated?",
+          "a": "The version that was committed as of its snapshot — the old value. That is the point: it gets a consistent view without waiting. Under READ COMMITTED the snapshot is taken per statement, so the next statement in the same transaction may see the new value; under REPEATABLE READ the snapshot is taken once and holds for the whole transaction."
+        },
+        {
+          "q": "What is transaction ID wraparound?",
+          "a": "PostgreSQL transaction ids are 32-bit and visibility is computed by comparison, so they must be frozen before they wrap. Autovacuum does this continuously, but if it is prevented from running — typically by a long-running transaction or a stale replication slot — the database issues increasingly urgent warnings and will eventually refuse new writes to protect itself. It is rare, and it is always the result of vacuum having been blocked for a long time."
+        }
+      ],
+      "redFlags": [
+        "Saying MVCC means no locks at all",
+        "Not connecting MVCC to vacuum and bloat",
+        "Assuming every database implements MVCC the same way"
+      ],
+      "related": [
+        "database",
+        "replication"
+      ]
+    },
+    {
+      "id": "st-04",
+      "level": "mid",
+      "type": "tradeoff",
+      "question": "Optimistic or pessimistic locking — how do you choose?",
+      "answer": "Pessimistic locking assumes you will conflict, so you take the lock before you act: `SELECT ... FOR UPDATE`, do the work, commit. You are guaranteed to win, and you hold a lock for the whole duration — which is fine for a few milliseconds of computation and catastrophic if anything in between waits on a human or an external HTTP call.\n\nOptimistic locking assumes you usually will not conflict, so you take no lock. You read the row, remember its version, and make the write assert that nothing changed:\n\n```sql\nUPDATE documents\n   SET body = ?, version = version + 1\n WHERE id = ? AND version = ?;\n```\n\nIf that reports zero rows updated, somebody else won the race — you refetch, and either merge or tell the user. This is what JPA's `@Version` and most REST ETag flows are doing underneath.\n\nThe choice is governed by the conflict rate, not by taste. Where contention is low — a document usually edited by one person, a user editing their own profile — optimistic costs nothing in the common case and turns the rare conflict into a visible, handleable event. Where contention is genuinely high — the stock count of one item during a flash sale — optimistic degenerates into a retry storm where most attempts do work and throw it away, and pessimistic serialises the queue cleanly.\n\nThe answer that scores best is the third option: often the read-modify-write should not exist. `UPDATE stock SET qty = qty - 1 WHERE id = ? AND qty >= 1` is atomic in one statement, needs neither strategy, and reports zero rows when the item ran out.",
+      "keyPoints": [
+        "Pessimistic takes the lock up front and holds it for the transaction",
+        "Optimistic uses a version column and asserts it in the WHERE clause of the update",
+        "Zero rows updated is the conflict signal — the application must handle it",
+        "Low contention favours optimistic; a hot row favours pessimistic",
+        "Best of all is a single conditional UPDATE that needs neither"
+      ],
+      "followUps": [
+        {
+          "q": "What goes wrong if you hold a pessimistic lock across a network call?",
+          "a": "Every other request for that row queues behind a call you do not control the latency of. When the remote service slows to five seconds, the lock queue grows, connections are consumed waiting, and a dependency's latency becomes your outage. Take the lock after the external call, or persist the outcome and reconcile."
+        },
+        {
+          "q": "Can optimistic locking lose an update?",
+          "a": "Not if the version predicate is genuinely in the UPDATE statement. It is lost when people implement the check as a separate SELECT and then an unconditional UPDATE — that is check-then-act again, with a window between the two. The assertion has to be part of the write."
+        }
+      ],
+      "redFlags": [
+        "Treating it as a binary choice with no reference to conflict rate",
+        "Checking the version in a separate statement before updating",
+        "Holding row locks across external calls or user think time"
+      ],
+      "related": [
+        "database",
+        "api"
+      ]
+    },
+    {
+      "id": "st-05",
+      "level": "mid",
+      "type": "concept",
+      "question": "What causes a database deadlock, and how do you avoid them?",
+      "answer": "A deadlock is a cycle in the wait-for graph: transaction A holds a lock B wants, and B holds one A wants, so neither can proceed. The database detects the cycle and kills one of them — PostgreSQL after `deadlock_timeout`, one second by default, raising SQLSTATE 40P01; InnoDB maintains the graph and aborts almost immediately. The survivor proceeds. Note this is different from a lock wait, where nobody is in a cycle and the second transaction simply blocks until the first commits.\n\nThe usual cause is inconsistent lock ordering. One code path updates the sender's account then the recipient's; another, written by someone else six months later, does the recipient first. Run them concurrently on the same pair and they deadlock. The single most effective fix in real systems is embarrassingly simple: **sort the keys before you touch them.** If every transaction takes locks in ascending primary key order, the cycle cannot form.\n\nThe deadlocks that surprise people involve locks nobody wrote down. Inserting into a child table takes a lock on the referenced parent row so the foreign key cannot vanish underneath it, and that deadlocks against an update to the parent. InnoDB's REPEATABLE READ takes gap locks on ranges, which deadlock between statements that appear to touch different rows. SQL Server can escalate many row locks into a table lock, widening the conflict surface.\n\nThe rest of the toolkit: keep transactions short, so the window is small; do not interleave user interaction with held locks; and treat a deadlock as a **retryable error with backoff**, not an exception to log and page on. You cannot eliminate deadlocks entirely under concurrency, so a correct system retries.",
+      "keyPoints": [
+        "A cycle in the wait-for graph; the engine detects it and aborts one transaction",
+        "Inconsistent lock ordering across code paths is the usual cause",
+        "Sorting keys before updating makes the cycle impossible",
+        "Foreign-key locks, InnoDB gap locks and lock escalation cause the surprising ones",
+        "Deadlock is retryable — build the retry rather than trying to prove it cannot happen"
+      ],
+      "followUps": [
+        {
+          "q": "How do you investigate one that already happened?",
+          "a": "PostgreSQL logs the full deadlock report with both statements and the locks each held — that is usually enough to see the ordering. Turn on `log_lock_waits` to catch the near misses too. In MySQL, `SHOW ENGINE INNODB STATUS` shows the latest deadlock; SQL Server captures them in the system_health extended events session."
+        },
+        {
+          "q": "Does lowering the isolation level help?",
+          "a": "Sometimes, when the level itself is taking the extra locks — dropping from InnoDB's REPEATABLE READ to READ COMMITTED removes most gap locking, which is a well-known fix for a specific family of deadlocks. It does nothing for a plain ordering cycle between two updates, so diagnose before reaching for it."
+        }
+      ],
+      "redFlags": [
+        "Confusing a deadlock with a slow lock wait",
+        "Proposing to \"just retry\" with no mention of ordering or backoff",
+        "Believing deadlocks indicate a broken database"
+      ]
+    },
+    {
+      "id": "st-06",
+      "level": "mid",
+      "type": "code",
+      "question": "What does SELECT ... FOR UPDATE do, and when is it the right tool?",
+      "answer": "It takes an exclusive row lock on every row the select returns, held until the transaction ends. Another transaction that tries to update, delete or `FOR UPDATE` those rows waits. It exists to close the read-modify-write race: without it, two transactions read the same balance, each computes a new value from it, and the second write silently erases the first.\n\nThe variant that earns its keep is `SKIP LOCKED`, which turns a table into a work queue that many workers can poll without colliding:\n\n```sql\nBEGIN;\nSELECT id, payload FROM jobs\n WHERE status = 'pending'\n ORDER BY created_at\n LIMIT 10\n FOR UPDATE SKIP LOCKED;\n-- process, mark done\nCOMMIT;\n```\n\nEach worker gets a disjoint batch instead of nine of them queueing on the same ten rows. `NOWAIT` is the other variant — fail immediately rather than queue, which is what you want behind a user-facing request.\n\nThree things to know that separate a correct use from a broken one. It does nothing outside an explicit transaction: in autocommit, the lock is released the instant the select returns, which is the most common way people believe they have protection and do not. It locks rows that exist, so it cannot prevent a phantom — `SELECT ... FOR UPDATE` finding no row does not stop someone else inserting one, which is why a unique constraint, not a lock, is what actually prevents duplicates. And under READ COMMITTED, PostgreSQL re-checks the row after acquiring the lock; if a concurrent commit changed it so it no longer matches your `WHERE`, the row quietly drops out of your result.",
+      "codeExample": {
+        "language": "sql",
+        "code": [
+          "-- read-modify-write, made safe",
+          "BEGIN;",
+          "SELECT balance FROM accounts WHERE id = 42 FOR UPDATE;",
+          "-- no other transaction can modify row 42 until we commit",
+          "UPDATE accounts SET balance = balance - 100 WHERE id = 42;",
+          "COMMIT;",
+          "",
+          "-- but this needs no lock at all, and is one round trip:",
+          "UPDATE accounts",
+          "   SET balance = balance - 100",
+          " WHERE id = 42 AND balance >= 100;   -- 0 rows = insufficient funds",
+          "",
+          "-- claim work without workers colliding",
+          "BEGIN;",
+          "SELECT id, payload",
+          "  FROM jobs",
+          " WHERE status = 'pending'",
+          " ORDER BY created_at",
+          " LIMIT 10",
+          "   FOR UPDATE SKIP LOCKED;",
+          "UPDATE jobs SET status = 'running' WHERE id = ANY(?);",
+          "COMMIT;"
+        ]
+      },
+      "keyPoints": [
+        "Exclusive row locks held until commit — closes the read-modify-write race",
+        "Useless in autocommit: the lock dies with the statement",
+        "SKIP LOCKED makes a queue table safe for many concurrent workers",
+        "It cannot prevent phantoms; only a unique constraint prevents duplicate inserts",
+        "A single conditional UPDATE often removes the need for the lock entirely"
+      ],
+      "followUps": [
+        {
+          "q": "FOR UPDATE or FOR SHARE?",
+          "a": "FOR SHARE lets other transactions read-lock the same rows but blocks writers — useful when you need a row to stay put while you validate against it, such as checking a parent exists before inserting a child. Two transactions both holding FOR SHARE and both then wanting FOR UPDATE is a classic upgrade deadlock, so if you know you will write, take FOR UPDATE at the start."
+        },
+        {
+          "q": "Is a job queue in the database a good idea?",
+          "a": "For moderate throughput with SKIP LOCKED it is genuinely good, and it buys you something a broker cannot: enqueueing the job in the same transaction as the business data, so the job never refers to a row that was rolled back. At high volume the dead-tuple churn on a constantly updated table becomes the problem and a dedicated broker wins."
+        }
+      ],
+      "redFlags": [
+        "Using it outside an explicit transaction",
+        "Expecting it to prevent duplicate inserts",
+        "Reaching for it when a single conditional UPDATE would do"
+      ],
+      "related": [
+        "message-queue",
+        "database"
+      ]
+    },
+    {
+      "id": "st-07",
+      "level": "senior",
+      "type": "concept",
+      "question": "Why are long-running transactions a problem?",
+      "answer": "Because a transaction is a promise the database has to keep for its entire lifetime, and the cost of keeping it grows with the clock rather than with the work done.\n\nUnder MVCC the transaction pins a snapshot, and no row version that snapshot might still need can be reclaimed. In PostgreSQL that holds back `VACUUM` across the **whole cluster**, not only the tables the transaction touched. Dead tuples accumulate, tables and indexes bloat, sequential scans read pages that are mostly dead rows, index-only scans stop working because the visibility map stops advancing, and everything gets a little slower. The nastiest part is that ending the transaction does not undo the bloat — the space stays allocated until something rewrites the table.\n\nSecond, it holds every lock it has taken until it commits. On its own that just makes writers queue. The way it takes a site down is via a DDL statement caught in the middle: an `ALTER TABLE` waits for a lock the long transaction holds, and while it waits, every subsequent reader queues behind the pending exclusive lock request. A three-second migration and one forgotten transaction become a total stall on that table. This is why `lock_timeout` before DDL is standard practice.\n\nThe common cause is not a slow query. It is an `idle in transaction` connection: code that opened a transaction and then made an HTTP call, waited on a user, or simply failed to commit on an error path. `pg_stat_activity` shows these directly, sorted by `xact_start`, and `idle_in_transaction_session_timeout` kills them automatically.\n\nThe design rule that follows is worth stating plainly: a transaction should wrap database work and nothing else. Do the external calls before or after, and chunk long batch jobs into many short transactions.",
+      "keyPoints": [
+        "A held snapshot blocks vacuum cluster-wide; bloat accumulates and does not self-heal",
+        "Locks are held for the whole transaction, not just the statement",
+        "A pending DDL lock request behind a long transaction queues all subsequent readers",
+        "The usual culprit is idle in transaction, not a slow query",
+        "Wrap only database work in a transaction; chunk long batches"
+      ],
+      "followUps": [
+        {
+          "q": "How does this interact with replicas?",
+          "a": "In PostgreSQL a long query on a hot standby either gets cancelled by a replication conflict when the primary vacuums away rows it still needs, or, with `hot_standby_feedback` on, prevents the primary from vacuuming at all. So moving reporting to a replica does not make long transactions free — it chooses which side pays."
+        },
+        {
+          "q": "What limits would you set?",
+          "a": "`statement_timeout` so a single query cannot run forever, `idle_in_transaction_session_timeout` so an abandoned transaction is reaped, and `lock_timeout` on migrations so DDL fails fast instead of building a queue. Reporting connections can carry a much longer statement timeout than the application pool — the limits should differ per workload."
+        }
+      ],
+      "redFlags": [
+        "Only mentioning locks and not MVCC bloat",
+        "Not knowing idle in transaction is a state worth monitoring",
+        "Assuming bloat disappears once the transaction ends"
+      ],
+      "related": [
+        "database",
+        "replication"
+      ]
+    },
+    {
+      "id": "st-08",
+      "level": "senior",
+      "type": "scenario",
+      "question": "Customers are occasionally charged twice. The payment code is wrapped in a transaction. What is happening?",
+      "answer": "The transaction is the wrong tool, so wrapping more code in it will not help. Two distinct problems are being conflated.\n\nThe first is that **a database transaction cannot make an external call atomic**. `BEGIN; INSERT payment; charge_gateway(); COMMIT;` charges the customer and then loses the record if the commit fails. Reversing the order loses it if the process dies in the gap. There is no ordering that makes a local commit and a remote side effect happen together — this is the dual-write problem, and the fix is not a stronger transaction.\n\nThe second is that the guard is usually check-then-act: select whether a paid row exists, see none, charge. Under READ COMMITTED two concurrent requests both see none. `FOR UPDATE` does not save you either, because there is no row yet to lock. The only component that can serialise a decision about a row that does not exist is a **unique constraint**.\n\nSo the fix has two halves. The client sends an idempotency key per logical payment attempt, unchanged across retries. The server inserts that key into a table with `UNIQUE (idempotency_key)` in the same transaction that records the intent, commits, and only then calls the gateway — passing the same key onward, since gateways honour one. A retry hits the unique violation and returns the stored result rather than charging again. Because the intent is committed before the call, a crash leaves a `pending` row that a reconciliation job can ask the gateway about, rather than leaving nothing.\n\nThe evidence tells you which trigger you have. Duplicates milliseconds apart mean concurrency; seconds or minutes apart mean a client or load balancer retrying a POST after a timeout, which is the usual cause and the reason retries must be safe by construction.",
+      "keyPoints": [
+        "A transaction cannot make a remote call atomic — this is the dual-write problem",
+        "Check-then-act does not hold under READ COMMITTED, and FOR UPDATE cannot lock a missing row",
+        "A unique constraint on the idempotency key is what actually serialises the decision",
+        "Commit the intent before calling the gateway so a crash leaves something to reconcile",
+        "Timestamp spacing between duplicates distinguishes concurrency from client retries"
+      ],
+      "followUps": [
+        {
+          "q": "Who generates the idempotency key, and how long do you keep it?",
+          "a": "The client, once per logical attempt, and it must survive the retry — a key regenerated per HTTP request protects nothing. Keep the record at least as long as any layer might retry, typically 24 hours, and store the response alongside it so the replay returns the original answer rather than a bare conflict error."
+        },
+        {
+          "q": "What if the gateway call succeeds but the response is lost?",
+          "a": "That is the case you cannot avoid, only survive. You are left with a pending attempt and an unknown outcome, and the only resolution is to ask the gateway using the same idempotency key — which is precisely why it must be passed through rather than kept local. A reconciliation job doing this on a schedule is part of the design, not a workaround."
+        }
+      ],
+      "redFlags": [
+        "Proposing a longer transaction or a higher isolation level as the fix",
+        "Relying on a SELECT check before the charge",
+        "Treating it purely as a client bug when the server has no idempotency guarantee"
+      ],
+      "related": [
+        "api",
+        "message-queue",
+        "database"
+      ]
+    }
+  ]
+}

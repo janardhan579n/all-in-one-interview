@@ -1,0 +1,132 @@
+{
+  "id": "swim-in-rising-water",
+  "title": "Swim in Rising Water",
+  "patternId": "shortest-paths",
+  "difficulty": "advanced",
+  "tags": [
+    "shortest-paths",
+    "dijkstra",
+    "heap",
+    "grid",
+    "binary-search",
+    "union-find"
+  ],
+  "statement": "You are given an n x n grid where grid[r][c] is the elevation of that cell. Rain raises the water level to t at time t, and you may swim between two side-adjacent cells at time t only if both of their elevations are at most t. You start at (0, 0) at time 0 and swim infinitely fast. Return the earliest time at which you can reach (n-1, n-1). Equivalently: over every path from corner to corner, minimise the largest elevation the path steps on.",
+  "realWorld": "Bottleneck routing, where the route is only as good as its worst link: picking a network path that minimises the worst hop latency, sizing a delivery route by its steepest grade, or choosing a pipeline whose narrowest segment is as wide as possible. Any objective of the form \"the chain is as bad as its weakest element\" is this minimax path problem.",
+  "examples": [
+    {
+      "input": "grid = [[0,2],[1,3]]  (rows top to bottom, start (0,0), target (n-1,n-1))",
+      "output": "3",
+      "explanation": "The target itself sits at elevation 3, so no route can finish sooner however it wanders. The answer is never below max(grid[0][0], grid[n-1][n-1])."
+    },
+    {
+      "input": "grid = [[0,1,2,3,4],[24,23,22,21,5],[12,13,14,15,16],[11,17,18,19,20],[10,9,8,7,6]]",
+      "output": "16",
+      "explanation": "The snake along 0,1,2,3,4,5,16 and down to the corner peaks at 16. Any attempt to cut across the middle steps on 21 or higher, so the longer route wins - path length is irrelevant, only the worst cell counts."
+    },
+    {
+      "input": "grid = [[3,2],[0,1]]",
+      "output": "3",
+      "explanation": "You start standing on elevation 3, so the water must already be at 3 before you can move at all. The starting cell is part of the path and its elevation counts."
+    }
+  ],
+  "constraints": [
+    "n == grid.length == grid[i].length",
+    "1 <= n <= 50",
+    "0 <= grid[i][j] < n * n",
+    "Every value of grid is unique - the grid is a permutation of 0 .. n*n - 1"
+  ],
+  "bruteForce": {
+    "idea": "Try each water level t in increasing order. For each one, flood fill from (0, 0) across cells of elevation at most t, and return the first t from which the far corner is reachable.",
+    "code": [
+      "public static int swimInWater(int[][] grid) {",
+      "    int n = grid.length;",
+      "    for (int t = grid[0][0]; t < n * n; t++) {",
+      "        if (reaches(grid, t)) return t;      // a fresh flood fill for every water level",
+      "    }",
+      "    return n * n - 1;",
+      "}",
+      "",
+      "private static boolean reaches(int[][] grid, int t) {",
+      "    int n = grid.length;",
+      "    boolean[][] seen = new boolean[n][n];",
+      "    int[][] dirs = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};",
+      "    Deque<int[]> stack = new ArrayDeque<>();",
+      "    stack.push(new int[]{0, 0});",
+      "    seen[0][0] = true;",
+      "    while (!stack.isEmpty()) {",
+      "        int[] cell = stack.pop();",
+      "        if (cell[0] == n - 1 && cell[1] == n - 1) return true;",
+      "        for (int[] d : dirs) {",
+      "            int r = cell[0] + d[0], c = cell[1] + d[1];",
+      "            if (r < 0 || c < 0 || r >= n || c >= n) continue;",
+      "            if (seen[r][c] || grid[r][c] > t) continue;",
+      "            seen[r][c] = true;",
+      "            stack.push(new int[]{r, c});",
+      "        }",
+      "    }",
+      "    return false;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n^4) - up to n^2 water levels, each flooding up to n^2 cells",
+      "space": "O(n^2)"
+    },
+    "whySlow": "Each water level restarts the flood fill at the corner and re-walks every low cell it has already walked at every earlier level. The region reachable at t is a superset of the region at t-1 - water never recedes - yet the algorithm rediscovers all of it from nothing, when the only new information the level brought is the single cell whose elevation is exactly t. It re-derives the whole reachable region once per level in order to learn about one cell."
+  },
+  "patternIdentification": "The cost of a path here is the maximum of its cells rather than their sum, and that single substitution is the entire problem. It changes almost nothing about the machinery, because max is still monotone: adding a cell to a path can never lower the path maximum, which is the same property that non-negative weights give ordinary Dijkstra, and the same property that licenses settling a cell the instant it is popped. So run Dijkstra with cost(path + cell) = max(cost(path), elevation(cell)) in place of cost + weight. Whenever the objective reads \"minimise the worst element along the route\" - bottleneck path, widest path, minimum effort, maximum capacity - take the additive algorithm you already know and swap the combining operator.",
+  "optimized": {
+    "idea": "Dijkstra on the grid, where a cell distance is the highest elevation on the best route reaching it. Seed best[0][0] = grid[0][0], because you are standing on that cell and its elevation already counts, then pop the smallest such value, and the first pop of the far corner is the answer. Two genuinely different approaches are worth knowing, since they win in different situations. Union-find by increasing threshold: sort the cells by elevation, activate them one at a time, union each newly active cell with its already-active neighbours, and stop at the first threshold where the two corners share a root. Its cost is dominated by the O(n^2 log n) sort with near-constant work after it, and on a dense grid its tiny constant factor often beats the heap - but it needs the whole grid up front, it processes cells that no route will ever use, and it hands back only the answer, never the route. Binary search on t with a flood fill per probe: O(n^2 log(n^2)), by far the easiest to reason about and the hardest to get wrong, but it re-walks the grid from scratch on every probe and it needs a cheap enumeration of candidate thresholds, which a general weighted graph does not give you. Dijkstra is the one that generalises: one pass, O(n^2 log n), it reconstructs the path if you record parents, and it works unchanged on any graph.",
+    "code": [
+      "public static int swimInWater(int[][] grid) {",
+      "    int n = grid.length;",
+      "    int[][] best = new int[n][n];",
+      "    for (int[] row : best) Arrays.fill(row, Integer.MAX_VALUE);",
+      "    best[0][0] = grid[0][0];   // you are already standing on it, so it counts",
+      "    PriorityQueue<int[]> heap = new PriorityQueue<>((a, b) -> Integer.compare(a[0], b[0]));",
+      "    heap.offer(new int[]{grid[0][0], 0, 0});",
+      "    int[][] dirs = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};",
+      "    while (!heap.isEmpty()) {",
+      "        int[] top = heap.poll();",
+      "        int t = top[0], r = top[1], c = top[2];",
+      "        if (r == n - 1 && c == n - 1) return t;",
+      "        if (t > best[r][c]) continue;                     // stale entry: settled lower already",
+      "        for (int[] d : dirs) {",
+      "            int nr = r + d[0], nc = c + d[1];",
+      "            if (nr < 0 || nc < 0 || nr >= n || nc >= n) continue;",
+      "            int candidate = Math.max(t, grid[nr][nc]);     // max, where ordinary Dijkstra adds",
+      "            if (candidate < best[nr][nc]) {",
+      "                best[nr][nc] = candidate;",
+      "                heap.offer(new int[]{candidate, nr, nc});",
+      "            }",
+      "        }",
+      "    }",
+      "    return -1;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n^2 log n)",
+      "space": "O(n^2)"
+    }
+  },
+  "commonMistakes": [
+    "Seeding best[0][0] and the heap with 0 instead of grid[0][0] - on [[3,2],[0,1]] the answer comes back 1 instead of 3, because the elevation you are standing on is never charged. Every grid whose first cell is 0, including the usual sample, hides this completely.",
+    "Writing candidate = t + grid[nr][nc], the additive template - the result becomes a sum of elevations that grows with the length of the route instead of tracking its worst cell, so the 5 x 5 example returns a number far above 16 and the shortest route starts winning for the wrong reason.",
+    "Returning as soon as the target is pushed rather than when it is popped - the value pushed is only the best route found so far, so a later, longer detour with a lower maximum never gets its chance. The 2 x 2 examples pass, because there every route is equivalent, and the 5 x 5 one comes back too high."
+  ],
+  "similar": [
+    "path-with-minimum-effort",
+    "network-delay-time",
+    "path-with-maximum-probability",
+    "cheapest-flights-k-stops"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 778,
+      "slug": "swim-in-rising-water",
+      "title": "Swim in Rising Water",
+      "url": "https://leetcode.com/problems/swim-in-rising-water/",
+      "premium": false
+    }
+  }
+}

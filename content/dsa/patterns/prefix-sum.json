@@ -1,0 +1,334 @@
+{
+  "id": "prefix-sum",
+  "kind": "pattern",
+  "title": "Prefix Sum",
+  "group": "Arrays & Strings",
+  "level": 2,
+  "difficulty": "beginner",
+  "estimatedMinutes": 28,
+  "summary": "Precompute running totals once, and the sum of any range becomes a single subtraction — O(n) preprocessing buys O(1) range queries.",
+  "prerequisites": [
+    "arrays",
+    "hashing"
+  ],
+  "tags": [
+    "array",
+    "range-query",
+    "cumulative",
+    "level-2"
+  ],
+  "analogy": {
+    "beginner": "Kilometre markers on a highway. To find the distance between exit 12 and exit 47 you don't drive the road measuring as you go — you subtract the two marker numbers. Someone measured the distance from the start once, and now every 'how far between these two points?' question is one subtraction.",
+    "interview": "Build P[i] = sum of the first i elements. Then sum(i..j) = P[j+1] - P[i] in O(1). This converts repeated range aggregation from O(n) per query to O(1) after O(n) preprocessing, and — combined with a hash map of previously seen prefix values — turns 'count subarrays with sum k' from O(n²) into O(n)."
+  },
+  "intuition": "Two ideas, and the second is the one that wins interviews.\n\n**Idea one: range queries.** If `P[i]` holds the total of everything before index i, then the sum from i to j is `P[j+1] - P[i]`. The bigger total minus the smaller total leaves exactly the middle. Answer any range in one subtraction, forever.\n\n**Idea two: subarray counting.** Rearranging that identity gives something much more powerful. If `sum(i..j) == k`, then `P[j+1] - P[i] == k`, so `P[i] == P[j+1] - k`. Read that right to left: *while scanning, at each position I know what earlier prefix value I need — so instead of searching for it, I look it up.*\n\nThat is the same move that turns Two Sum from O(n²) into O(n): a HashMap answers 'have I seen this value?' in O(1). Prefix Sum plus HashMap is one of the highest-yield combinations in the whole pattern catalogue, and it is the correct tool exactly where the sliding window breaks — arrays containing negative numbers.",
+  "problemFirst": {
+    "motivatingProblem": "You are given an array and 100,000 queries of the form 'what is the sum of elements between index i and j?'",
+    "bruteForce": {
+      "idea": "For each query, loop from i to j and add.",
+      "code": [
+        "int rangeSum(int[] nums, int i, int j) {",
+        "    int sum = 0;",
+        "    for (int k = i; k <= j; k++) {",
+        "        sum += nums[k];",
+        "    }",
+        "    return sum;",
+        "}",
+        "// called 100,000 times, each possibly scanning the whole array"
+      ],
+      "complexity": {
+        "time": "O(q·n)",
+        "space": "O(1)"
+      },
+      "whySlow": "With n = 100,000 and q = 100,000 that is up to 10¹⁰ additions. Worse, the queries overlap heavily — the same stretches are re-added thousands of times."
+    },
+    "observation": "Every range sum is the difference of two totals-from-the-start. Those totals do not depend on the queries at all, so they can be computed once, before any query arrives.",
+    "leap": "Precompute the running totals in one pass. Then each query is one subtraction: O(n) once, O(1) per query, and 10¹⁰ operations become 200,000.",
+    "optimizedSketch": [
+      "int[] prefix = new int[nums.length + 1];",
+      "for (int i = 0; i < nums.length; i++) {",
+      "    prefix[i + 1] = prefix[i] + nums[i];",
+      "}",
+      "// now: sum(i..j) == prefix[j + 1] - prefix[i]"
+    ]
+  },
+  "howItWorks": [
+    "**Build**: `prefix[0] = 0` and `prefix[i+1] = prefix[i] + nums[i]`. Use length n+1 — the leading zero removes every special case for ranges starting at 0.",
+    "**Query**: `sum(i..j) = prefix[j+1] - prefix[i]`, inclusive on both ends.",
+    "**Counting subarrays with sum k**: scan once keeping a running prefix; at each step look up how many earlier prefixes equalled `running - k`. Seed the map with `{0: 1}` — that entry represents the empty prefix and is what lets a subarray starting at index 0 be counted.",
+    "**2D prefix sums** answer rectangle queries with inclusion–exclusion: `S = P[r2][c2] - P[r1-1][c2] - P[r2][c1-1] + P[r1-1][c1-1]`.",
+    "**Difference array** is the inverse: to add v across many ranges, record `diff[i] += v; diff[j+1] -= v;` in O(1) per update, then take one prefix sum at the end to materialise the result.",
+    "**Other aggregates work too** — prefix XOR, prefix product (beware zeros), prefix counts of a character."
+  ],
+  "patternRecognition": {
+    "signals": [
+      "Repeated range-sum or range-average queries over a static array",
+      "'Count the subarrays whose sum equals k' → prefix + HashMap",
+      "'Subarray sums divisible by k' → prefix remainder + HashMap",
+      "The array contains **negative numbers** and you need subarray sums — the sliding window is unsafe here",
+      "Many range *updates* with a single read at the end → difference array"
+    ],
+    "antiSignals": [
+      "The array changes between queries — a static prefix array goes stale on every write; use a Fenwick/segment tree for O(log n) updates",
+      "You need the maximum over a range, not the sum — max has no inverse, so subtraction does not work (use a sparse table or segment tree)",
+      "All values are positive and you need the longest/shortest range meeting a condition — a sliding window is simpler and O(1) space"
+    ],
+    "decisionTreeId": null
+  },
+  "visualizations": [
+    {
+      "id": "build-and-query",
+      "title": "Build the prefix array, then answer a range in one subtraction",
+      "engine": "prefixSum",
+      "input": {
+        "array": [
+          3,
+          1,
+          4,
+          1,
+          5,
+          9,
+          2,
+          6
+        ],
+        "queries": [
+          [
+            1,
+            3
+          ],
+          [
+            0,
+            4
+          ],
+          [
+            5,
+            7
+          ]
+        ]
+      },
+      "code": [
+        "int[] prefix = new int[nums.length + 1];",
+        "for (int i = 0; i < nums.length; i++) {",
+        "    prefix[i + 1] = prefix[i] + nums[i];",
+        "}",
+        "// query(i, j):",
+        "return prefix[j + 1] - prefix[i];"
+      ]
+    },
+    {
+      "id": "count-subarrays",
+      "title": "Prefix + HashMap: counting subarrays that sum to k",
+      "engine": "prefixSumHash",
+      "input": {
+        "array": [
+          1,
+          2,
+          3,
+          -3,
+          1,
+          1,
+          1
+        ],
+        "k": 3
+      },
+      "code": [
+        "Map<Integer, Integer> seen = new HashMap<>();",
+        "seen.put(0, 1);                 // the empty prefix",
+        "int running = 0, count = 0;",
+        "for (int x : nums) {",
+        "    running += x;",
+        "    count += seen.getOrDefault(running - k, 0);",
+        "    seen.merge(running, 1, Integer::sum);",
+        "}",
+        "return count;"
+      ]
+    }
+  ],
+  "implementations": [
+    {
+      "label": "Simple",
+      "language": "java",
+      "explanation": "The range-query structure. The n+1 sizing with a leading zero is the detail that eliminates off-by-one bugs — without it, ranges starting at index 0 need their own branch.",
+      "code": [
+        "class RangeSum {",
+        "    private final long[] prefix;   // long: sums overflow int quickly",
+        "",
+        "    RangeSum(int[] nums) {",
+        "        prefix = new long[nums.length + 1];",
+        "        for (int i = 0; i < nums.length; i++) {",
+        "            prefix[i + 1] = prefix[i] + nums[i];",
+        "        }",
+        "    }",
+        "",
+        "    /** Inclusive sum of nums[i..j]. O(1). */",
+        "    long query(int i, int j) {",
+        "        return prefix[j + 1] - prefix[i];",
+        "    }",
+        "}"
+      ]
+    },
+    {
+      "label": "Optimized",
+      "language": "java",
+      "explanation": "The version that actually appears in interviews. Note that the prefix array is never materialised — a single running total is enough — and that the map is seeded with {0:1} so that a qualifying subarray starting at index 0 is counted.",
+      "code": [
+        "/**",
+        " * Number of contiguous subarrays summing to k. Works with negatives,",
+        " * where a sliding window would not. O(n) time, O(n) space.",
+        " */",
+        "public static int subarraySum(int[] nums, int k) {",
+        "    Map<Long, Integer> prefixCounts = new HashMap<>();",
+        "    prefixCounts.put(0L, 1);          // empty prefix: enables subarrays from index 0",
+        "",
+        "    long running = 0;",
+        "    int count = 0;",
+        "",
+        "    for (int x : nums) {",
+        "        running += x;",
+        "        // any earlier prefix equal to (running - k) closes a subarray summing to k",
+        "        count += prefixCounts.getOrDefault(running - k, 0);",
+        "        prefixCounts.merge(running, 1, Integer::sum);",
+        "    }",
+        "    return count;",
+        "}",
+        "",
+        "/** 2D prefix sums: rectangle queries by inclusion-exclusion. */",
+        "public static long[][] build2D(int[][] grid) {",
+        "    int rows = grid.length, cols = grid[0].length;",
+        "    long[][] p = new long[rows + 1][cols + 1];",
+        "    for (int r = 0; r < rows; r++) {",
+        "        for (int c = 0; c < cols; c++) {",
+        "            p[r+1][c+1] = grid[r][c] + p[r][c+1] + p[r+1][c] - p[r][c];",
+        "        }",
+        "    }",
+        "    return p;",
+        "}",
+        "",
+        "/** Difference array: O(1) range updates, one O(n) pass to materialise. */",
+        "public static int[] applyRangeAdds(int n, int[][] updates) {",
+        "    int[] diff = new int[n + 1];",
+        "    for (int[] u : updates) {",
+        "        diff[u[0]] += u[2];",
+        "        diff[u[1] + 1] -= u[2];",
+        "    }",
+        "    int[] result = new int[n];",
+        "    int running = 0;",
+        "    for (int i = 0; i < n; i++) {",
+        "        running += diff[i];",
+        "        result[i] = running;",
+        "    }",
+        "    return result;",
+        "}"
+      ]
+    }
+  ],
+  "complexity": {
+    "time": "O(n) preprocessing, O(1) per range query; O(n) total for the HashMap counting variant",
+    "space": "O(n) for the prefix array or the map; O(1) if you only need a running total and no lookups",
+    "why": "Building the prefix array is a single pass of one addition each. Each query is one subtraction regardless of range width — that is the whole point, and it is why the pattern beats a sliding window for repeated arbitrary queries. The counting variant is O(n) because each element contributes one map lookup and one map insert, both O(1) on average. Note the classic trade: the array must be static, because a single update invalidates every prefix from that index onwards — O(n) to repair. If updates interleave with queries, a Fenwick tree gives O(log n) for both."
+  },
+  "commonMistakes": [
+    {
+      "mistake": "Off-by-one in the query formula",
+      "fix": "With a leading zero and length n+1, the inclusive sum of i..j is `prefix[j+1] - prefix[i]`. Check it against a single element: sum(2..2) should be `prefix[3] - prefix[2]`."
+    },
+    {
+      "mistake": "Forgetting `map.put(0, 1)` in the counting variant",
+      "fix": "Subarrays that start at index 0 are then missed entirely. The zero entry stands for the empty prefix."
+    },
+    {
+      "mistake": "`int` overflow in the prefix array",
+      "fix": "Sums over large arrays exceed 2.1 billion easily. Use `long`."
+    },
+    {
+      "mistake": "Using a sliding window on an array with negatives",
+      "fix": "Extending the window can decrease the sum, so shrinking on invalidity is unsound. Prefix + HashMap is the correct tool."
+    },
+    {
+      "mistake": "Rebuilding the prefix array after every update",
+      "fix": "That is O(n) per update. Use a Fenwick (binary indexed) tree for O(log n) updates and queries."
+    },
+    {
+      "mistake": "Trying to use prefix arrays for range maximum",
+      "fix": "Subtraction recovers a range only for invertible operations. Max is not invertible — use a sparse table or segment tree."
+    }
+  ],
+  "realWorldUses": [
+    "Analytics dashboards: cumulative revenue by day, then any date range is one subtraction.",
+    "Image processing: the summed-area table is a 2D prefix sum, used for constant-time box blur and in the Viola–Jones face detector.",
+    "Databases maintain running aggregates for `SUM() OVER (ORDER BY …)` window functions.",
+    "Billing and metering systems store cumulative counters; usage for a period is the difference of two readings — exactly like an electricity meter.",
+    "Difference arrays power bulk range updates such as seat or inventory reservations."
+  ],
+  "interviewNotes": [
+    "When you see 'subarray sum' plus 'negative numbers allowed', say 'prefix sum with a hash map' — it is the intended answer and the sliding window is the trap.",
+    "Mention the static-array caveat unprompted, and name the Fenwick tree as the answer when updates are interleaved. It is a strong signal.",
+    "The relationship between Two Sum and Subarray Sum Equals K is worth stating: both are 'I know what I need, so I look it up rather than search for it'."
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "mcq",
+      "question": "With prefix[0] = 0 and prefix[i+1] = prefix[i] + nums[i], what is the inclusive sum of nums[2..5]?",
+      "options": [
+        "prefix[5] - prefix[2]",
+        "prefix[6] - prefix[2]",
+        "prefix[5] - prefix[1]",
+        "prefix[6] - prefix[3]"
+      ],
+      "answerIndex": 1,
+      "explanation": "prefix[6] covers indices 0..5 and prefix[2] covers 0..1; the difference leaves exactly 2..5."
+    },
+    {
+      "id": "q2",
+      "type": "mcq",
+      "question": "Why is the map seeded with {0: 1} when counting subarrays that sum to k?",
+      "options": [
+        "To avoid null pointer exceptions",
+        "It represents the empty prefix, so a subarray starting at index 0 whose running sum equals k is counted",
+        "To make the map non-empty",
+        "It is not needed"
+      ],
+      "answerIndex": 1,
+      "explanation": "When running == k, we look up running - k == 0. Without the seed that lookup returns 0 and every subarray beginning at index 0 is silently missed."
+    },
+    {
+      "id": "q3",
+      "type": "identify-pattern",
+      "question": "'Count subarrays summing to k, where the array may contain negative numbers.' Which pattern?",
+      "options": [
+        "Sliding Window",
+        "Prefix Sum with a HashMap",
+        "Two Pointers",
+        "Binary Search"
+      ],
+      "answerIndex": 1,
+      "explanation": "Negatives break the sliding window's monotonicity assumption. Prefix sums make no such assumption — the identity P[j+1] - P[i] = k holds regardless of sign."
+    },
+    {
+      "id": "q4",
+      "type": "mcq",
+      "question": "Elements are updated between queries. Why is a plain prefix array a poor fit?",
+      "options": [
+        "It uses too much memory",
+        "One update invalidates every prefix from that index onwards, costing O(n) to repair",
+        "Prefix sums only work on sorted arrays",
+        "It is fine — updates are O(1)"
+      ],
+      "answerIndex": 1,
+      "explanation": "The structure assumes a static array. A Fenwick (binary indexed) tree supports both point updates and prefix queries in O(log n), which is the standard answer to this follow-up."
+    }
+  ],
+  "practiceProblems": [
+    "running-sum",
+    "pivot-index",
+    "range-sum-query",
+    "subarray-sum-equals-k",
+    "contiguous-array"
+  ],
+  "related": [
+    "sliding-window",
+    "hashing",
+    "arrays"
+  ]
+}

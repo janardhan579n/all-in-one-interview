@@ -1,0 +1,119 @@
+{
+  "id": "first-bad-version",
+  "title": "First Bad Version",
+  "patternId": "binary-search",
+  "difficulty": "beginner",
+  "tags": [
+    "binary-search",
+    "predicate",
+    "boundary"
+  ],
+  "statement": "Versions 1..n of a product were released in order. At some point a bad version was shipped, and every version after it is bad too. You are given an API isBadVersion(int version) that returns true if that version is bad. Find the first bad version, calling the API as few times as possible.",
+  "realWorld": "Bisecting a regression. `git bisect` is exactly this algorithm: the build passed at some old commit and fails at HEAD, the failure is sticky once introduced, and each probe costs a full build-and-test cycle, so you cannot afford a linear walk through 4000 commits.",
+  "examples": [
+    {
+      "input": "n = 5, first bad version is 4",
+      "output": "4",
+      "explanation": "isBadVersion(3) is false, isBadVersion(4) is true. Three calls: 3 (good), 4 (bad), then low meets high at 4."
+    },
+    {
+      "input": "n = 1, first bad version is 1",
+      "output": "1",
+      "explanation": "low and high are both 1 from the start, so the loop never runs and the answer is returned with zero API calls."
+    },
+    {
+      "input": "n = 2126753390, first bad version is 1702766719",
+      "output": "1702766719",
+      "explanation": "Only about 31 probes. This is also the case where a midpoint computed as (low + high) / 2 overflows and becomes negative."
+    }
+  ],
+  "constraints": [
+    "1 <= bad <= n <= 2^31 - 1",
+    "isBadVersion is monotone: once it returns true it returns true for every larger version",
+    "You should minimise the number of calls to isBadVersion"
+  ],
+  "bruteForce": {
+    "idea": "Ask about every version in order and stop at the first true.",
+    "code": [
+      "for (int version = 1; version <= n; version++) {",
+      "    if (isBadVersion(version)) return version;",
+      "}",
+      "return -1;"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(1)"
+    },
+    "whySlow": "Every probe throws away exactly one candidate. The API already told you something much stronger: isBadVersion(mid) == false rules out mid and everything below it in one call, and true rules out everything above it. A linear scan pays for that information and then ignores it, so 2 billion versions cost 2 billion calls instead of 31."
+  },
+  "patternIdentification": "The search space is not a sorted array of values — it is a sequence of yes/no answers that flips from false to true exactly once and never flips back. That monotone flip is the only thing binary search actually needs. Whenever you can write a predicate p(x) over an ordered domain such that p is false, false, ..., false, true, true, ..., true, you can binary search for the boundary, even when there is no array to index. Values sorted ascending are just the special case p(x) = (a[x] >= target). Recognising 'monotone predicate' rather than 'sorted array' is what lets the same six lines solve search-rotated-array, koko-eating-bananas and find-min-rotated-array.",
+  "optimized": {
+    "idea": "Binary search on the predicate. Keep a half-open invariant: the answer is always somewhere in [low, high]. If mid is bad, mid itself is still a candidate for the first bad version, so set high = mid — never mid - 1, which would discard the answer. If mid is good, the first bad version is strictly to the right, so low = mid + 1. The range shrinks every iteration, so the loop terminates with low == high pointing at the boundary. Compute the midpoint as low + (high - low) / 2: with n near 2^31 - 1, low + high overflows to a negative int and the index goes out of range; subtracting first keeps every intermediate value inside the range you already have.",
+    "code": [
+      "public static int firstBadVersion(int n) {",
+      "    int low = 1, high = n;",
+      "    while (low < high) {",
+      "        int mid = low + (high - low) / 2;   // NOT (low + high) / 2: that overflows int when n is near 2^31 - 1",
+      "        if (isBadVersion(mid)) {",
+      "            high = mid;                     // mid may itself be the first bad one, so keep it in the range",
+      "        } else {",
+      "            low = mid + 1;",
+      "        }",
+      "    }",
+      "    return low;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(log n) API calls",
+      "space": "O(1)"
+    }
+  },
+  "visualization": {
+    "engine": "binarySearchBoundary",
+    "input": {
+      "array": [
+        0,
+        0,
+        0,
+        0,
+        1,
+        1,
+        1,
+        1
+      ],
+      "target": 1
+    },
+    "code": [
+      "int low = 1, high = n;",
+      "while (low < high) {",
+      "    int mid = low + (high - low) / 2;",
+      "    if (isBadVersion(mid)) {",
+      "        high = mid;",
+      "    } else {",
+      "        low = mid + 1;",
+      "    }",
+      "}",
+      "return low;"
+    ]
+  },
+  "commonMistakes": [
+    "Writing `int mid = (low + high) / 2`. It passes every small test and then returns a wrong answer or throws on n = 2126753390, because low + high exceeds Integer.MAX_VALUE, wraps negative, and mid lands outside 1..n.",
+    "Writing `high = mid - 1` when mid is bad, by reflex from exact-match binary search. That discards the very candidate the probe just confirmed. With n = 3 and bad = 2: mid = 2 is bad, high becomes 1, the loop ends and you return 1 — a version isBadVersion says is good. The symptom is an answer that is always one or more too small, and it survives the n = 1 test.",
+    "Using `while (low <= high)` with `high = mid`. When low == high == mid and the version is bad, high is set to mid, nothing changes, and the loop spins forever — the symptom is a test that times out rather than fails."
+  ],
+  "similar": [
+    "binary-search-basic",
+    "find-min-rotated-array",
+    "search-rotated-array",
+    "koko-eating-bananas"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 278,
+      "slug": "first-bad-version",
+      "title": "First Bad Version",
+      "url": "https://leetcode.com/problems/first-bad-version/",
+      "premium": false
+    }
+  }
+}

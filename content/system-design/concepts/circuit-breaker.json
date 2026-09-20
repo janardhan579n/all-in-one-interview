@@ -1,0 +1,249 @@
+{
+  "id": "circuit-breaker",
+  "title": "Circuit Breakers",
+  "group": "Reliability",
+  "level": 2,
+  "estimatedMinutes": 28,
+  "summary": "A state machine that stops calling a dependency that is already failing, so the failure stays where it started. The counter-intuitive part is that returning an error immediately is the feature, not the compromise.",
+  "analogy": "The breaker in your house. When a circuit draws too much current it trips, and the lights in that room go out on purpose — because the alternative is the wiring behind the wall catching fire and taking the whole house. You still have to walk over and reset it, and a breaker that trips every time the kettle and the toaster run together is worse than no breaker: you end up taping it shut, which is exactly how people 'fix' a badly tuned circuit breaker in production too.",
+  "explanation": {
+    "beginner": "When your service calls another service, it waits for an answer. If that other service gets slow, your service is stuck waiting — and every waiting request is holding one of a limited number of workers. Eventually all of your workers are waiting on the sick service, and your service stops answering anything, even requests that had nothing to do with it. A circuit breaker watches those calls. Once enough of them fail, it stops sending calls at all for a while and returns an error straight away. That error is cheap: the worker is free again, and the rest of your service keeps running.",
+    "interview": "A three-state machine wrapped around a remote call. CLOSED: calls pass through and outcomes feed a rolling window. When the failure rate over that window crosses a threshold — with a minimum request volume, so a rate is statistically meaningful — the breaker moves to OPEN, where calls are rejected immediately without a network attempt. After a cooldown it moves to HALF_OPEN and admits a small number of trial calls; success closes it, failure re-opens it and the cooldown restarts. The failure it prevents is a cascading failure through resource exhaustion: a slow dependency converts bounded thread and connection pools into a queue, and pool saturation takes down the caller for unrelated work. It is useless without a timeout — a breaker cannot count a failure on a call that never returns — and it pairs with bulkheads (isolate pools per dependency) and retry with exponential backoff and jitter, since naive retries multiply load onto something already failing."
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "client",
+        "label": "Client",
+        "type": "client",
+        "x": 110,
+        "y": 300,
+        "note": "Wants a page. Most of what is on that page does not depend on the sick service."
+      },
+      {
+        "id": "app",
+        "label": "Order service",
+        "type": "server",
+        "x": 370,
+        "y": 300,
+        "note": "Finite worker threads and a finite connection pool. That finiteness is the whole story."
+      },
+      {
+        "id": "breaker",
+        "label": "Circuit breaker",
+        "type": "proxy",
+        "x": 640,
+        "y": 300,
+        "note": "CLOSED: calls pass, outcomes counted. OPEN: reject immediately for a cooldown. HALF_OPEN: a few trial calls decide.",
+        "why": {
+          "without": [
+            "The payment service slows from 50 ms to 5 s; a 200-thread pool that sustained ~4,000 req/s now sustains ~40",
+            "Threads pile up waiting; the pool saturates; requests that never touch payments start queueing and timing out",
+            "Retries triple the load onto a dependency that is already over capacity, so it never recovers"
+          ],
+          "with": [
+            "After the failure rate crosses the threshold, calls return in under a millisecond instead of waiting out the timeout",
+            "Threads stay free, so the catalogue, the cart and the order history keep serving normally",
+            "The dependency gets a quiet window to recover instead of a stream of retries"
+          ],
+          "conclusion": "The breaker does not make the payment service work. It keeps one broken dependency from becoming an outage of everything."
+        }
+      },
+      {
+        "id": "payment",
+        "label": "Payment service",
+        "type": "server",
+        "x": 900,
+        "y": 170,
+        "note": "The sick dependency. It is not called at all while the breaker is open."
+      },
+      {
+        "id": "fallback",
+        "label": "Fallback",
+        "type": "cache",
+        "x": 900,
+        "y": 430,
+        "note": "A cached value, a default, a degraded feature, or an honest error — decided in advance, not during the incident."
+      }
+    ],
+    "edges": [
+      {
+        "from": "client",
+        "to": "app",
+        "label": "1. request"
+      },
+      {
+        "from": "app",
+        "to": "breaker",
+        "label": "2. call via breaker"
+      },
+      {
+        "from": "breaker",
+        "to": "payment",
+        "label": "3a. CLOSED / HALF_OPEN: attempt"
+      },
+      {
+        "from": "breaker",
+        "to": "fallback",
+        "label": "3b. OPEN: fail fast",
+        "dashed": true
+      },
+      {
+        "from": "fallback",
+        "to": "app",
+        "label": "4. degraded response",
+        "dashed": true
+      }
+    ]
+  },
+  "why": {
+    "without": [
+      "A dependency that slows down — not even one that is down — converts your bounded thread and connection pools into a waiting room; once they saturate, your service fails requests that never needed that dependency",
+      "Every caller keeps hammering the sick service, and retry logic multiplies that load, so the dependency cannot recover even after the original cause is fixed",
+      "Failures propagate upward: your caller's pools fill waiting on you, and their caller's fill waiting on them"
+    ],
+    "with": [
+      "Calls to a dependency known to be failing return immediately, so the worker and the connection are released instead of parked",
+      "Load on the sick dependency drops to a trickle of trial calls, which is the condition it needs to recover",
+      "The blast radius is one feature degraded rather than one service down"
+    ],
+    "conclusion": "A circuit breaker buys no throughput and fixes nothing downstream. It buys containment: the difference between a payments outage and a site outage."
+  },
+  "whenToUse": [
+    "Synchronous calls to a remote dependency you do not control — a third-party API, another team's service",
+    "The caller has a bounded resource (threads, connections, sockets) that a slow response would tie up",
+    "A sensible degraded answer exists: a cached value, a default, or a feature that can be hidden",
+    "The dependency is called often enough that a failure rate over a short window is statistically meaningful",
+    "Several callers share the dependency, so uncontrolled retries would amplify its load"
+  ],
+  "whenNotToUse": [
+    "There is no fallback and the call is required for the request to mean anything — failing fast just relocates the same error, and you have added state to tune for nothing",
+    "Very low-traffic paths: at a few calls an hour, a failure rate never reaches a meaningful sample, so the breaker either trips on a single blip or never trips at all",
+    "In-process calls and local library calls — there is no network to exhaust and no pool to protect, and the wrapper only hides the stack trace",
+    "Non-critical asynchronous work already behind a queue, where a retry with backoff is the correct handling and nothing is holding a thread",
+    "Wrapping calls whose failures you cannot distinguish from normal outcomes — if a 404 counts as a failure, the breaker trips on ordinary traffic"
+  ],
+  "tradeoffs": [
+    {
+      "option": "Error-rate threshold over a rolling window, with minimum volume",
+      "pros": [
+        "5 failures out of 5 and 5 out of 5,000 are correctly treated as different situations",
+        "Adapts to traffic level without retuning",
+        "The minimum-volume gate stops a cold path from tripping on its first two calls"
+      ],
+      "cons": [
+        "Three parameters to tune — rate, window, minimum volume — and the right values differ per dependency",
+        "Needs per-window counters, which is real state and real memory per breaker",
+        "Slow to react to a sharp failure at low traffic, because the window has to fill"
+      ]
+    },
+    {
+      "option": "Consecutive-failure count",
+      "pros": [
+        "Trivial to implement and reason about — one counter",
+        "Reacts instantly at any traffic level"
+      ],
+      "cons": [
+        "A dependency failing 30% of the time may never produce N in a row, so the breaker never trips while users see a third of requests fail",
+        "At high traffic a brief blip produces N consecutive failures easily, so it trips when nothing is wrong"
+      ]
+    },
+    {
+      "option": "Short cooldown before HALF_OPEN (a few seconds)",
+      "pros": [
+        "Recovers quickly once the dependency is healthy again",
+        "Keeps the degraded window short for users"
+      ],
+      "cons": [
+        "Retries a dependency that has not had time to recover, adding load during the worst moment",
+        "Can oscillate between OPEN and CLOSED, which is confusing to operate and noisy to alert on"
+      ]
+    },
+    {
+      "option": "Circuit breaker with no fallback (fail fast, surface the error)",
+      "pros": [
+        "Honest: the user learns immediately rather than after a 30-second spinner",
+        "Still protects the caller's threads and pools, which is the main prize"
+      ],
+      "cons": [
+        "The user experience is an error either way, so the breaker only changed how fast it arrived",
+        "Tempts teams into a stale or wrong fallback value, which can be worse than an error — a fallback of 'zero items in cart' is a bug, not a degradation"
+      ]
+    }
+  ],
+  "keyNumbers": [
+    {
+      "label": "Common trip threshold",
+      "value": "~50% error rate over a rolling window"
+    },
+    {
+      "label": "Minimum request volume before a rate counts",
+      "value": "~20 requests per window"
+    },
+    {
+      "label": "Open-state cooldown before trial calls",
+      "value": "seconds to a minute, not milliseconds"
+    },
+    {
+      "label": "200-thread pool, 50 ms dependency",
+      "value": "~4,000 req/s of headroom"
+    },
+    {
+      "label": "Same pool once the dependency takes 5 s",
+      "value": "~40 req/s — a 100× collapse"
+    },
+    {
+      "label": "Cost of a rejected call while OPEN",
+      "value": "microseconds, versus a full timeout of seconds"
+    }
+  ],
+  "interactive": "circuit-breaker-sim",
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "architecture",
+      "question": "Your order service has a 200-thread pool. Its payment dependency normally answers in 50 ms, but under load starts taking 5 s. Requests for the product catalogue — which never call payments — also begin timing out. What happened, and roughly what did the pool's capacity become?",
+      "options": [
+        "The catalogue database ran out of connections; capacity is unchanged at ~4,000 req/s",
+        "A cascading failure through thread-pool exhaustion; capacity fell from ~4,000 req/s to ~40 req/s",
+        "The load balancer removed the instance from rotation; capacity fell to zero",
+        "A memory leak in the payment client; capacity is unrelated to response time"
+      ],
+      "answerIndex": 1,
+      "explanation": "A pool's throughput is threads ÷ service time. 200 ÷ 0.05 s ≈ 4,000 req/s; 200 ÷ 5 s ≈ 40 req/s. The threads are not broken, they are parked — and once every thread is parked on payments, requests that never touch payments cannot get a thread either. That is a cascading failure: one slow dependency became a service-wide outage. A breaker plus a timeout releases those threads; a bulkhead (a separate small pool for payment calls) caps how many can ever be parked there in the first place."
+    },
+    {
+      "id": "q2",
+      "type": "mcq",
+      "question": "Which trip condition is the most defensible for a busy dependency?",
+      "options": [
+        "Trip after 5 failed calls, counted since process start",
+        "Trip when the failure rate exceeds 50% over a rolling 10-second window, provided at least 20 requests landed in that window",
+        "Trip when any single call exceeds the p99 latency",
+        "Trip when the dependency's CPU exceeds 80%"
+      ],
+      "answerIndex": 1,
+      "explanation": "A raw count carries no denominator: 5 failures out of 5 means the dependency is gone, 5 out of 5,000 is a normal Tuesday, and a counter cannot tell them apart. A rate over a rolling window can — but a rate computed from two requests is noise, which is why the minimum-volume gate exists. A single slow call is not evidence, and the caller usually cannot see the dependency's CPU, which is a cause rather than a symptom of what the caller experiences."
+    },
+    {
+      "id": "q3",
+      "type": "architecture",
+      "question": "A team wraps every outbound call in a circuit breaker, including a lookup that runs about 10 times an hour and has no fallback. What is the most likely outcome?",
+      "options": [
+        "Availability improves, because all remote calls are now protected",
+        "Nothing changes, since a breaker is free when calls succeed",
+        "Availability gets worse: at that volume a rate is never meaningful, so the breaker trips on a single blip and then rejects calls for the whole cooldown — and with no fallback the error was going to surface anyway",
+        "The breaker converts the errors into successes using the last known value"
+      ],
+      "answerIndex": 2,
+      "explanation": "A breaker is not free. It is state you must tune, and a breaker tuned wrong is an availability *loss* — it refuses calls that would have succeeded. On a path with almost no traffic there is no sample to compute a rate from, so either the minimum-volume gate means it never trips, or you lower the gate and it trips on noise. And where there is no fallback, failing fast only changes when the user sees the error, not whether they see it. The thread-protection argument can still justify a breaker on a hot path — but not on this one."
+    }
+  ],
+  "related": [
+    "connection-pooling",
+    "rate-limiting",
+    "microservices",
+    "observability",
+    "api-gateway"
+  ]
+}

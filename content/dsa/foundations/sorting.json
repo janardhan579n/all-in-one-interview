@@ -1,0 +1,490 @@
+{
+  "id": "sorting",
+  "kind": "foundation",
+  "title": "Sorting — How It Works and How to Choose",
+  "group": "Foundations",
+  "level": 2,
+  "difficulty": "intermediate",
+  "estimatedMinutes": 45,
+  "summary": "Two O(n log n) sorts that reach the same destination by opposite routes — merge sort buys guarantees with memory, quicksort buys speed with risk — plus the reason no comparison sort can ever do better.",
+  "prerequisites": [
+    "big-o",
+    "recursion"
+  ],
+  "tags": [
+    "sorting",
+    "merge-sort",
+    "quicksort",
+    "stability",
+    "divide-and-conquer",
+    "level-2"
+  ],
+  "analogy": {
+    "beginner": "You have a shuffled stack of 500 exam papers to put in roll-number order.\n\nOne way: split the stack in half, hand each half to a friend, and when they give back two ordered stacks, riffle them together — repeatedly take whichever top paper has the lower number. You always finish, you always get it right, but you need clear table space to lay the two piles out. That is merge sort.\n\nAnother way: pull out one paper — say roll 240 — and throw every paper into a 'below 240' pile on your left and an 'above 240' pile on your right. Paper 240 is now permanently in the right place, and you repeat on each pile. No extra table needed; you reuse the same space. But if you happen to pick the very lowest roll number every single time, each pass moves exactly one paper into place and you are there all afternoon. That is quicksort.",
+    "interview": "Both are divide and conquer, and the difference is where the work sits. Merge sort splits trivially (at the midpoint) and does its real work combining: T(n) = 2T(n/2) + O(n) merge, giving Θ(n log n) in every case, with Θ(n) auxiliary space and stability. Quicksort does its real work splitting (partition) and combines trivially: T(n) = T(k) + T(n-k-1) + O(n), which is Θ(n log n) when partitions are balanced and Θ(n²) when they are maximally unbalanced. It sorts in place with better constants and cache behaviour, which is why it wins in practice despite the worse worst case."
+  },
+  "intuition": "Sorting is the one algorithm you will almost never implement and constantly depend on. `Arrays.sort` is three words. So why learn the internals?\n\nBecause three questions in real work and in interviews cannot be answered without them: *why did my sort reorder equal records?*, *why did this take an hour on production data and a second on my laptop?*, and *can you do better than n log n?*\n\nThe unifying idea in both real sorts is divide and conquer, and it helps to see exactly where each one spends its effort:\n\n```\nmerge sort      split is trivial (midpoint)      →   combine is the work (merge)\nquicksort       split is the work (partition)    →   combine is trivial (nothing)\n```\n\nThat one line explains almost every difference between them. Merge sort can split blindly, so its recursion tree is always perfectly balanced — depth log₂(n), guaranteed. But two sorted halves do not become one sorted whole by themselves, so it must walk all n elements at every level, and it needs somewhere to put them while it does.\n\nQuicksort's partition, by contrast, *earns* its split: after partitioning, the pivot is in its final position and everything left of it is smaller. Nothing needs merging afterwards — the pieces are already in the right region of the array. The price is that the split may be terrible, and nothing in the algorithm stops that from happening.\n\n**Where the log n comes from.** Count the levels. n elements, halved, halved again… reaching size 1 after log₂(n) halvings. For n = 1,000,000 that is 20 levels. Each level touches all n elements once, so the total is n × 20 = 20 million operations instead of the 10¹² that n² would demand. The number of levels *is* the log n — that is not an analogy, it is literally what the visualisation below shows.\n\n**Where the n² comes from.** Nothing about quicksort is slow. What is slow is a partition that separates one element from n-1, because then the recursion has n levels instead of log n, and n levels × n work is n². That is one specific accident and it has one specific cure, both covered below.",
+  "problemFirst": {
+    "motivatingProblem": "Sorting has an obvious algorithm that everyone invents independently: find the smallest element, put it first; find the smallest of what remains, put it second; repeat. It is clearly correct. Why is it not what `Arrays.sort` does?",
+    "bruteForce": {
+      "idea": "Selection sort. Scan the unsorted region for its minimum, swap it to the front of that region, and shrink the region by one.",
+      "code": [
+        "public static void selectionSort(int[] a) {",
+        "    for (int i = 0; i < a.length - 1; i++) {",
+        "        int minIndex = i;",
+        "        for (int j = i + 1; j < a.length; j++) {   // rescan everything left over",
+        "            if (a[j] < a[minIndex]) minIndex = j;",
+        "        }",
+        "        int temp = a[i];",
+        "        a[i] = a[minIndex];",
+        "        a[minIndex] = temp;",
+        "    }",
+        "}"
+      ],
+      "complexity": {
+        "time": "O(n²)",
+        "space": "O(1)"
+      },
+      "whySlow": "The scans cost n + (n-1) + (n-2) + … + 1 = n(n-1)/2 comparisons. For 1,000 records that is 500,000 — instant. For 1,000,000 records it is 5×10¹¹, which is hours. And crucially, the work is *always* n²: it does not get faster on an almost-sorted array, because it never notices."
+    },
+    "observation": "Every one of those scans throws its findings away. Pass 1 compares a[7] against a[9] and learns which is larger; pass 2 compares them again and learns the same thing. The algorithm spends n² comparisons to extract only n facts, because it only ever remembers 'the smallest so far' and discards everything else it saw on the way.",
+    "leap": "Stop asking 'what is the global minimum?' — that question demands a full scan and yields one element. Ask instead 'can I sort two halves and reuse the result?' If two halves are each sorted, a single pass fuses them, and every comparison in that pass positions an element permanently. The work per level is still n, but there are only log₂(n) levels instead of n.",
+    "optimizedSketch": [
+      "// The whole of merge sort, in five lines.",
+      "void mergeSort(int[] a, int from, int to) {",
+      "    if (from >= to) return;                // one element is already sorted",
+      "    int middle = (from + to) >>> 1;",
+      "    mergeSort(a, from, middle);            // trust the recursion",
+      "    mergeSort(a, middle + 1, to);",
+      "    merge(a, from, middle, to);            // ONE pass fuses two sorted runs",
+      "}"
+    ]
+  },
+  "howItWorks": [
+    "**Merge sort — split, sort, fuse.** Halve the range, sort each half recursively, then merge. Merging is two read cursors and one write cursor: repeatedly copy whichever cursor points at the smaller value. One pass, O(n) per level, log₂(n) levels, so O(n log n) — on random data, on sorted data, on adversarial data, always.",
+    "**Merge sort is stable, and the stability lives in one character.** When the two front elements are equal, `left <= right` takes from the left run — the element that came earlier in the input. Change that `<=` to `<` and the sort still sorts, but equal elements swap places and stability is gone.",
+    "**Merge sort's space cost is real.** You cannot merge two runs in place in linear time (not without heroic algorithms nobody uses), so merging writes into a buffer. Allocate ONE buffer of size n and reuse it; a naive implementation that allocates inside the recursion allocates O(n log n) in total and spends its time in the garbage collector.",
+    "**Quicksort — partition, then forget.** Choose a pivot. Rearrange so everything smaller sits left of it and everything larger sits right. The pivot is now in its final index, permanently. Recurse on the two sides. There is no combine step at all: the sides never need to see each other again.",
+    "**Lomuto partition, the one to memorise.** Keep a `boundary` index marking the start of the 'not smaller' region. Walk `i` across the range; whenever `a[i] < pivot`, swap it to `boundary` and advance `boundary`. At the end, swap the pivot into `boundary`. Everything before `boundary` is smaller, everything after is not, and the pivot is between them.",
+    "**The O(n²) input, precisely.** With Lomuto's last-element pivot, feed it an array that is already sorted ascending (or already descending). Every element is smaller than the last one, so the partition point lands at the end every time: one side gets n-1 elements and the other gets 0. The recursion depth becomes n instead of log n, and n levels of O(n) work is O(n²). This is not a rare fluke — 'already sorted' is the single most common shape real data arrives in.",
+    "**The defence: make the pivot unpredictable.** Swap a *randomly chosen* element into the pivot position before partitioning, or take the median of the first, middle and last elements. Randomisation means no fixed input is bad — an adversary would have to guess your random numbers. Median-of-three specifically kills the sorted-input case, which is the one that actually happens.",
+    "**Real libraries do not use textbook quicksort.** They cut over to insertion sort for runs under about 16 elements (n² with tiny constants beats n log n with recursion overhead at that size), and they recurse into the smaller partition while looping on the larger, which caps stack depth at O(log n).",
+    "**Java's two sorts, and why there are two.** `Arrays.sort(int[])` is dual-pivot quicksort: in place, cache-friendly, no stability question to answer because two equal `int`s are literally the same value — 'which 5 came first' is not a meaningful question. `Arrays.sort(Object[])` and `List.sort` are TimSort: stable, and it detects runs that are already ordered, so almost-sorted input costs nearly O(n). Stability matters for objects because two records can be equal on the sort key and different everywhere else.",
+    "**The comparison lower bound.** n distinct items have n! possible orderings, and a comparison sort must end up at exactly one of them. Each comparison has two outcomes, so it can at best halve the set of orderings still possible. To cut n! down to 1 you need at least log₂(n!) comparisons, and by Stirling's approximation log₂(n!) ≈ n log₂ n − 1.44n. So Ω(n log n) is a floor, not a limitation of our cleverness. Merge sort is already essentially optimal.",
+    "**Counting sort beats the floor by refusing to play.** The bound applies to algorithms whose only tool is comparison. Counting sort never compares two elements: it uses each value as an *index* into a tally array, then reads the tallies back out. That is O(n + k) for values in the range 0…k — genuinely linear when k is small, and useless when k is 10⁹ because the tally array would be 10⁹ long."
+  ],
+  "patternRecognition": {
+    "signals": [
+      "The problem gets easy once the data is in order — 'find duplicates', 'find the closest pair', 'group equal items', 'merge overlapping intervals'",
+      "You need the k-th smallest / largest, or the top k — partitioning (quickselect) or a heap, both sorting relatives",
+      "The constraint is n ≤ 10⁵ or 10⁶ and the brute force is O(n²) — an O(n log n) sort is almost always the intended first move",
+      "Records must be ordered by one key without disturbing an existing order on another — you need a **stable** sort",
+      "Values are small integers in a bounded range and the limit is tight — counting or radix sort, not a comparison sort"
+    ],
+    "antiSignals": [
+      "You need only the minimum or maximum — that is one O(n) scan, not a sort",
+      "You need the top k out of a huge stream — a size-k heap is O(n log k) and never holds all n items",
+      "The original indices are part of the answer (Two Sum) — sorting destroys them unless you sort index pairs",
+      "The data is already ordered and you only need to insert into it — binary search plus an insert, not a re-sort",
+      "You are sorting inside a loop — that is a sort you should have done once outside it"
+    ]
+  },
+  "visualizations": [
+    {
+      "id": "merge-sort",
+      "title": "Merge sort — the number of levels IS the log n",
+      "engine": "mergeSortSteps",
+      "input": {
+        "array": [
+          5,
+          2,
+          9,
+          1,
+          6,
+          3
+        ]
+      },
+      "code": [
+        "void mergeSort(int[] a, int from, int to) {",
+        "    if (from >= to) return;          // one element: already sorted",
+        "",
+        "    int middle = (from + to) >>> 1;  // split at the midpoint",
+        "    mergeSort(a, from, middle);      // sort the left half",
+        "    mergeSort(a, middle + 1, to);    // sort the right half",
+        "",
+        "    merge(a, from, middle, to);      // ONE pass fuses two sorted runs",
+        "}"
+      ]
+    },
+    {
+      "id": "quick-sort",
+      "title": "Quicksort with Lomuto partition — watch a pivot reach its final index",
+      "engine": "quickSortSteps",
+      "input": {
+        "array": [
+          5,
+          2,
+          9,
+          1,
+          6,
+          3
+        ]
+      },
+      "code": [
+        "void quickSort(int[] a, int from, int to) {",
+        "    if (from >= to) return;",
+        "    int boundary = from;                          // start of the 'not smaller' side",
+        "    int pivot = a[to];                            // Lomuto: the last element",
+        "    for (int i = from; i < to; i++) {",
+        "        if (a[i] < pivot) swap(a, i, boundary++);  // smaller -> left side",
+        "    }",
+        "    swap(a, boundary, to);                        // pivot lands in its FINAL index",
+        "    quickSort(a, from, boundary - 1);",
+        "    quickSort(a, boundary + 1, to);",
+        "}"
+      ]
+    }
+  ],
+  "implementations": [
+    {
+      "label": "Simple",
+      "language": "java",
+      "explanation": "Merge sort, written the way you would want to find it in a codebase. Three details separate this from the textbook version: the buffer is allocated **once** and reused, `>>> 1` avoids the overflow that `(from + to) / 2` suffers on huge indices, and the `a[middle] <= a[middle + 1]` check skips the merge entirely when the two halves are already in order — which makes almost-sorted input much faster for free. The `buffer[r] < buffer[l]` comparison is strict on purpose: on a tie it falls through to the left run, and that is exactly what makes the sort stable.",
+      "code": [
+        "/** Merge sort: O(n log n) in every case, O(n) extra space, stable. */",
+        "public static void mergeSort(int[] a) {",
+        "    if (a == null || a.length < 2) return;",
+        "    int[] buffer = new int[a.length];   // ONE buffer, reused at every level",
+        "    mergeSort(a, buffer, 0, a.length - 1);",
+        "}",
+        "",
+        "private static void mergeSort(int[] a, int[] buffer, int from, int to) {",
+        "    if (from >= to) return;                  // a single element is sorted",
+        "",
+        "    int middle = (from + to) >>> 1;          // >>> 1 cannot overflow; (from + to) / 2 can",
+        "    mergeSort(a, buffer, from, middle);",
+        "    mergeSort(a, buffer, middle + 1, to);",
+        "",
+        "    if (a[middle] <= a[middle + 1]) return;  // already ordered across the seam",
+        "    merge(a, buffer, from, middle, to);",
+        "}",
+        "",
+        "private static void merge(int[] a, int[] buffer, int from, int middle, int to) {",
+        "    System.arraycopy(a, from, buffer, from, to - from + 1);",
+        "",
+        "    int l = from;          // cursor into the left run",
+        "    int r = middle + 1;    // cursor into the right run",
+        "",
+        "    for (int write = from; write <= to; write++) {",
+        "        if (l > middle) {",
+        "            a[write] = buffer[r++];              // left run exhausted",
+        "        } else if (r > to) {",
+        "            a[write] = buffer[l++];              // right run exhausted",
+        "        } else if (buffer[r] < buffer[l]) {",
+        "            a[write] = buffer[r++];",
+        "        } else {",
+        "            a[write] = buffer[l++];              // TIE goes left => STABLE",
+        "        }",
+        "    }",
+        "}"
+      ]
+    },
+    {
+      "label": "Optimized",
+      "language": "java",
+      "explanation": "Quicksort as libraries actually write it. Four things have been added to the textbook version, and each one fixes a specific failure: the random pivot removes the already-sorted O(n²) case, the insertion-sort cutoff wins on small runs where recursion overhead dominates, recursing into the smaller side while looping on the larger caps stack depth at O(log n) even on a bad split, and partition is a separate method so the invariant stays readable. Note there is no combine step — once `partition` returns, the pivot is final and the two sides never interact again.",
+      "code": [
+        "import java.util.Random;",
+        "",
+        "/** Quicksort: O(n log n) expected, O(n²) worst case, O(log n) stack, in place, NOT stable. */",
+        "public final class QuickSort {",
+        "",
+        "    private static final Random RNG = new Random();",
+        "    private static final int INSERTION_CUTOFF = 16;",
+        "",
+        "    public static void sort(int[] a) {",
+        "        if (a == null || a.length < 2) return;",
+        "        sort(a, 0, a.length - 1);",
+        "    }",
+        "",
+        "    private static void sort(int[] a, int from, int to) {",
+        "        while (from < to) {",
+        "            if (to - from + 1 <= INSERTION_CUTOFF) {   // small run: n² with tiny constants wins",
+        "                insertionSort(a, from, to);",
+        "                return;",
+        "            }",
+        "            int p = partition(a, from, to);",
+        "",
+        "            // Recurse into the SMALLER side and loop on the larger:",
+        "            // the recursion depth is then bounded by log2(n) even on a bad split.",
+        "            if (p - from < to - p) {",
+        "                sort(a, from, p - 1);",
+        "                from = p + 1;",
+        "            } else {",
+        "                sort(a, p + 1, to);",
+        "                to = p - 1;",
+        "            }",
+        "        }",
+        "    }",
+        "",
+        "    /** Lomuto partition. Returns the pivot's final index. */",
+        "    private static int partition(int[] a, int from, int to) {",
+        "        swap(a, from + RNG.nextInt(to - from + 1), to);   // THE defence against sorted input",
+        "        int pivot = a[to];",
+        "        int boundary = from;                             // a[from..boundary-1] < pivot",
+        "",
+        "        for (int i = from; i < to; i++) {",
+        "            if (a[i] < pivot) swap(a, i, boundary++);",
+        "        }",
+        "        swap(a, boundary, to);                           // pivot to its final index",
+        "        return boundary;",
+        "    }",
+        "",
+        "    private static void insertionSort(int[] a, int from, int to) {",
+        "        for (int i = from + 1; i <= to; i++) {",
+        "            int value = a[i];",
+        "            int j = i - 1;",
+        "            while (j >= from && a[j] > value) {",
+        "                a[j + 1] = a[j];",
+        "                j--;",
+        "            }",
+        "            a[j + 1] = value;",
+        "        }",
+        "    }",
+        "",
+        "    private static void swap(int[] a, int i, int j) {",
+        "        int temp = a[i];",
+        "        a[i] = a[j];",
+        "        a[j] = temp;",
+        "    }",
+        "",
+        "    private QuickSort() {}",
+        "}"
+      ]
+    },
+    {
+      "label": "In practice",
+      "language": "java",
+      "explanation": "What you will actually write, and the one behaviour that will bite you if you do not know it. `Arrays.sort` on primitives is dual-pivot quicksort; on objects it is TimSort. The difference is stability, and stability is what makes sort-by-one-key-then-another work. Note the order: to get 'by salary, ties broken by name', you sort by **name first** and salary second — the later sort is the primary key. In real code prefer the single chained comparator; the two-pass version is here because interviewers ask you to explain why it works.",
+      "code": [
+        "import java.util.*;",
+        "",
+        "record Employee(String name, String department, int salary) {}",
+        "",
+        "public class SortingInPractice {",
+        "    public static void main(String[] args) {",
+        "        // Primitives -> dual-pivot quicksort. In place; stability is meaningless here,",
+        "        // because two equal ints are indistinguishable — there is no 'which 5 came first'.",
+        "        int[] scores = {5, 2, 9, 1, 6, 3};",
+        "        Arrays.sort(scores);                       // [1, 2, 3, 5, 6, 9]",
+        "",
+        "        List<Employee> staff = new ArrayList<>(List.of(",
+        "            new Employee(\"Chitra\", \"Dev\", 50),",
+        "            new Employee(\"Asha\",   \"Ops\", 50),",
+        "            new Employee(\"Bala\",   \"Ops\", 40)));",
+        "",
+        "        // Objects -> TimSort. Stable, and it exploits runs that are already ordered.",
+        "        // Two passes: sort by the SECONDARY key first, the PRIMARY key last.",
+        "        staff.sort(Comparator.comparing(Employee::name));",
+        "        staff.sort(Comparator.comparingInt(Employee::salary));",
+        "        // => Bala(40), Asha(50), Chitra(50)",
+        "        // Within salary 50, Asha still precedes Chitra: TimSort never reorders equals.",
+        "        // With an unstable sort this two-pass trick silently produces garbage.",
+        "",
+        "        // One pass, which is what you should actually write:",
+        "        staff.sort(Comparator.comparingInt(Employee::salary)",
+        "                             .thenComparing(Employee::name));",
+        "",
+        "        // Descending, without reversing afterwards:",
+        "        staff.sort(Comparator.comparingInt(Employee::salary).reversed());",
+        "",
+        "        System.out.println(staff);",
+        "    }",
+        "}"
+      ]
+    },
+    {
+      "label": "Beating the bound",
+      "language": "java",
+      "explanation": "Counting sort, the answer to 'can you beat n log n?'. It can, and the reason is narrow: it never compares two elements, so the log₂(n!) argument simply does not apply to it. Each value is used as an index into a tally array. The catch is in the signature — you must know the value range k, and you pay O(k) memory for it. For 10⁶ ages in 0…120 this is a gift; for 10⁶ arbitrary ints it would need a 4-billion-entry array.",
+      "code": [
+        "/**",
+        " * Counting sort for values in 0..maxValue.",
+        " * O(n + k) time, O(k) space, and NOT a comparison sort — which is the whole point.",
+        " */",
+        "public static int[] countingSort(int[] a, int maxValue) {",
+        "    int[] counts = new int[maxValue + 1];",
+        "    for (int value : a) {",
+        "        counts[value]++;             // the VALUE is the index — no comparison happens",
+        "    }",
+        "",
+        "    int[] sorted = new int[a.length];",
+        "    int write = 0;",
+        "    for (int value = 0; value <= maxValue; value++) {",
+        "        for (int remaining = counts[value]; remaining > 0; remaining--) {",
+        "            sorted[write++] = value;",
+        "        }",
+        "    }",
+        "    return sorted;",
+        "}",
+        "",
+        "// countingSort(new int[]{2, 0, 2, 1, 1, 0}, 2) -> [0, 0, 1, 1, 2, 2]",
+        "// Three values, one pass to tally, one pass to write out. No element is ever",
+        "// compared with another, so Omega(n log n) does not bind."
+      ]
+    }
+  ],
+  "complexity": {
+    "time": "Merge sort O(n log n) best, average and worst. Quicksort O(n log n) average, O(n²) worst. Selection sort O(n²) always. Counting sort O(n + k).",
+    "space": "Merge sort O(n) auxiliary (one reusable buffer) plus O(log n) stack. Quicksort O(1) auxiliary plus O(log n) stack when you recurse into the smaller side. Counting sort O(k).",
+    "why": "Merge sort's recursion tree is balanced *by construction* — the split is the midpoint, so the depth is exactly ⌈log₂ n⌉ and each level merges all n elements: n × log₂ n. Nothing about the input can change that, which is why best, average and worst are the same number. Quicksort's tree depends on the pivot. A pivot near the median halves the range, giving the same log₂ n depth and the same n per level. A pivot that is the minimum or maximum splits n into 0 and n-1, so the depth becomes n, and n levels of O(n) partitioning is O(n²) — this is precisely what an already-sorted array does to a last-element pivot. Averaged over random pivots the expected depth is about 2 ln n ≈ 1.39 log₂ n, so the average is Θ(n log n) with a small constant, and the constant is smaller than merge sort's because partition moves elements within the array with no buffer and excellent cache locality. On space: merging two runs requires somewhere to read from while you overwrite, hence the O(n) buffer; partitioning only swaps in place, hence O(1). And the Ω(n log n) floor for all comparison sorts comes from information theory, not implementation — there are n! orderings, each comparison is one bit that at best halves the candidates, so you need at least log₂(n!) ≈ n log₂ n − 1.44n comparisons to identify one ordering out of n!."
+  },
+  "commonMistakes": [
+    {
+      "mistake": "Allocating the merge buffer inside the recursion",
+      "fix": "`new int[...]` inside `merge` runs O(n) times and allocates O(n log n) in total. Allocate one buffer of size n in the public entry method and pass it down."
+    },
+    {
+      "mistake": "Writing `(from + to) / 2` for the midpoint",
+      "fix": "For large arrays `from + to` can overflow int and go negative, producing an index exception. Use `(from + to) >>> 1` or `from + (to - from) / 2`."
+    },
+    {
+      "mistake": "Using `<` instead of `<=` when merging equal elements",
+      "fix": "Both sort correctly, but only one is stable. Taking from the left run on a tie preserves input order; taking from the right silently swaps equal records. This is invisible in tests on `int[]` and a real bug on objects."
+    },
+    {
+      "mistake": "Assuming quicksort is O(n log n)",
+      "fix": "It is O(n log n) *expected*. Say 'average case O(n log n), worst case O(n²) when partitions are unbalanced, which randomised pivots make vanishingly unlikely' — that full sentence is what interviewers are listening for."
+    },
+    {
+      "mistake": "Testing a hand-written quicksort only on random data",
+      "fix": "Random data hides the bug. Test on an already-sorted array, a reverse-sorted array, and an array where every element is identical — those are the three inputs that expose bad pivot and bad partition logic."
+    },
+    {
+      "mistake": "Expecting `Arrays.sort(int[])` to be stable",
+      "fix": "It is dual-pivot quicksort and is not stable — which is harmless for primitives, since equal ints are indistinguishable. If you need stability, you are sorting objects, and `Arrays.sort(Object[])` / `List.sort` already give it to you."
+    },
+    {
+      "mistake": "Sorting by the primary key first when doing two passes",
+      "fix": "The *last* sort is the primary key. For 'by salary, then by name', sort by name first and salary second — and it only works at all because the sort is stable."
+    },
+    {
+      "mistake": "Sorting inside a loop",
+      "fix": "An O(n log n) sort inside an O(n) loop is O(n² log n) and is usually a sort that should have happened once before the loop."
+    },
+    {
+      "mistake": "Reaching for counting sort without checking the value range",
+      "fix": "O(n + k) is only a win when k is comparable to n. With values up to 10⁹ the tally array is the problem, not the sort."
+    }
+  ],
+  "realWorldUses": [
+    "Database query plans: `ORDER BY` on an unindexed column becomes an external merge sort — chunks that fit in memory are sorted and written to disk, then merged. Merge sort is chosen precisely because it works when the data does not fit in RAM and access is sequential.",
+    "The big-data shuffle: MapReduce, Spark and Hadoop sort keys between the map and reduce phases so that equal keys arrive together. Sorting is the mechanism grouping is built on.",
+    "Log and metrics pipelines merge many already-sorted time-ordered streams into one — that is the merge step of merge sort, run k ways with a heap.",
+    "Java's `Arrays.sort` picks dual-pivot quicksort for primitives and TimSort for objects; Python's `sorted` and Android's framework use TimSort too, which was designed around the observation that real data usually contains long already-ordered runs.",
+    "Any 'group by', 'deduplicate', 'find the closest pair' or 'merge overlapping ranges' job starts by sorting, because ordering turns a question about every pair into a question about neighbours."
+  ],
+  "interviewNotes": [
+    "If you say 'I will sort first', immediately add 'which makes this O(n log n), dominated by the sort'. The sort is almost always the dominant term and naming it shows you know it.",
+    "'Merge sort or quicksort?' is really 'do you understand the trade-off?'. Answer with the axis: guaranteed O(n log n) and stability, at O(n) memory, versus in-place with better constants, at the risk of O(n²).",
+    "When asked for quicksort's worst case, name the input: already-sorted data with a first- or last-element pivot. Naming the input is what distinguishes understanding from recall.",
+    "'Can you do better than O(n log n)?' — say yes, but only by not comparing: counting or radix sort, at the cost of needing a bounded value range. Then state the log₂(n!) argument for why comparison sorts cannot.",
+    "Expect the follow-up 'sort a 100 GB file with 8 GB of RAM'. The answer is external merge sort: sort chunks that fit, spill them, then k-way merge with a heap.",
+    "Quickselect is quicksort's other half and is worth knowing: partition, then recurse into only the side containing the k-th index. O(n) expected, and it is the answer to 'find the k-th largest' without a full sort."
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "complexity",
+      "question": "What is merge sort's time complexity on an array that is already perfectly sorted?",
+      "options": [
+        "O(n)",
+        "O(n log n)",
+        "O(n²)",
+        "It depends on the pivot"
+      ],
+      "answerIndex": 1,
+      "explanation": "Merge sort splits at the midpoint regardless of content, so the recursion tree is always log₂(n) levels deep and every level still merges all n elements. Best, average and worst are all O(n log n) — the guarantee is the whole point. (A practical implementation can add an 'already ordered across the seam' check that skips the copy, which speeds it up by a constant factor but does not change the complexity.)"
+    },
+    {
+      "id": "q2",
+      "type": "mcq",
+      "question": "Quicksort with Lomuto partition and a last-element pivot degrades to O(n²). Which input causes it?",
+      "options": [
+        "An array of random values",
+        "An array that is already sorted in ascending order",
+        "An array with exactly one duplicate",
+        "An array whose length is a power of two"
+      ],
+      "answerIndex": 1,
+      "explanation": "On sorted input the last element is the maximum, so every other element is smaller and the partition point lands at the end: one side gets n-1 elements and the other gets 0. The recursion is n levels deep instead of log n, and n levels × O(n) partitioning is O(n²). Randomising the pivot or taking the median of three is the standard defence — and 'already sorted' is the most common shape real data arrives in, which is why the defence is not optional."
+    },
+    {
+      "id": "q3",
+      "type": "mcq",
+      "question": "Why does Java use TimSort for `Arrays.sort(Object[])` but dual-pivot quicksort for `Arrays.sort(int[])`?",
+      "options": [
+        "TimSort is faster than quicksort on every input",
+        "Objects need a stable sort because equal keys can belong to distinguishable records; two equal ints are indistinguishable, so stability is meaningless for primitives",
+        "Quicksort cannot call compareTo",
+        "Because primitives are stored on the stack"
+      ],
+      "answerIndex": 1,
+      "explanation": "Two employees with the same salary are different records, and if you sorted by name first, that order must survive the sort by salary — so stability is an observable, load-bearing property. Two `int` values of 5 are the same value; no observation can tell you which one 'came first', so there is nothing for stability to preserve. That frees the primitive sort to use the in-place, cache-friendly, unstable algorithm with the better constants."
+    },
+    {
+      "id": "q4",
+      "type": "mcq",
+      "question": "Why can no comparison-based sort beat Ω(n log n)?",
+      "options": [
+        "Because computers can only compare two numbers at a time",
+        "Because there are n! possible orderings and each comparison at best halves the set still possible, so at least log₂(n!) ≈ n log n comparisons are needed",
+        "Because merge sort is provably the fastest algorithm",
+        "Because recursion always costs log n"
+      ],
+      "answerIndex": 1,
+      "explanation": "It is an information-theoretic argument, not an engineering one. A comparison yields one bit, which can at best halve the candidate orderings. Going from n! candidates down to 1 therefore needs at least log₂(n!) comparisons, and Stirling gives log₂(n!) ≈ n log₂ n − 1.44n. Merge sort is already within a constant factor of that floor. Counting sort escapes only by using values as array indices instead of comparing them."
+    },
+    {
+      "id": "q5",
+      "type": "mcq",
+      "question": "You must sort 10 million records by department, and within a department the existing arrival order must be preserved. Which property is required?",
+      "options": [
+        "In-place operation",
+        "Stability",
+        "O(1) auxiliary space",
+        "A random pivot"
+      ],
+      "answerIndex": 1,
+      "explanation": "'Preserve the existing order among equal keys' is the definition of stability. Merge sort and TimSort give it; quicksort and heapsort do not, because their swaps move equal elements past one another. In Java, `List.sort` and `Arrays.sort(Object[])` are stable, so this works out of the box — but a hand-rolled quicksort would silently scramble the arrival order."
+    },
+    {
+      "id": "q6",
+      "type": "complexity",
+      "question": "What is merge sort's auxiliary space complexity, written properly?",
+      "options": [
+        "O(1)",
+        "O(log n)",
+        "O(n)",
+        "O(n log n)"
+      ],
+      "answerIndex": 2,
+      "explanation": "Merging two sorted runs needs somewhere to read from while the output overwrites the range, so it needs a buffer proportional to n. Allocate it once and reuse it and the total is O(n) — plus O(log n) for the recursion stack, which the O(n) term dominates. Allocating a fresh buffer inside `merge` would make it O(n log n) in total allocation, which is the classic implementation mistake."
+    }
+  ],
+  "practiceProblems": [
+    "sort-colors",
+    "merge-sorted-array",
+    "h-index",
+    "largest-number",
+    "sort-list",
+    "kth-largest-element"
+  ],
+  "related": [
+    "big-o",
+    "recursion",
+    "binary-search",
+    "heap",
+    "intervals"
+  ]
+}

@@ -1,0 +1,312 @@
+{
+  "id": "java-rest-api",
+  "trackId": "java",
+  "topic": "rest-api",
+  "title": "REST API Design",
+  "summary": "Using HTTP as a protocol rather than a transport — status codes, idempotency, versioning and the retries that create duplicate orders.",
+  "questions": [
+    {
+      "id": "jra-01",
+      "level": "junior",
+      "type": "concept",
+      "question": "What makes an API RESTful rather than RPC over HTTP?",
+      "answer": "The difference is whether HTTP is a **protocol you use** or a **tunnel you send things through**. RPC over HTTP exposes operations: `POST /createOrder`, `POST /cancelOrder`, `POST /getOrderStatus`, everything a 200 and the real outcome inside the body. REST exposes **resources** identified by URIs and uses HTTP's own vocabulary — methods, status codes, headers — to act on them: `POST /orders`, `DELETE /orders/42`, `GET /orders/42`.\n\nThe constraints that actually matter in practice are the **uniform interface** and **statelessness**. A uniform interface means anyone who knows HTTP already knows half your API: `GET` is safe and cacheable, `PUT` replaces, `DELETE` removes, and the status code tells the truth about what happened. That is not stylistic — it is what lets a CDN cache your responses, a proxy retry your idempotent calls, and a client library handle errors generically. Statelessness means every request carries what the server needs to process it, with no server-side session, which is what lets you put ten identical instances behind a load balancer.\n\nThe honest nuance: Roy Fielding's dissertation also requires **HATEOAS** — responses carrying links that drive what the client can do next — and almost nobody implements it. Richardson's maturity model calls that level 3; most production APIs live comfortably at level 2 (resources plus proper verbs and status codes), and that is a reasonable engineering decision, not a failure.\n\nAnd REST is not automatically the right choice. gRPC is often better for internal service-to-service calls — smaller payloads, generated clients, streaming — and GraphQL better when clients need wildly different projections of the same data. The failure mode to avoid is claiming REST while shipping `POST /api/doThing` for everything.",
+      "keyPoints": [
+        "Resources and HTTP verbs, not operation names in the URL",
+        "The uniform interface is what makes caches, proxies and generic clients work",
+        "Statelessness is what makes horizontal scaling possible",
+        "HATEOAS is level 3; most real APIs stop at level 2 and that is fine",
+        "gRPC or GraphQL can be the better tool — the sin is calling RPC 'REST'"
+      ],
+      "followUps": [
+        {
+          "q": "PUT or PATCH for an update?",
+          "a": "`PUT` replaces the whole resource — send the full representation, and omitted fields are cleared. `PATCH` applies a partial change. Most APIs want `PATCH` semantics but implement them under `PUT`, which quietly breaks idempotency expectations and surprises clients when a field disappears."
+        },
+        {
+          "q": "Where do actions that are not CRUD fit, like 'cancel' or 'refund'?",
+          "a": "Either model the action as a resource — `POST /orders/42/cancellations` creating a cancellation — or as a state transition via `PATCH /orders/42` with `{\"status\": \"CANCELLED\"}`. The first is usually better because it gives the action an identity, a timestamp and an audit trail, and makes it naturally idempotent to look up."
+        }
+      ],
+      "redFlags": [
+        "Verbs in the URL: `/getUser`, `/updateOrder`",
+        "Everything is POST and everything returns 200",
+        "Reciting the six constraints with no idea why any of them exist"
+      ],
+      "related": [
+        "api",
+        "http"
+      ]
+    },
+    {
+      "id": "jra-02",
+      "level": "junior",
+      "type": "concept",
+      "question": "How do you choose the right status code? Cover 400 vs 422, 401 vs 403, and when 409 is correct.",
+      "answer": "The class is the contract: **2xx** it worked, **4xx** the client must change something before retrying, **5xx** the server failed and the same request might succeed later. That distinction is not cosmetic — client retry logic, circuit breakers and your own error dashboards all key off it. Returning `200` with `{\"success\": false}` breaks every one of them, and it is the single most common mistake.\n\n**400 vs 422.** `400 Bad Request` is for a request the server cannot parse or that violates the protocol: malformed JSON, a missing required header, a path parameter that is not a number. `422 Unprocessable Content` is for a request that parsed perfectly but fails business or semantic validation: a syntactically valid date that is in the past, an email already taken, a quantity of zero. The practical value is that a client can tell \"my serialisation is broken\" from \"my data is wrong\" without reading prose. Plenty of good APIs use `400` for both; what matters is being consistent and documenting it.\n\n**401 vs 403.** `401 Unauthorized` means *unauthenticated* — no credentials, expired token, bad signature — and the response must include a `WWW-Authenticate` header. It tells the client to authenticate and try again. `403 Forbidden` means authenticated but not permitted, and retrying with the same identity will never work. Note that `404` is sometimes the deliberate choice over `403` when confirming a resource exists would itself leak information.\n\n**409 Conflict** is for a request that is valid but collides with the resource's current state: creating a resource whose unique key already exists, or an optimistic-locking version mismatch. If the client supplied `If-Match`, the precise answer is `412 Precondition Failed`. And do not forget `429 Too Many Requests` and `503 Service Unavailable`, both of which should carry `Retry-After`.",
+      "keyPoints": [
+        "The class drives client retries, breakers and alerting — never return 200 for failure",
+        "400 = cannot parse; 422 = parsed but semantically invalid",
+        "401 = unauthenticated, must send WWW-Authenticate; 403 = authenticated but not allowed",
+        "409 = state conflict such as duplicate key or version mismatch; 412 when If-Match was supplied",
+        "429 and 503 should carry Retry-After so clients back off correctly"
+      ],
+      "followUps": [
+        {
+          "q": "201 or 200 on create?",
+          "a": "`201 Created` with a `Location` header pointing at the new resource. `202 Accepted` if you have only queued the work and it is not done yet — and then `Location` should point at a status resource the client can poll."
+        },
+        {
+          "q": "A downstream service is down. What do you return?",
+          "a": "`503 Service Unavailable` with `Retry-After` if you are genuinely unavailable and the client should back off, or `502`/`504` if you want to be precise about a bad or timed-out upstream response. What you must not do is return `500` for everything, because it tells the client nothing about whether retrying helps."
+        }
+      ],
+      "redFlags": [
+        "HTTP 200 with an error object in the body",
+        "500 for validation failures",
+        "Using 401 and 403 interchangeably"
+      ],
+      "related": [
+        "api",
+        "http"
+      ]
+    },
+    {
+      "id": "jra-03",
+      "level": "mid",
+      "type": "code",
+      "question": "Which HTTP methods must be idempotent, and how do you make POST safely retryable?",
+      "answer": "**Safe** methods — `GET`, `HEAD`, `OPTIONS` — must not change state. **Idempotent** methods — the safe ones plus `PUT` and `DELETE` — may change state, but making the same call N times must leave the server in the same state as making it once. `POST` and `PATCH` are neither. This is a contract with the whole internet: proxies, browsers, HTTP clients and service meshes all assume they may retry an idempotent method after a network error, and will do so without asking you.\n\nWhy it matters: a timeout is **ambiguous**. The client cannot distinguish \"the request never arrived\" from \"it was processed and the response was lost\". Since the network guarantees at-most-once delivery of *information* and the client wants at-least-once delivery of *intent*, someone has to deduplicate, and it has to be the server.\n\nThe standard mechanism is an **idempotency key**: the client generates a UUID for each logical operation, sends it in an `Idempotency-Key` header, and *reuses the same key on every retry of that operation*. The server records the key with the result and returns the stored response on a repeat.\n\nThree details separate a working implementation from a broken one. First, **the uniqueness guarantee must come from the database**, not from a check-then-insert — two concurrent retries will both pass the check. A unique constraint is what actually makes it safe. Second, **store the key in the same transaction as the business effect**, or you can create the order and lose the key. Third, **fingerprint the request body**: the same key with a different body is a client bug and deserves a `422`, not a silently wrong replay. Give keys a TTL — 24 hours is typical — and scope them per client.",
+      "codeExample": {
+        "language": "java",
+        "code": [
+          "@PostMapping(\"/orders\")",
+          "public ResponseEntity<OrderResponse> create(",
+          "        @RequestHeader(\"Idempotency-Key\") UUID key,",
+          "        @Valid @RequestBody CreateOrderRequest request,",
+          "        @AuthenticationPrincipal User user) {",
+          "",
+          "    String fingerprint = sha256(request);",
+          "",
+          "    // Replay: same key seen before.",
+          "    var existing = idempotencyRepo.findByUserIdAndKey(user.id(), key);",
+          "    if (existing.isPresent()) {",
+          "        if (!existing.get().fingerprint().equals(fingerprint)) {",
+          "            throw new IdempotencyKeyReusedException();   // -> 422",
+          "        }",
+          "        return ResponseEntity.ok(existing.get().response());",
+          "    }",
+          "",
+          "    try {",
+          "        // One transaction: the order and the key record commit together,",
+          "        // or neither does.",
+          "        OrderResponse response = orderService.createAndRecordKey(",
+          "                user.id(), key, fingerprint, request);",
+          "        return ResponseEntity.created(URI.create(\"/orders/\" + response.id()))",
+          "                             .body(response);",
+          "    } catch (DataIntegrityViolationException raceLost) {",
+          "        // A concurrent retry inserted the same key first. The UNIQUE",
+          "        // index on (user_id, key) — not the check above — is what makes",
+          "        // this correct.",
+          "        return ResponseEntity.status(HttpStatus.CONFLICT).build();",
+          "    }",
+          "}"
+        ]
+      },
+      "keyPoints": [
+        "Safe: GET, HEAD, OPTIONS. Idempotent: those plus PUT and DELETE. POST and PATCH are neither",
+        "A timeout is ambiguous, so the server must deduplicate — the client cannot",
+        "The client must reuse the same key across retries of one logical operation",
+        "A unique constraint, not a check-then-insert, is what makes it race-safe",
+        "Persist the key in the same transaction as the business effect, and fingerprint the body"
+      ],
+      "followUps": [
+        {
+          "q": "Is DELETE really idempotent if the second call returns 404?",
+          "a": "Yes. Idempotency is about server *state*, not identical responses. After either one or five deletes the resource is gone, which is the guarantee. Returning `204` on the first and `404` afterwards is correct, though many APIs return `204` every time to make client code simpler."
+        },
+        {
+          "q": "What should the server do while the first request is still in flight?",
+          "a": "Return `409 Conflict` (some APIs use `425 Too Early`) with a `Retry-After`, meaning \"this operation is in progress, ask again shortly\". Blocking and waiting is tempting but ties up a request thread for the duration of the original call, which is exactly how you exhaust a thread pool during an incident."
+        }
+      ],
+      "redFlags": [
+        "Generating a new idempotency key on each retry",
+        "Deduplicating with an in-memory map in a multi-instance deployment",
+        "Check-then-insert with no unique constraint behind it",
+        "Calling POST idempotent because the database has a unique index somewhere"
+      ],
+      "related": [
+        "api",
+        "database"
+      ]
+    },
+    {
+      "id": "jra-04",
+      "level": "mid",
+      "type": "tradeoff",
+      "question": "What are the API versioning strategies and their trade-offs?",
+      "answer": "Start from the goal, which is not \"have versions\" but **never break a deployed client**. Most changes do not need a version at all: adding a field, adding an optional parameter, adding an enum value that clients are told to tolerate. If your clients are written as *tolerant readers* — ignore unknown fields, do not depend on field order — you can evolve for years. Versioning is what you do when a change is genuinely breaking: removing a field, changing a type, changing the meaning of an existing value. Repurposing an existing field is the worst thing you can do, because it breaks clients silently instead of loudly.\n\nWhen you must version:\n\n**URI path** (`/v1/orders`) is the most common. It is trivially visible, easy to route at the gateway, easy to test with curl, and caches cleanly because different versions are different URLs. Purists object that the same resource now has two identities, and it does push you toward versioning the whole API rather than the parts that changed.\n\n**Media type negotiation** (`Accept: application/vnd.acme.order.v2+json`) is the most faithful to HTTP: one URI, representations negotiated. The cost is real ergonomics — harder to try in a browser, easy to get wrong in caches unless you set `Vary: Accept`, and unfamiliar to many client developers.\n\n**Custom header** (`X-API-Version: 2`) sits in between; same caching caveat, and it is not a standard so nothing understands it generically.\n\n**Query parameter** (`?version=2`) is easy but pollutes every URL and is easily lost in redirects.\n\nWhatever you choose, the hard part is retirement, not introduction. Publish a deprecation policy, measure per-version traffic so you know who is still on v1, and signal end-of-life with the `Sunset` header (RFC 8594). Supporting three versions forever is far more expensive than any of these choices.",
+      "keyPoints": [
+        "Most changes can be additive — tolerant readers avoid versioning entirely",
+        "Never repurpose an existing field; that breaks clients silently",
+        "URI path is pragmatic and cache-friendly; media type is purer but harder to use",
+        "Header-based schemes need `Vary` or caches will serve the wrong version",
+        "Retirement is the hard part: measure per-version traffic and signal with `Sunset`"
+      ],
+      "followUps": [
+        {
+          "q": "How do you support two versions without forking the whole codebase?",
+          "a": "Keep one internal domain model and one service layer, and version only the edge: separate controllers and DTO mappers per version translating to the same core. Forking business logic per version is how you end up with divergent bugs and a migration nobody can finish."
+        },
+        {
+          "q": "Do internal service-to-service APIs need versioning?",
+          "a": "They need compatibility, which is not the same thing. If you control every caller and can deploy them together, you may not need explicit versions — but during any rolling deployment old and new run simultaneously, so each change must still be backward compatible for at least one release. Expand-then-contract: add the new field, migrate callers, remove the old one later."
+        }
+      ],
+      "redFlags": [
+        "Versioning by breaking the API and telling clients to update",
+        "A v1, v2, v3 all maintained indefinitely with no retirement plan",
+        "Header versioning with no `Vary` header"
+      ],
+      "related": [
+        "api"
+      ]
+    },
+    {
+      "id": "jra-05",
+      "level": "mid",
+      "type": "tradeoff",
+      "question": "Offset or cursor pagination — and why does offset break at scale?",
+      "answer": "**Offset pagination** (`?page=500&size=20` becoming `LIMIT 20 OFFSET 10000`) fails for two independent reasons, and people usually only know the first.\n\nThe **performance** problem: the database cannot jump to row 10,000. It must produce and discard the first 10,000 rows in sort order before returning anything, so cost grows linearly with page number. Page 1 is instant, page 5,000 times out. No index fixes this, because the work is inherent to counting past rows.\n\nThe **correctness** problem, which is worse because it is silent: the dataset shifts between requests. If three new rows are inserted at the top while a client reads page 1, then rows that were at the end of page 1 reappear at the start of page 2 — the client sees duplicates. Deletions cause the opposite: rows are skipped entirely and never seen. Any job paginating to process every record will quietly miss data.\n\n**Cursor (keyset) pagination** fixes both. Instead of counting, you remember where you stopped and ask for rows after it:\n\n```sql\nSELECT * FROM orders\nWHERE (created_at, id) < (:lastCreatedAt, :lastId)\nORDER BY created_at DESC, id DESC\nLIMIT 20;\n```\n\nThe index seeks straight to the position, so **every page costs the same** regardless of depth, and rows already returned cannot shift into a later page. Two requirements: a **total ordering** — always include a unique tiebreaker like the primary key, or rows with equal timestamps will be lost or repeated — and an index matching the sort columns.\n\nThe trade-offs are genuine. Cursors give no random access to page N and no page count, so they suit infinite scroll and API consumers but not a numbered-page admin table. Encode the cursor as an opaque base64 token so it stays your implementation detail. And note `COUNT(*)` over a large filtered set is its own expensive query — offer an estimate, or no total at all.",
+      "keyPoints": [
+        "OFFSET makes the database scan and discard every skipped row — cost grows with page depth",
+        "Concurrent inserts and deletes make offset pages duplicate and skip rows silently",
+        "Keyset pagination seeks by the last seen key: constant cost per page, stable results",
+        "Always include a unique tiebreaker so the sort is a total order",
+        "Cursors cost random page access and cheap totals — fine for feeds, wrong for numbered admin tables"
+      ],
+      "followUps": [
+        {
+          "q": "How do you support 'jump to last page' with cursors?",
+          "a": "Reverse the sort and take the first page — the last page ascending is the first page descending. Arbitrary jumps to page 37 are genuinely not supported, which is usually the moment to ask whether the user wants a page number or a filter. Search and filtering serve the real need better than deep paging almost every time."
+        },
+        {
+          "q": "What belongs inside the cursor?",
+          "a": "Exactly the sort key values of the last returned row, plus enough context to detect misuse — commonly the sort direction and a filter hash, so a cursor from one query cannot be replayed against a different one. Base64-encode it, and sign it if clients should not forge positions."
+        }
+      ],
+      "redFlags": [
+        "Defending OFFSET by adding an index",
+        "Sorting by a non-unique column with no tiebreaker",
+        "Returning a total count on every page of a huge table"
+      ],
+      "related": [
+        "api",
+        "database"
+      ]
+    },
+    {
+      "id": "jra-06",
+      "level": "mid",
+      "type": "concept",
+      "question": "What does an error response look like that a client can actually act on?",
+      "answer": "The test is simple: given only the response, can the client code decide **whether to retry, what to show the user, and which field to highlight** — without parsing English prose? Most error bodies fail it.\n\nThe standard shape is **Problem Details for HTTP APIs**, RFC 9457 (which obsoletes RFC 7807), served as `application/problem+json`. It defines `type` (a URI identifying the error class), `title`, `status`, `detail` and `instance`, and lets you add your own members. Spring Boot 3 supports it natively via `ProblemDetail` and `@ExceptionHandler`, so you get it almost for free.\n\nWhat makes it actionable in practice:\n\n- A **stable machine-readable code** that never changes, distinct from the human message. Clients branch on `INSUFFICIENT_FUNDS`; they must never branch on `\"Insufficient funds\"` because you will reword it or translate it.\n- **Field-level errors** for validation, as a list of `{field, code, message}`, so a form can highlight the right input. A single flat string forces the client to guess.\n- A **correlation or trace id** echoed in the body, so a user's screenshot is enough to find the request in your logs.\n- An explicit signal about **retryability** — `Retry-After` on `429` and `503`, and by simply using the right status class everywhere else.\n\nAnd what must not be there: stack traces, SQL fragments, internal hostnames or class names. They leak your architecture to attackers and are useless to the caller. Log the detail server-side against the trace id; return the id.\n\nThe final requirement is **consistency**. One error shape for the entire API, including the ones your framework generates — 404s from unmapped routes, 415s from content negotiation, parse failures. A client that must handle three different error formats will handle one of them badly.",
+      "keyPoints": [
+        "RFC 9457 Problem Details is the standard shape; Spring Boot 3 has `ProblemDetail` built in",
+        "Stable error codes for machines, prose for humans — never make clients parse the message",
+        "Field-level errors so a form can highlight the offending input",
+        "Echo a trace id so a screenshot maps to a log line",
+        "One consistent shape across the whole API, framework-generated errors included"
+      ],
+      "followUps": [
+        {
+          "q": "How do you keep framework errors in the same shape in Spring?",
+          "a": "Extend `ResponseEntityExceptionHandler` in a `@RestControllerAdvice` so the framework's own exceptions route through your handlers, and configure the container error path too — otherwise a 404 on an unmapped URL or an error thrown in a filter escapes with the default Whitelabel body."
+        },
+        {
+          "q": "How much detail is safe in a 401 or 403?",
+          "a": "Little. \"Invalid username or password\" rather than \"no such user\" avoids confirming which accounts exist, and a 404 instead of a 403 avoids confirming a resource exists at all. Put the real reason in the logs against the trace id."
+        }
+      ],
+      "redFlags": [
+        "Stack traces in the response body",
+        "Different error shapes per endpoint",
+        "Error codes that are the display message"
+      ],
+      "related": [
+        "api"
+      ]
+    },
+    {
+      "id": "jra-07",
+      "level": "senior",
+      "type": "concept",
+      "question": "How do you use ETag and Cache-Control properly?",
+      "answer": "There are two separate mechanisms and mixing them up is where most caching bugs come from.\n\n**`Cache-Control` decides whether a cache may reuse a response without asking.** `max-age=60` lets any cache serve it for a minute; `s-maxage` overrides that for shared caches only; `private` means only the user's own browser may store it; `public` allows shared caches; `no-cache` means \"store it but revalidate before every use\" — it does *not* mean do not store, which is `no-store`. `stale-while-revalidate` lets a cache serve slightly stale content while refreshing in the background, which is often the single best win for a read-heavy API.\n\n**`ETag` decides whether an unchanged response can be skipped.** The server returns an opaque validator; the client sends it back as `If-None-Match`; if it still matches, the server replies `304 Not Modified` with no body. That saves bandwidth and client parsing — but note it usually does **not** save server work, because you typically have to compute the representation to know its ETag. Use a version column or an `updated_at` timestamp as the ETag source if you want to answer a 304 without building the response. `Last-Modified` with `If-Modified-Since` is the weaker equivalent, limited to one-second granularity.\n\nThe traps worth naming. **`Vary` is mandatory** whenever the response depends on a request header — `Vary: Accept` for content negotiation, `Vary: Accept-Encoding` for compression — or a shared cache will serve one client's representation to another. Anything user-specific must be `private` or `no-store`; a `public, max-age` on an authenticated response is a data-leak incident waiting to happen. And ETags enable **conditional writes**: `If-Match` on a `PUT` gives you optimistic concurrency over HTTP, returning `412 Precondition Failed` when someone else has changed the resource — a genuinely useful way to prevent lost updates.",
+      "keyPoints": [
+        "Cache-Control controls reuse without asking; ETag controls revalidation",
+        "`no-cache` means revalidate, `no-store` means do not keep it at all",
+        "A 304 saves bandwidth, not server work, unless the ETag comes from a version or timestamp",
+        "`Vary` is required whenever a request header changes the response",
+        "`If-Match` plus `412` gives optimistic concurrency control for writes"
+      ],
+      "followUps": [
+        {
+          "q": "Strong or weak ETag?",
+          "a": "A strong ETag means byte-identical; a weak one (`W/\"...\"`) means semantically equivalent. Use weak when a timestamp or field order may change without the meaning changing. Byte-range requests require a strong ETag, so if you serve partial content you cannot use weak validators."
+        },
+        {
+          "q": "How do you invalidate a response you already told caches to hold for an hour?",
+          "a": "You largely cannot — that is the cost of a long `max-age`. The real answer is to change the URL: content-hashed URLs for immutable assets with a very long `max-age`, and short TTLs plus revalidation for anything mutable. For your own CDN you can purge, but you have no reach into client browsers."
+        }
+      ],
+      "redFlags": [
+        "`no-cache` used to mean \"do not store\"",
+        "Caching authenticated responses publicly",
+        "Omitting `Vary` on a content-negotiated endpoint",
+        "Claiming ETags reduce server load in all cases"
+      ],
+      "related": [
+        "cache",
+        "cdn",
+        "http"
+      ]
+    },
+    {
+      "id": "jra-08",
+      "level": "senior",
+      "type": "scenario",
+      "question": "A mobile client retries on timeout and customers are getting duplicate orders. Walk me through the fix.",
+      "answer": "**Confirm the mechanism first.** Find orders with the same user, amount and cart within seconds of each other, then pull the access logs and traces for one pair. Two requests with the same body, different request ids, the first slow or timed out at the gateway — that is a client retry rather than a double tap in the UI or a duplicated internal message. Do not skip this; a double-submit button looks identical in the orders table.\n\n**It is not really the client's fault.** On a timeout the client genuinely cannot know whether the order was created. Not retrying loses real orders on flaky mobile networks; retrying duplicates them. The ambiguity is inherent to the network, so the server must recognise a repeat.\n\n**Mitigate now.** Add a unique index on a natural key — `(user_id, cart_id)`, or a short-window constraint — so the second insert fails instead of succeeding. That stops the bleeding in one deploy. Then reconcile and refund what already happened, and alert on same-user-same-amount orders inside a short window so you find out before customers do.\n\n**Then the real fix.** The client generates an `Idempotency-Key` UUID *once per order attempt* and reuses it on every retry — regenerating it per retry is the classic bug that defeats the whole scheme. The server stores the key with the response in the same transaction that creates the order, protected by a unique constraint so concurrent retries cannot both win, and replays the stored response on a repeat. A repeat arriving while the original is in flight gets `409` with `Retry-After` rather than a blocked thread.\n\n**Fix the retry policy too.** Exponential backoff with jitter, bounded attempts, and retries only on timeouts and 5xx — never on 4xx. Set the client timeout above the server's p99 so you stop manufacturing ambiguity, and make sure the gateway timeout is not shorter than the service's, or the gateway cuts off work that was about to succeed.",
+      "keyPoints": [
+        "Confirm client retry from logs and traces before designing a fix — a double-submit looks the same",
+        "A timeout is ambiguous by nature, so the server must deduplicate",
+        "Mitigate now with a unique constraint on a natural key; fix properly with idempotency keys",
+        "The key must be generated once per attempt and reused on every retry",
+        "Fix the retry policy too: backoff with jitter, bounded attempts, retry only timeouts and 5xx"
+      ],
+      "followUps": [
+        {
+          "q": "Why not just make the button non-clickable twice in the app?",
+          "a": "Because it addresses a different cause. Disabling the button stops double taps, but a network-level retry — by the app's HTTP layer, an OS-level retry, or a proxy retrying an idempotent-looking request — never touches the UI. Client-side guards reduce volume; only server-side deduplication is a guarantee."
+        },
+        {
+          "q": "How long do you keep idempotency keys?",
+          "a": "Long enough to cover every plausible retry window — 24 hours is the common choice — then expire them, since an unbounded key table becomes its own problem. Set a TTL or partition by day and drop old partitions, and make sure the cleanup cannot delete a key whose operation is still in flight."
+        }
+      ],
+      "redFlags": [
+        "Blaming the mobile team and stopping there",
+        "Deduplicating in an in-memory cache with several instances running",
+        "Raising timeouts as the entire fix",
+        "Retrying POST with no idempotency key and calling it resilient"
+      ],
+      "related": [
+        "api",
+        "message-queue",
+        "database"
+      ]
+    }
+  ]
+}

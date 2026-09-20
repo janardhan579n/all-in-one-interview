@@ -1,0 +1,129 @@
+{
+  "id": "balanced-binary-tree",
+  "title": "Balanced Binary Tree",
+  "patternId": "trees",
+  "difficulty": "beginner",
+  "tags": [
+    "tree",
+    "recursion",
+    "dfs"
+  ],
+  "statement": "Given the root of a binary tree, return true if it is height-balanced: for every node in the tree, the heights of its left and right subtrees differ by at most 1. Note that the condition must hold at every node, not only at the root.",
+  "realWorld": "Balance is the invariant that keeps a search tree's operations O(log n). AVL and red-black trees rebalance on every insert for exactly this property, and a database index that lost it would quietly degrade into a linked-list scan while still returning correct answers. Checking the property is how you assert, in a test or a consistency checker, that your tree has not degenerated.",
+  "examples": [
+    {
+      "input": "root = [3,9,20,null,null,15,7]",
+      "output": "true",
+      "explanation": "Level-order notation: values level by level, left to right, null for a missing child. Node 3 has a left subtree of height 1 and a right subtree of height 2 — a difference of 1, which is allowed — and both subtrees are internally balanced."
+    },
+    {
+      "input": "root = [1,2,2,3,3,null,null,4,4]",
+      "output": "false",
+      "explanation": "The left 2 carries a subtree of height 3 (2 to 3 to 4) while the right 2 is a leaf of height 1. At the root the difference is 3 - 1 = 2, which breaks the rule. Note that every node below the root is individually fine; the violation is at the top."
+    },
+    {
+      "input": "root = [1,2,null,3,null,4,null]",
+      "output": "false",
+      "explanation": "A pure left chain of four nodes. The root has a left subtree of height 3 and an empty right subtree, so the difference is 3. This is the shape balance exists to forbid, and the shape on which the naive O(n^2) check is at its slowest."
+    }
+  ],
+  "constraints": [
+    "0 <= number of nodes <= 5000",
+    "-10^4 <= node.val <= 10^4",
+    "An empty tree counts as balanced"
+  ],
+  "bruteForce": {
+    "idea": "Translate the definition directly: at each node measure both subtree heights and compare them, then recurse to check every node below. Height gets its own helper.",
+    "code": [
+      "public static boolean isBalanced(TreeNode node) {",
+      "    if (node == null) return true;",
+      "    if (Math.abs(height(node.left) - height(node.right)) > 1) return false;",
+      "    return isBalanced(node.left) && isBalanced(node.right);",
+      "}",
+      "",
+      "private static int height(TreeNode node) {",
+      "    if (node == null) return 0;",
+      "    return 1 + Math.max(height(node.left), height(node.right));",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n^2)",
+      "space": "O(h)"
+    },
+    "whySlow": "`height` is called at the root and walks the entire tree; then it is called again at each child and walks each half again; then again at every grandchild. A node at depth d is visited by d + 1 separate height computations, and each of those walks recomputes the heights beneath it too. On the left chain in example 3 that is 1 + 2 + ... + n, roughly n^2 / 2 node visits to learn n heights. Every one of those heights was already computed, correctly, moments earlier — and thrown away the instant the recursion returned, because the return value only carried a boolean."
+  },
+  "patternIdentification": "Two recursions over the same tree, one nested inside the other, is almost always one recursion carrying two pieces of information. When the outer check needs a quantity the inner recursion already produces, fold them together: return the quantity, and encode failure as an impossible value of it. Here -1 works because no real height is negative. The general move is 'make the helper return more than the question literally asks for' — the single most reliable way to turn an O(n^2) tree solution into an O(n) one.",
+  "optimized": {
+    "idea": "One post-order walk. The helper returns the subtree's height, or -1 meaning 'this subtree, or something inside it, is already unbalanced'. Once -1 appears it propagates straight to the top without any further measuring, so the tree is walked exactly once.",
+    "code": [
+      "public static boolean isBalanced(TreeNode root) {",
+      "    return height(root) >= 0;",
+      "}",
+      "",
+      "/** Height of this subtree, or -1 if it (or anything inside it) is unbalanced. */",
+      "private static int height(TreeNode node) {",
+      "    if (node == null) return 0;",
+      "    int left = height(node.left);",
+      "    if (left < 0) return -1;                  // a failure below propagates, unmeasured",
+      "    int right = height(node.right);",
+      "    if (right < 0) return -1;",
+      "    if (Math.abs(left - right) > 1) return -1;",
+      "    return 1 + Math.max(left, right);",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(h)"
+    }
+  },
+  "visualization": {
+    "engine": "treeTraversal",
+    "input": {
+      "tree": {
+        "value": 3,
+        "left": {
+          "value": 9
+        },
+        "right": {
+          "value": 20,
+          "left": {
+            "value": 15
+          },
+          "right": {
+            "value": 7
+          }
+        }
+      },
+      "order": "postorder"
+    },
+    "code": [
+      "int height(TreeNode node) {",
+      "    if (node == null) return 0;",
+      "    int left = height(node.left);",
+      "    int right = height(node.right);",
+      "    return 1 + Math.max(left, right);",
+      "}"
+    ]
+  },
+  "commonMistakes": [
+    "Checking the balance condition only at the root. A root whose two subtrees are both left-leaning chains of three — [1,2,2,3,null,3,null,4,null,4] — has equal heights on both sides, so a root-only check happily returns true for a tree that is two chains glued together.",
+    "Returning the real height instead of the sentinel once a child has failed. The -1 gets folded into `1 + Math.max(left, right)` and reappears as a legitimate-looking 0 or 1 further up, so the failure is silently forgotten and deep imbalances report as balanced.",
+    "Measuring balance in node counts rather than heights ('the two subtrees differ in size by at most one'). A 7-node tree split 3/3 is size-balanced whether the left side is a chain or a perfect triangle, so every skewed tree passes and the check tests nothing."
+  ],
+  "similar": [
+    "max-depth-binary-tree",
+    "diameter-of-binary-tree",
+    "validate-bst",
+    "invert-binary-tree",
+    "same-tree"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 110,
+      "slug": "balanced-binary-tree",
+      "title": "Balanced Binary Tree",
+      "url": "https://leetcode.com/problems/balanced-binary-tree/",
+      "premium": false
+    }
+  }
+}

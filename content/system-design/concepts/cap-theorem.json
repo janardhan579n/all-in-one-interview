@@ -1,0 +1,197 @@
+{
+  "id": "cap-theorem",
+  "title": "CAP Theorem & Consistency",
+  "group": "Distributed",
+  "level": 3,
+  "estimatedMinutes": 30,
+  "summary": "When the network splits a distributed system in two, you must choose: keep answering with possibly stale data, or refuse to answer until the split heals.",
+  "analogy": "Two shop branches sharing one stock list, connected by a phone line. The line goes dead. Each branch now chooses: keep selling and risk selling the same last item twice (available, inconsistent), or stop selling until the line is restored (consistent, unavailable). There is no third option that keeps both promises, and pretending otherwise is how overselling happens.",
+  "explanation": {
+    "beginner": "In a system spread across several machines, the network between them will occasionally fail. When it does, a machine that cannot reach the others has to decide what to do with an incoming request: answer using what it knows (which may be out of date), or refuse until it can confirm with the others. CAP says you cannot have both — and since network failures are not optional, the real choice is only between those two behaviours.",
+    "interview": "Under a network partition (P), a distributed system must sacrifice either linearizability (C) or availability (A). Since partitions cannot be avoided, CP and AP describe the behaviour during a partition, not a permanent classification. PACELC extends it usefully: else (E), when there is no partition, you still trade latency (L) against consistency (C) — which is the trade you make every single day, unlike partitions, which are rare. 'Eventual consistency' means replicas converge given no new writes; it says nothing about how long that takes or what a client observes in the meantime."
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "c1",
+        "label": "Client A",
+        "type": "client",
+        "x": 110,
+        "y": 180
+      },
+      {
+        "id": "c2",
+        "label": "Client B",
+        "type": "client",
+        "x": 110,
+        "y": 430
+      },
+      {
+        "id": "n1",
+        "label": "Node 1",
+        "type": "db",
+        "x": 430,
+        "y": 180,
+        "note": "During a partition: answer from local state (AP) or refuse (CP)?",
+        "why": {
+          "without": [
+            "Pretending a partition cannot happen means the behaviour is accidental rather than designed"
+          ],
+          "with": [
+            "You choose, in advance, what a partitioned system does"
+          ],
+          "conclusion": "The choice is made either way. CAP just insists you make it deliberately."
+        }
+      },
+      {
+        "id": "n2",
+        "label": "Node 2",
+        "type": "db",
+        "x": 790,
+        "y": 430,
+        "note": "Cannot reach Node 1. Its view of the data is frozen at the moment of the split."
+      },
+      {
+        "id": "split",
+        "label": "Network partition",
+        "type": "monitor",
+        "x": 610,
+        "y": 300,
+        "note": "Not hypothetical: cable cuts, switch failures, misconfigured firewalls, cloud AZ isolation."
+      }
+    ],
+    "edges": [
+      {
+        "from": "c1",
+        "to": "n1"
+      },
+      {
+        "from": "c2",
+        "to": "n2"
+      },
+      {
+        "from": "n1",
+        "to": "n2",
+        "label": "BROKEN",
+        "dashed": true
+      }
+    ]
+  },
+  "why": {
+    "without": [
+      "Teams assume 'the database handles it' and discover the actual behaviour during an incident",
+      "Overselling, double-booking and lost updates surface in production"
+    ],
+    "with": [
+      "The behaviour under partition is a stated product decision",
+      "Each subsystem picks the model its correctness requires"
+    ],
+    "conclusion": "Different parts of one product make different choices. Payments are CP; the like counter is AP. That is the sophisticated answer."
+  },
+  "whenToUse": [
+    "CP — money, inventory, bookings, unique constraints, anything where a wrong answer is worse than no answer",
+    "AP — feeds, likes, view counts, presence, recommendations, caches, anywhere slightly stale is fine and downtime is not"
+  ],
+  "whenNotToUse": [
+    "Do not apply CAP to a single-node system; without distribution there is no partition to reason about",
+    "Do not treat CA as a real option — it merely means 'we have not thought about partitions'"
+  ],
+  "tradeoffs": [
+    {
+      "option": "CP — consistency under partition",
+      "pros": [
+        "Reads never return stale data",
+        "Invariants such as 'stock never goes negative' hold",
+        "Easier application code"
+      ],
+      "cons": [
+        "The minority side of a partition rejects requests",
+        "Higher write latency from coordination (quorums, consensus)"
+      ],
+      "examples": "Postgres with synchronous replication, etcd, ZooKeeper, Spanner"
+    },
+    {
+      "option": "AP — availability under partition",
+      "pros": [
+        "Always answers",
+        "Low latency, writes accepted locally",
+        "Survives regional isolation"
+      ],
+      "cons": [
+        "Stale reads and conflicting writes",
+        "Conflict resolution becomes application work",
+        "Invariants cannot be enforced globally"
+      ],
+      "examples": "Cassandra, DynamoDB (tunable), Riak, DNS"
+    }
+  ],
+  "consistencyModels": [
+    {
+      "name": "Linearizable (strong)",
+      "meaning": "Every read sees the most recent completed write, as if there were a single copy. Most expensive."
+    },
+    {
+      "name": "Sequential",
+      "meaning": "All nodes see operations in the same order, though not necessarily in real time."
+    },
+    {
+      "name": "Causal",
+      "meaning": "Causally related operations are seen in order; concurrent ones may differ. A good default for social systems."
+    },
+    {
+      "name": "Read-your-writes",
+      "meaning": "A client always sees its own writes. Often the minimum users actually notice."
+    },
+    {
+      "name": "Eventual",
+      "meaning": "Replicas converge if writes stop. Cheapest; says nothing about the interim."
+    }
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "architecture",
+      "question": "Your inventory service partitions and node B cannot reach node A. Two customers each try to buy the last item, one on each node. What should a CP system do?",
+      "options": [
+        "Accept both orders and reconcile later",
+        "Refuse the write on the side that cannot reach a quorum, so at most one sale proceeds",
+        "Accept both and cancel one afterwards",
+        "Shut down entirely"
+      ],
+      "answerIndex": 1,
+      "explanation": "CP chooses correctness: the minority side rejects the write rather than risk overselling. An AP system would accept both and leave you apologising to one customer — sometimes an acceptable business decision, but it must be a decision."
+    },
+    {
+      "id": "q2",
+      "type": "mcq",
+      "question": "Why is 'CA' not a meaningful choice for a distributed system?",
+      "options": [
+        "It is the best choice",
+        "Partitions are not optional — networks fail — so a system claiming CA has simply not defined its partition behaviour",
+        "CA only applies to NoSQL",
+        "It is too expensive"
+      ],
+      "answerIndex": 1,
+      "explanation": "P is a fact about the world, not a design option. The real question is what happens when a partition occurs, and CA is an answer to a different question."
+    },
+    {
+      "id": "q3",
+      "type": "architecture",
+      "question": "What does PACELC add that CAP misses?",
+      "options": [
+        "Nothing",
+        "That even with no partition you trade latency against consistency — the trade you actually make every day, since partitions are rare and coordination latency is constant",
+        "A third failure mode",
+        "Security considerations"
+      ],
+      "answerIndex": 1,
+      "explanation": "CAP only describes partitioned operation. PACELC names the everyday trade: synchronous cross-region coordination costs real milliseconds on every request, which usually matters more than the rare partition."
+    }
+  ],
+  "related": [
+    "consensus",
+    "replication",
+    "sharding",
+    "database"
+  ]
+}

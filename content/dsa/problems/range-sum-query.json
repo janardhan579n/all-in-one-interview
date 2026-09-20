@@ -1,0 +1,140 @@
+{
+  "id": "range-sum-query",
+  "title": "Range Sum Query — Immutable",
+  "patternId": "prefix-sum",
+  "difficulty": "beginner",
+  "tags": [
+    "array",
+    "prefix-sum",
+    "design"
+  ],
+  "statement": "Design a class NumArray that is constructed from an integer array which never changes afterwards, and supports sumRange(left, right) returning the sum of nums[left..right] inclusive. sumRange will be called many times — many more times than the constructor.",
+  "realWorld": "A dashboard where the user drags a time window across a fixed day of metrics: the series is loaded once and never changes, but the window moves on every mouse event. What matters is the per-query cost, not the load cost, and that trade — pay once at construction, answer instantly forever after — is the same one an index makes in a database.",
+  "examples": [
+    {
+      "input": "NumArray([-2,0,3,-5,2,-1]); sumRange(0,2); sumRange(2,5); sumRange(0,5)",
+      "output": "1, -1, -3",
+      "explanation": "-2+0+3 = 1; 3-5+2-1 = -1; the whole array sums to -3. The three ranges overlap heavily, which is exactly the redundancy worth eliminating."
+    },
+    {
+      "input": "NumArray([1,2,3]); sumRange(1,1); sumRange(0,2)",
+      "output": "2, 6",
+      "explanation": "A range of one element must return that element, and a range covering everything must return the total — the two ends of the index arithmetic, and where off-by-one bugs show up first."
+    },
+    {
+      "input": "NumArray([5]); sumRange(0,0)",
+      "output": "5",
+      "explanation": "The smallest possible instance. It only works if the prefix array has a leading zero, so that prefix[1] - prefix[0] is defined."
+    }
+  ],
+  "constraints": [
+    "1 <= nums.length <= 10^4",
+    "-10^5 <= nums[i] <= 10^5",
+    "0 <= left <= right < nums.length",
+    "Up to 10^4 calls to sumRange, and the array is never modified"
+  ],
+  "bruteForce": {
+    "idea": "Keep a reference to the array and add up the requested range on every call.",
+    "code": [
+      "class NumArray {",
+      "    private final int[] nums;",
+      "",
+      "    public NumArray(int[] nums) {",
+      "        this.nums = nums;",
+      "    }",
+      "",
+      "    public int sumRange(int left, int right) {",
+      "        int sum = 0;",
+      "        for (int i = left; i <= right; i++) sum += nums[i];",
+      "        return sum;",
+      "    }",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(1) to build, O(n) per query",
+      "space": "O(1)"
+    },
+    "whySlow": "Two queries that overlap re-add every element they share, and consecutive window positions in a dashboard overlap in all but one element. Nothing at all carries from one call to the next, so a query covering half a 10,000-element array re-adds the same 5,000 numbers that the previous query just finished adding — 10^4 queries over a static array perform up to 10^8 additions, all of them recomputing sums of a sequence that by assumption never changes."
+  },
+  "patternIdentification": "The data is immutable and the same aggregate is asked repeatedly over different ranges: that is the signal to move work from query time to construction time. Any range aggregate whose operator has an inverse — sum with subtraction, XOR with itself — collapses into a single precomputed array of prefixes plus one combine per query. If the array were mutable this trade would break down and the answer would be a Fenwick or segment tree, which buys O(log n) updates at the cost of O(log n) queries.",
+  "optimized": {
+    "idea": "In the constructor, build prefix[i] = the sum of the first i elements, in an array one slot longer than the input so that prefix[0] = 0 stands for the empty prefix. Then the sum of nums[left..right] is prefix[right + 1] - prefix[left]: everything up to the end of the range, minus everything before it starts. Construction costs one pass; every query afterwards is a single subtraction, independent of how wide the range is. The leading zero is not decoration — it is what makes a range starting at index 0 need no special case.",
+    "code": [
+      "class NumArray {",
+      "    private final int[] prefix;",
+      "",
+      "    public NumArray(int[] nums) {",
+      "        prefix = new int[nums.length + 1];          // one longer, and prefix[0] stays 0",
+      "        for (int i = 0; i < nums.length; i++) {",
+      "            prefix[i + 1] = prefix[i] + nums[i];",
+      "        }",
+      "    }",
+      "",
+      "    public int sumRange(int left, int right) {",
+      "        return prefix[right + 1] - prefix[left];    // one subtraction, whatever the width",
+      "    }",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n) to build, O(1) per query",
+      "space": "O(n)"
+    }
+  },
+  "visualization": {
+    "engine": "prefixSum",
+    "input": {
+      "array": [
+        -2,
+        0,
+        3,
+        -5,
+        2,
+        -1
+      ],
+      "queries": [
+        [
+          0,
+          2
+        ],
+        [
+          2,
+          5
+        ],
+        [
+          0,
+          5
+        ]
+      ]
+    },
+    "code": [
+      "int[] prefix = new int[nums.length + 1];   // prefix[0] = 0: the empty prefix",
+      "for (int i = 0; i < nums.length; i++) {",
+      "    prefix[i + 1] = prefix[i] + nums[i];",
+      "}",
+      "",
+      "// sumRange(left, right), called any number of times:",
+      "return prefix[right + 1] - prefix[left];"
+    ]
+  },
+  "commonMistakes": [
+    "Sizing the prefix array at n and defining prefix[i] as the sum of nums[0..i]: every query then needs left == 0 ? prefix[right] : prefix[right] - prefix[left - 1], and the branch that is forgotten sends prefix[-1] into an ArrayIndexOutOfBoundsException on the first query that starts at index 0.",
+    "Writing prefix[right] - prefix[left] with the exclusive convention: every answer is short by exactly nums[right], which is invisible whenever that element happens to be 0 and wrong everywhere else — sumRange(0,2) on [-2,0,3,-5,2,-1] returns -2 instead of 1.",
+    "Accumulating into an int when the constraints are larger than stated: 10^4 elements of magnitude 10^5 reach 10^9, one order of magnitude from wrapping, and an overflowed prefix shows up as a query over positive values returning a large negative number. A long[] prefix costs 8n bytes and removes the whole class of bug."
+  ],
+  "similar": [
+    "running-sum",
+    "pivot-index",
+    "subarray-sum-equals-k",
+    "product-of-array-except-self"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 303,
+      "slug": "range-sum-query-immutable",
+      "title": "Range Sum Query - Immutable",
+      "url": "https://leetcode.com/problems/range-sum-query-immutable/",
+      "premium": false
+    },
+    "note": "LeetCode 303 is the immutable version taught here. 307 (Range Sum Query - Mutable) is the same question once updates are allowed, and needs a Fenwick or segment tree."
+  }
+}

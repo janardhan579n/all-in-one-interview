@@ -1,0 +1,108 @@
+{
+  "id": "non-overlapping-intervals",
+  "title": "Non-overlapping Intervals",
+  "patternId": "greedy",
+  "difficulty": "intermediate",
+  "tags": [
+    "array",
+    "greedy",
+    "sorting",
+    "intervals"
+  ],
+  "statement": "Given an array of intervals where intervals[i] = [start, end], return the minimum number of intervals you must remove so that the rest are pairwise non-overlapping. Intervals that merely touch at an endpoint, such as [1,2] and [2,3], do not overlap.",
+  "realWorld": "Booking systems resolving double-booked rooms with the fewest cancellations, ad servers dropping the fewest campaigns from a conflicting schedule, and broadcast planners fitting the most programmes into a channel. It is the same computation in each case.",
+  "examples": [
+    {
+      "input": "intervals = [[1,2],[2,3],[3,4],[1,3]]",
+      "output": "1",
+      "explanation": "Remove [1,3] and the remaining three chain end-to-start. Keeping 3 of 4 means removing 1."
+    },
+    {
+      "input": "intervals = [[1,2],[1,2],[1,2]]",
+      "output": "2",
+      "explanation": "All three occupy the same slot, so only one survives."
+    },
+    {
+      "input": "intervals = [[1,100],[11,22],[1,11],[2,12]]",
+      "output": "2",
+      "explanation": "Sorted by end: [1,11], [2,12], [11,22], [1,100]. Keep [1,11], skip [2,12] (starts before 11), keep [11,22] (touching is allowed), skip [1,100]. Two kept out of four is two removals. Note that sorting by start would have taken [1,100] first and kept only one."
+    }
+  ],
+  "constraints": [
+    "1 <= intervals.length <= 10^5",
+    "-5 * 10^4 <= start < end <= 5 * 10^4"
+  ],
+  "bruteForce": {
+    "idea": "Try every subset of intervals, discard the ones containing a clashing pair, and keep the largest that survives. The answer is n minus its size.",
+    "code": [
+      "int bestKept = 0;",
+      "for (int mask = 0; mask < (1 << n); mask++) {",
+      "    List<int[]> chosen = new ArrayList<>();",
+      "    for (int i = 0; i < n; i++) {",
+      "        if ((mask & (1 << i)) != 0) chosen.add(intervals[i]);",
+      "    }",
+      "    if (pairwiseDisjoint(chosen)) bestKept = Math.max(bestKept, chosen.size());",
+      "}",
+      "return n - bestKept;"
+    ],
+    "complexity": {
+      "time": "O(2^n * n^2)",
+      "space": "O(n)"
+    },
+    "whySlow": "2^n subsets, each still needing a clash check. n = 30 is a billion subsets; the constraint allows 10^5. The enumeration also learns nothing from its failures — rejecting one subset for a clashing pair tells it nothing about the next subset containing the same pair."
+  },
+  "patternIdentification": "Minimising removals is maximising keeps with the answer subtracted from n, so this is activity selection in disguise — and it inherits that problem's proof for free. The greedy signal is that a kept interval constrains the future in exactly one way: the moment it ends. Sort by end time and sweep.",
+  "optimized": {
+    "idea": "Sort by end time. Sweep once, keeping every interval that starts at or after the last kept interval's end. The exchange argument: let g be the interval that ends earliest; in any optimal kept-set, swapping its earliest-ending member for g keeps the set valid and the same size, because everything else in it starts after that member ends, hence after g ends. So some optimal answer contains g — commit and induct. The removals are n minus the number kept.",
+    "code": [
+      "import java.util.Arrays;",
+      "import java.util.Comparator;",
+      "",
+      "/** O(n log n) time, dominated by the sort. O(1) extra space beyond it. */",
+      "public static int eraseOverlapIntervals(int[][] intervals) {",
+      "    if (intervals == null || intervals.length == 0) return 0;",
+      "",
+      "    // By END time. comparingInt, not a[1] - b[1], which overflows near the int bounds.",
+      "    Arrays.sort(intervals, Comparator.comparingInt(interval -> interval[1]));",
+      "",
+      "    int kept = 0;",
+      "    int lastEnd = Integer.MIN_VALUE;",
+      "",
+      "    for (int[] interval : intervals) {",
+      "        if (interval[0] >= lastEnd) {   // >= : touching endpoints do not overlap",
+      "            kept++;",
+      "            lastEnd = interval[1];      // commit — provably safe, never reconsidered",
+      "        }",
+      "        // else: it clashes with something that ends no later, so dropping it is free",
+      "    }",
+      "    return intervals.length - kept;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n log n), dominated by the sort — the sweep itself is a single O(n) pass with O(1) work per interval",
+      "space": "O(n) for Java's merge sort on an object array; the algorithm itself carries only two ints"
+    }
+  },
+  "commonMistakes": [
+    "Sorting by start time. One interval like [1,100] is then taken first and blocks everything after it. The end time is the only thing a kept interval costs the future, so it is the only correct key.",
+    "Using `>` instead of `>=` in the compatibility test, which treats [1,2] and [2,3] as overlapping and removes one too many. Read the problem statement's endpoint convention before choosing.",
+    "Removing the interval that ends later when two clash, but implementing it by scanning and deleting — the sweep already does this implicitly by skipping, and an explicit removal turns an O(n) pass into O(n^2).",
+    "Writing `(a, b) -> a[1] - b[1]` as the comparator. With ends near Integer.MIN_VALUE and MAX_VALUE the subtraction overflows and silently inverts the order.",
+    "Answering with the count kept instead of the count removed. The greedy computes keeps; the problem asks for n - keeps."
+  ],
+  "similar": [
+    "merge-intervals",
+    "insert-interval",
+    "meeting-rooms-ii",
+    "jump-game"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 435,
+      "slug": "non-overlapping-intervals",
+      "title": "Non-overlapping Intervals",
+      "url": "https://leetcode.com/problems/non-overlapping-intervals/",
+      "premium": false
+    }
+  }
+}

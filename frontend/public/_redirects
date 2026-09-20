@@ -1,0 +1,4 @@
+# Netlify and Cloudflare Pages: send every unknown path to the SPA instead of a 404, so a
+# refresh on /dsa/sliding-window works. Static hosting has no backend, and the app detects
+# that and runs in offline mode — every lesson is bundled.
+/*    /index.html   200

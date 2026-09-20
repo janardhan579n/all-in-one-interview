@@ -1,0 +1,107 @@
+{
+  "id": "linked-list-cycle",
+  "title": "Linked List Cycle",
+  "patternId": "fast-slow-pointer",
+  "difficulty": "intermediate",
+  "tags": [
+    "linked-list",
+    "two-pointers",
+    "cycle"
+  ],
+  "statement": "Given the head of a linked list, determine whether it contains a cycle. Solve it using O(1) extra space.",
+  "realWorld": "Detecting reference cycles that keep objects alive (memory leaks), symlink loops in a filesystem walk, and HTTP redirect loops. All are 'does following the pointers ever bring me back?'.",
+  "examples": [
+    {
+      "input": "head = [3,2,0,-4], tail connects to index 1",
+      "output": "true",
+      "explanation": "The last node points back to the node with value 2."
+    },
+    {
+      "input": "head = [1,2], no cycle",
+      "output": "false",
+      "explanation": ""
+    }
+  ],
+  "constraints": [
+    "0 <= number of nodes <= 10^4",
+    "O(1) extra space required"
+  ],
+  "bruteForce": {
+    "idea": "Store every visited node in a HashSet; a repeat means a cycle.",
+    "code": [
+      "Set<Node> seen = new HashSet<>();",
+      "for (Node cur = head; cur != null; cur = cur.next) {",
+      "    if (!seen.add(cur)) return true;",
+      "}",
+      "return false;"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(n)"
+    },
+    "whySlow": "The time is optimal; the memory is the problem. Storing a reference per node doubles the footprint of the structure being inspected, and the problem forbids it."
+  },
+  "patternIdentification": "Cycle detection with an O(1) space constraint is Floyd's tortoise and hare, essentially by definition.",
+  "optimized": {
+    "idea": "Two pointers at speeds 1 and 2. Inside a cycle the gap closes by exactly one node per step, so a meeting is guaranteed; reaching null proves there is no cycle.",
+    "code": [
+      "public static boolean hasCycle(Node head) {",
+      "    Node slow = head;",
+      "    Node fast = head;",
+      "    while (fast != null && fast.next != null) {",
+      "        slow = slow.next;",
+      "        fast = fast.next.next;",
+      "        if (slow == fast) return true;   // reference equality, not value",
+      "    }",
+      "    return false;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(1)"
+    }
+  },
+  "visualization": {
+    "engine": "fastSlowPointer",
+    "input": {
+      "values": [
+        3,
+        2,
+        0,
+        -4,
+        9,
+        6
+      ],
+      "cycleAt": 2,
+      "mode": "cycle"
+    },
+    "code": [
+      "Node slow = head, fast = head;",
+      "while (fast != null && fast.next != null) {",
+      "    slow = slow.next;",
+      "    fast = fast.next.next;",
+      "    if (slow == fast) return true;",
+      "}",
+      "return false;"
+    ]
+  },
+  "commonMistakes": [
+    "Comparing slow.val == fast.val instead of slow == fast — duplicate values then report a cycle that does not exist.",
+    "Checking equality before advancing, when both start at head and are trivially equal.",
+    "Assuming the meeting point is the cycle entry; finding the entry needs a second phase from the head."
+  ],
+  "similar": [
+    "middle-of-linked-list",
+    "find-duplicate-number",
+    "happy-number"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 141,
+      "slug": "linked-list-cycle",
+      "title": "Linked List Cycle",
+      "url": "https://leetcode.com/problems/linked-list-cycle/",
+      "premium": false
+    }
+  }
+}

@@ -1,0 +1,383 @@
+{
+  "id": "greedy",
+  "kind": "pattern",
+  "title": "Greedy",
+  "group": "Sorting & Intervals",
+  "level": 4,
+  "difficulty": "advanced",
+  "estimatedMinutes": 45,
+  "summary": "Build the answer one locally-best choice at a time — but only when you can state *why* the local choice is safe. That justification is an exchange argument, and a greedy algorithm without one is a guess that happens to pass the samples.",
+  "prerequisites": [
+    "arrays",
+    "intervals",
+    "big-o",
+    "dynamic-programming-basics"
+  ],
+  "tags": [
+    "greedy",
+    "sorting",
+    "intervals",
+    "exchange-argument",
+    "proof",
+    "dp",
+    "level-4"
+  ],
+  "analogy": {
+    "beginner": "You have one free afternoon and a list of activities, each with a fixed start and end. Which do you take first? Not the shortest, not the one you most fancy — the one that **finishes earliest**, because finishing early leaves the most afternoon for everything else. Then repeat with whatever still fits. The reason this works is not that it feels sensible; it is that swapping anybody's first choice for the earliest-finishing one can never lose you an activity, and you can say that in one sentence. Compare paying with coins: taking the biggest coin first feels every bit as sensible, and for some sets of coins it is simply wrong. Same instinct, different outcome — which is why the instinct is not the method.",
+    "interview": "A greedy algorithm commits irrevocably to a locally optimal choice at each step and never reconsiders. It is correct exactly when the problem has the **greedy-choice property** — some optimal solution contains the greedy choice — together with optimal substructure. The standard proof is an **exchange argument**: take an arbitrary optimal solution, show it can be transformed to agree with the greedy choice without becoming worse, and induct on the remaining subproblem. When that exchange cannot be made, the choice is unsafe and you need dynamic programming, which keeps every option alive instead of committing to one."
+  },
+  "intuition": "Greedy is the only pattern where *getting the right answer on the examples proves nothing*. So this lesson is mostly about the part that is usually skipped: how to know the greedy choice is safe before you write it.\n\n### The problem\n\nMeetings `[[1,4], [2,3], [3,5], [7,9]]`, one room, no overlaps, fit as many as possible.\n\nThree plausible rules, all of which somebody will propose in an interview:\n\n| Rule | On this input | Verdict |\n| --- | --- | --- |\n| Earliest **start** first | takes `[1,4]`, then `[7,9]` → 2 | wrong in general: one very long early meeting eats the day |\n| **Shortest** first | takes `[2,3]`, then `[3,5]`, then `[7,9]` → 3 | wrong in general: a short meeting can straddle two others |\n| Earliest **end** first | takes `[2,3]`, then `[3,5]`, then `[7,9]` → 3 | correct — and provably so |\n\nTwo of them give 3 here. Only one of them is right. **That is the lesson.** Testing cannot distinguish a correct greedy rule from a lucky one; only an argument can.\n\n### Why earliest-end is safe\n\nSort by end time. Let `g` be the meeting that ends earliest overall.\n\nTake **any** optimal schedule `O`. Look at its first meeting `f` (the one that ends earliest in `O`). Two cases:\n\n- `f == g`: nothing to do.\n- `f != g`: then `g` ends no later than `f`, by definition of `g`. Swap `f` out and `g` in. Does anything break? Every other meeting in `O` starts after `f` ends, and `g` ends at or before `f` does — so they all still start after `g` ends. `O` stays valid, and it stays the same size.\n\nSo there is *always* an optimal schedule that starts with `g`. Commit to `g`, delete everything that clashes with it, and the leftover is the same problem on a smaller set — induct. Done.\n\nThat is an **exchange argument**, and it is the whole proof. Notice its shape: *take an optimal solution, transform it towards the greedy choice, show nothing got worse.* Every correct greedy algorithm has one, and if you cannot produce it, you do not yet know whether your algorithm is correct.\n\nNotice also *what the argument used*: the only thing a chosen meeting costs the future is the moment it ends. Start time, duration and identity are irrelevant to what remains. Whenever a choice's entire effect on the future collapses to one number, greedy is worth trying.\n\n### And now a case where all of this fails\n\nCoins `{1, 3, 4}`, make 6. The obvious greedy rule — take the largest coin that fits — gives:\n\n```\n6 → take 4, remaining 2\n2 → take 1, remaining 1\n1 → take 1, remaining 0\n            total: 4 + 1 + 1 = three coins\n```\n\nThe optimum is `3 + 3` — **two** coins.\n\nRun the exchange argument and watch it collapse. Take the optimal solution `{3, 3}` and try to transform it to contain the greedy choice, 4. Remove a 3 and add a 4: now you are at 4 + 3 = 7, over target; remove both 3s and add a 4 and you are at 4, short by 2, needing two more coins. There is *no* transformation that makes an optimal solution agree with the greedy choice without getting worse. The greedy-choice property is false here, and the algorithm is wrong — not unlucky, wrong.\n\nWhat went wrong specifically: taking the 4 destroyed information. It left the residue 2, which is badly served by this coin set, and nothing later could undo the commitment. **This is why dynamic programming exists.** DP does not commit; it computes the best way to make every amount from 0 to 6, so `best(6) = min over coins c of 1 + best(6 - c)` — and `best(6)` sees both `1 + best(2)` and `1 + best(3)`, choosing the latter. Greedy explores one path; DP explores all of them and shares the overlapping work.\n\n(Greedy coin change *is* correct for the coins of most real currencies — `{1, 5, 10, 25}` among them — which is exactly why the bug survives code review. The rule holds for some coin sets and not others, and only a proof tells you which kind you have.)\n\n### The habit to build\n\nBefore writing a greedy loop, finish this sentence: *\"Any optimal solution can be changed to contain my first choice, without getting worse, because …\"* If you can finish it, write the loop. If you cannot, reach for DP.",
+  "problemFirst": {
+    "motivatingProblem": "Given meetings `[[1,4], [2,3], [3,5], [7,9]]` as (start, end) pairs and a single room, schedule as many of them as possible with no two overlapping.",
+    "bruteForce": {
+      "idea": "Try every subset of the meetings. Discard any subset containing a clashing pair. Keep the largest that survives.",
+      "code": [
+        "int best = 0;",
+        "for (int mask = 0; mask < (1 << n); mask++) {          // every subset",
+        "    List<int[]> chosen = new ArrayList<>();",
+        "    for (int i = 0; i < n; i++) {",
+        "        if ((mask & (1 << i)) != 0) chosen.add(meetings[i]);",
+        "    }",
+        "    if (noOverlap(chosen)) best = Math.max(best, chosen.size());",
+        "}",
+        "return best;"
+      ],
+      "complexity": {
+        "time": "O(2ⁿ · n log n)",
+        "space": "O(n)"
+      },
+      "whySlow": "2ⁿ subsets, and each one still has to be checked for clashes. n = 30 is already a billion subsets; n = 60 outlives the universe. Worse, the enumeration is almost entirely waste — the overwhelming majority of subsets are rejected on their very first clashing pair, and nothing learned from rejecting one subset is carried over to the next."
+    },
+    "observation": "A chosen meeting affects the future in exactly one way: the moment it ends. Its start time, its length and which meeting it is are all irrelevant to what can still be scheduled. So between two meetings that both fit right now, the one that ends earlier leaves a strict superset of the options the other leaves — it can never be the worse choice.",
+    "leap": "Sort by end time and sweep once, taking every meeting that starts at or after the last one you took ended. That is not a heuristic that usually works: the sentence above *is* the proof. Any optimal schedule can have its first meeting swapped for the earliest-finishing one without shrinking, because everything else in it started after a later moment and therefore still fits. Induct on the rest.",
+    "optimizedSketch": [
+      "Arrays.sort(meetings, Comparator.comparingInt(m -> m[1]));   // by END, not start",
+      "int count = 0;",
+      "int lastEnd = Integer.MIN_VALUE;",
+      "for (int[] meeting : meetings) {",
+      "    if (meeting[0] >= lastEnd) {   // compatible with everything taken so far",
+      "        count++;",
+      "        lastEnd = meeting[1];      // commit, and never reconsider",
+      "    }",
+      "}",
+      "return count;"
+    ]
+  },
+  "howItWorks": [
+    "**Step 1 — name the greedy choice, and the order that makes it visible.** Greedy is almost always 'sort by the right key, then sweep'. Choosing the key *is* choosing the algorithm: end time for activity selection, deadline for scheduling with deadlines, ratio value/weight for fractional knapsack, edge weight for Kruskal. If no ordering makes the choice obvious, greedy is probably not your pattern.",
+    "**Step 2 — state the exchange argument, out loud, before coding.** The template: *take any optimal solution O; if O does not already contain my greedy choice g, replace O's corresponding element with g; show the result is still valid and no smaller.* If the swap always works, greedy is correct by induction on the remaining subproblem. If you can find a case where it does not, you have just found your counterexample.",
+    "**Step 3 — actively try to break it.** Construct the adversarial input, do not wait for it. The three standard shapes: one very large item that blocks several small ones (kills 'biggest first'), an item that spans two others (kills 'shortest first'), and a residue that the remaining options serve badly (kills greedy coin change). Two minutes here saves a wrong answer.",
+    "**The two formal conditions.** *Greedy-choice property*: some optimal solution contains the greedy choice — this is what the exchange argument establishes, and it is the one that fails for coin change with `{1, 3, 4}`. *Optimal substructure*: once the greedy choice is committed, an optimal solution to the remaining subproblem completes it optimally. DP needs the second condition too; greedy additionally needs the first, which is why greedy is the narrower tool.",
+    "**Greedy vs DP is a decision, not a preference.** The test is whether a choice can be made irrevocably. Can you prove any optimal solution can be bent to include your first choice? Take greedy: one pass, O(n log n) for the sort, O(1) or O(n) space. Can you not? Take DP: it keeps every option alive and pays for it in a table, typically O(n · W) time and space. Greedy is DP with the branching pruned to width one — legitimate only when you can prove nothing was pruned away.",
+    "**The counting trick: minimise removals by maximising keeps.** 'Remove the fewest intervals so none overlap' is the same problem as 'keep the most non-overlapping intervals', answered by `n - kept`. Several greedy problems are a complement away from activity selection, and spotting that is faster than inventing a new rule.",
+    "**Feasibility greedy is a different shape from optimisation greedy.** Jump Game and Gas Station do not maximise anything — they ask *can it be done*. The greedy there is an invariant carried along the sweep (furthest index reachable; running tank balance), and the argument is 'if this invariant ever fails, no choice could have saved it', which is still an exchange argument wearing different clothes."
+  ],
+  "patternRecognition": {
+    "signals": [
+      "'Maximum number of…', 'minimum number of…', 'is it possible to…' over a sequence you are free to sort",
+      "Sorting by one obvious key makes the right first move self-evident — intervals by end time, jobs by deadline, items by value/weight",
+      "A choice's entire effect on the future collapses to a single number (the moment it ends, the fuel left, the furthest index reached)",
+      "Intervals: scheduling, merging, removing overlaps, minimum rooms, minimum arrows",
+      "You can state the exchange argument in one sentence — this is the real signal, and the only one that is not circumstantial",
+      "The brute force is 'try every subset', i.e. 2ⁿ, and the structure looks far too regular to deserve that"
+    ],
+    "antiSignals": [
+      "You cannot justify the first choice, only defend it with examples → you are guessing; try dynamic programming",
+      "A choice's effect on the future is a *state*, not a number — remaining capacity, a residue, a set of used items → DP (0/1 knapsack is exactly fractional knapsack with the greedy proof removed)",
+      "You can construct any input where the locally best move loses → greedy is refuted, and one counterexample is enough",
+      "The problem asks to count solutions, or to enumerate all optimal solutions, rather than to produce one → greedy builds a single solution and knows nothing about the others",
+      "Negative weights, or a choice that can be undone later to gain something → commitment is unsafe by construction",
+      "Making change for an arbitrary, unspecified coin set → the {1, 3, 4} case; use DP unless the coin system is given and known to be canonical"
+    ]
+  },
+  "visualizations": [
+    {
+      "id": "sorted-sweep",
+      "title": "Sorting is what makes a greedy sweep possible — one pass over intervals, no backtracking",
+      "engine": "mergeIntervals",
+      "input": {
+        "intervals": [
+          [
+            1,
+            4
+          ],
+          [
+            2,
+            3
+          ],
+          [
+            3,
+            5
+          ],
+          [
+            7,
+            9
+          ]
+        ]
+      },
+      "code": [
+        "List<int[]> out = new ArrayList<>();",
+        "Arrays.sort(iv, Comparator.comparingInt(a -> a[0]));   // the enabler",
+        "for (int[] cur : iv) {",
+        "    if (out.isEmpty() || cur[0] > out.get(out.size() - 1)[1]) out.add(cur.clone());",
+        "    else out.get(out.size() - 1)[1] =",
+        "             Math.max(out.get(out.size() - 1)[1], cur[1]);   // overlap: extend",
+        "}",
+        "return out.toArray(new int[0][]);"
+      ]
+    }
+  ],
+  "implementations": [
+    {
+      "label": "Simple",
+      "language": "java",
+      "explanation": "Activity selection: the canonical provably-correct greedy. The only interesting line is the comparator — sorting by `m[1]` rather than `m[0]` is the algorithm, and the exchange argument in the Javadoc is what makes it an algorithm rather than a heuristic. Note `Integer.compare` instead of subtraction: `a[1] - b[1]` overflows when end times straddle zero at the extremes.",
+      "code": [
+        "import java.util.Arrays;",
+        "import java.util.Comparator;",
+        "",
+        "public final class ActivitySelection {",
+        "",
+        "    /**",
+        "     * Maximum number of pairwise non-overlapping meetings, where a meeting may start",
+        "     * exactly when the previous one ends.",
+        "     *",
+        "     * Correctness (exchange argument): let g be the meeting that ends earliest. Take any",
+        "     * optimal schedule O and let f be its earliest-ending meeting. Since g ends no later",
+        "     * than f, replacing f with g leaves every other meeting in O still compatible — they",
+        "     * all start after f ends, hence after g ends. So |O| is unchanged and some optimal",
+        "     * schedule contains g. Commit to g, delete what clashes, and induct on the rest.",
+        "     *",
+        "     * O(n log n) time, dominated by the sort. O(1) extra space beyond it.",
+        "     */",
+        "    public static int maxMeetings(int[][] meetings) {",
+        "        if (meetings == null || meetings.length == 0) return 0;",
+        "",
+        "        // Integer.compare, not a[1] - b[1]: subtraction overflows near the int bounds.",
+        "        Arrays.sort(meetings, Comparator.comparingInt(m -> m[1]));",
+        "",
+        "        int count = 0;",
+        "        int lastEnd = Integer.MIN_VALUE;",
+        "",
+        "        for (int[] meeting : meetings) {",
+        "            if (meeting[0] >= lastEnd) {   // >= because touching is not overlapping",
+        "                count++;",
+        "                lastEnd = meeting[1];      // irrevocable, and provably safe",
+        "            }",
+        "        }",
+        "        return count;",
+        "    }",
+        "",
+        "    private ActivitySelection() {}",
+        "}"
+      ]
+    },
+    {
+      "label": "When greedy fails",
+      "language": "java",
+      "explanation": "The same problem solved twice, so the failure is not an anecdote but something you can run. `greedyCoinChange(new int[]{1, 3, 4}, 6)` returns 3 (4 + 1 + 1); `dpCoinChange` returns 2 (3 + 3). The greedy version is not buggy code — it is a correct implementation of a false idea. The commitment to the 4 leaves the residue 2, which this coin set serves badly, and nothing downstream can undo it. DP never commits: it computes the best way to make *every* amount, so `best[6]` gets to compare `1 + best[2]` against `1 + best[3]` and picks the better one. That comparison is precisely what greedy threw away.",
+      "code": [
+        "import java.util.Arrays;",
+        "",
+        "public final class CoinChange {",
+        "",
+        "    /**",
+        "     * Greedy: always take the largest coin that fits. WRONG for general coin sets.",
+        "     * greedyCoinChange({1, 3, 4}, 6) -> 3   (4 + 1 + 1)",
+        "     * The true optimum is 2                 (3 + 3)",
+        "     *",
+        "     * It happens to be correct for canonical systems such as {1, 5, 10, 25}, which is",
+        "     * exactly why the bug survives review: it passes every test written against coins",
+        "     * that look like real money.",
+        "     */",
+        "    public static int greedyCoinChange(int[] coins, int amount) {",
+        "        int[] sorted = coins.clone();",
+        "        Arrays.sort(sorted);",
+        "",
+        "        int used = 0;",
+        "        int remaining = amount;",
+        "        for (int i = sorted.length - 1; i >= 0; i--) {",
+        "            while (remaining >= sorted[i]) {",
+        "                remaining -= sorted[i];",
+        "                used++;                    // committed — and unrecoverable",
+        "            }",
+        "        }",
+        "        return remaining == 0 ? used : -1;",
+        "    }",
+        "",
+        "    /**",
+        "     * Dynamic programming: the fewest coins for EVERY amount up to the target, so the",
+        "     * choice at 6 can compare 1 + best[2] with 1 + best[3] instead of guessing.",
+        "     * O(amount * coins.length) time, O(amount) space — the price of not committing.",
+        "     */",
+        "    public static int dpCoinChange(int[] coins, int amount) {",
+        "        final int IMPOSSIBLE = amount + 1;          // larger than any real answer",
+        "        int[] best = new int[amount + 1];",
+        "        Arrays.fill(best, IMPOSSIBLE);",
+        "        best[0] = 0;                                // zero coins make zero",
+        "",
+        "        for (int value = 1; value <= amount; value++) {",
+        "            for (int coin : coins) {",
+        "                if (coin <= value && best[value - coin] + 1 < best[value]) {",
+        "                    best[value] = best[value - coin] + 1;",
+        "                }",
+        "            }",
+        "        }",
+        "        return best[amount] >= IMPOSSIBLE ? -1 : best[amount];",
+        "    }",
+        "",
+        "    private CoinChange() {}",
+        "}"
+      ]
+    }
+  ],
+  "complexity": {
+    "time": "O(n log n) when a sort is needed, O(n) when the input already arrives in the right order",
+    "space": "O(1) beyond the sort, or O(n) if the sort is not in place",
+    "why": "The algorithm itself is a single pass: every element is examined once, and the decision at each element is O(1) because the only state carried forward is a small summary — the last end time, the furthest reachable index, the running tank balance. So the greedy sweep is O(n) and the *sort dominates*, which is why greedy solutions are almost always O(n log n) and why you should say 'O(n log n), dominated by the sort' rather than just 'O(n log n)'. The contrast with DP is the real point: DP on the same problems is O(n · W) time and O(W) space, where W is the range of the state (the target amount, the knapsack capacity). Greedy's saving is not a constant factor — it is not building the table at all, because the proof says it does not need to. Java's `Arrays.sort` on an `int[][]` uses a stable merge sort with O(n) auxiliary space; on primitives it is an in-place dual-pivot quicksort."
+  },
+  "commonMistakes": [
+    {
+      "mistake": "Writing a greedy solution without an argument, then testing until the samples pass",
+      "fix": "Samples cannot distinguish a correct rule from a lucky one — on the meetings example, 'shortest first' also gives 3 and is still wrong. Finish the sentence 'any optimal solution can be transformed to contain my first choice because…' before you write the loop."
+    },
+    {
+      "mistake": "Sorting by start time in activity selection",
+      "fix": "Sort by *end* time. A single long meeting that starts first consumes the whole day. The end time is the only thing a choice costs the future, so it is the only sensible key."
+    },
+    {
+      "mistake": "Assuming greedy coin change is correct",
+      "fix": "It is correct only for canonical coin systems. `{1, 3, 4}` making 6 gives 4 + 1 + 1 where 3 + 3 is optimal. For an arbitrary coin set, use DP."
+    },
+    {
+      "mistake": "Confusing 'greedy is faster' with 'greedy is right'",
+      "fix": "Speed is irrelevant if the answer is wrong. The decision between greedy and DP is about whether commitment is *provably safe*, never about performance. Choose on correctness, then note the speed as a bonus."
+    },
+    {
+      "mistake": "Overflow in the comparator",
+      "fix": "`(a, b) -> a[1] - b[1]` silently reverses order when the difference overflows `int`. Use `Comparator.comparingInt(a -> a[1])` or `Integer.compare(a[1], b[1])`."
+    },
+    {
+      "mistake": "Getting the boundary convention wrong for touching intervals",
+      "fix": "Decide explicitly whether `[1,3]` and `[3,5]` overlap. Meeting rooms say no (use `>=`); some interval problems say yes (use `>`). One character, and it flips half the test cases."
+    },
+    {
+      "mistake": "Reaching for DP when greedy is provable, or greedy when it is not",
+      "fix": "Both directions cost you. A provable greedy that you solve with DP is a slower, longer answer that invites 'can you do better?'. An unprovable greedy is just wrong. Do the two-minute exchange-argument check and let it decide."
+    },
+    {
+      "mistake": "Forgetting the empty or single-element input",
+      "fix": "Sorting an empty array is fine, but `lastEnd` initialisation and 'is it possible' answers for n = 0 or n = 1 are frequently left undefined. State them."
+    }
+  ],
+  "realWorldUses": [
+    "Job and meeting scheduling: the earliest-deadline-first family of real-time schedulers is greedy, and provably optimal for preemptive single-processor scheduling.",
+    "Huffman coding (used in gzip, JPEG and MP3) repeatedly merges the two least frequent symbols — a greedy choice with a textbook exchange argument.",
+    "Minimum spanning trees: Kruskal's and Prim's algorithms are both greedy, both proved by a cut-and-exchange argument, and both used in network and clustering design.",
+    "Dijkstra's shortest paths settles the nearest unsettled node — greedy, and correct only because no edge is negative, which is exactly a greedy-choice-property condition.",
+    "Cloud autoscaling and bin packing: first-fit-decreasing is a greedy heuristic that is *not* optimal, used deliberately because it is within a known factor of optimal and fast enough to run continuously.",
+    "Cache eviction policies (LRU, LFU) are greedy rules whose failure modes — the pathological access pattern — are exactly the counterexamples a proof would have found."
+  ],
+  "interviewNotes": [
+    "The instant you propose a greedy rule, volunteer the exchange argument. Interviewers are grading the justification, not the loop, and a candidate who says 'greedy' without one is indistinguishable from a candidate who guessed.",
+    "If you cannot construct the argument in about two minutes, say so and switch to DP. 'I can't prove the greedy choice is safe here, so I'll keep both options alive' is a strong answer; a confidently wrong greedy is the weakest possible one.",
+    "Have `{1, 3, 4}` making 6 memorised. It is the fastest way to demonstrate that you know greedy needs proof, and it often gets you credit for the DP discussion before you have written any DP.",
+    "Expect the follow-up 'why sort by end time and not start time?'. The answer is one sentence: the end time is the only thing the choice costs the future.",
+    "When a problem says 'minimum removals', check whether it is 'maximum keeps' in disguise. Answering `n - kept` is shorter and reuses a proof you already have.",
+    "For feasibility problems (Jump Game, Gas Station), the greedy is an invariant carried along the sweep. Name the invariant explicitly — 'furthest index reachable so far', 'tank since the last restart' — and the proof usually writes itself."
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "mcq",
+      "question": "What actually makes a greedy algorithm correct?",
+      "options": [
+        "It produces the right answer on all the provided examples",
+        "It runs faster than the dynamic programming solution",
+        "The greedy-choice property: some optimal solution contains the greedy choice, usually shown by an exchange argument",
+        "The input is sorted before the sweep"
+      ],
+      "answerIndex": 2,
+      "explanation": "Passing examples proves nothing — on the meetings input, 'shortest first' also returns 3 and is wrong in general. Sorting and speed are implementation details. Correctness comes from showing that any optimal solution can be transformed to contain the greedy choice without getting worse, then inducting on the remainder."
+    },
+    {
+      "id": "q2",
+      "type": "mcq",
+      "question": "For activity selection, why sort by end time rather than start time or duration?",
+      "options": [
+        "End times are usually larger, so they sort more stably",
+        "The only way a chosen meeting constrains the future is the moment it ends, so finishing earliest leaves a superset of the remaining options",
+        "Start times can be negative",
+        "Duration is expensive to compute"
+      ],
+      "answerIndex": 1,
+      "explanation": "A committed meeting's start and length have no effect on what can still be scheduled; only its end does. So between two compatible candidates, the earlier-finishing one leaves at least every option the other leaves, and can never be the worse pick. Earliest-start fails when one long meeting starts first; shortest-first fails when a short meeting straddles two others."
+    },
+    {
+      "id": "q3",
+      "type": "mcq",
+      "question": "With coins {1, 3, 4} and a target of 6, what does 'always take the largest coin that fits' produce, and what is optimal?",
+      "options": [
+        "Greedy gives 3 coins (4+1+1); optimal is 2 coins (3+3)",
+        "Greedy gives 2 coins (3+3); optimal is 2 coins",
+        "Greedy gives 6 coins (1×6); optimal is 2 coins",
+        "Both give 3 coins — greedy is correct here"
+      ],
+      "answerIndex": 0,
+      "explanation": "Greedy takes 4, then is stuck with the residue 2, which this coin set can only make as 1 + 1 — three coins total. The optimum 3 + 3 requires declining the largest coin, which greedy structurally cannot do. This is the standard counterexample and the reason dynamic programming exists."
+    },
+    {
+      "id": "q4",
+      "type": "identify-pattern",
+      "question": "You must choose items with weights and values under a capacity limit, and items cannot be split. Greedy by value/weight ratio, or DP?",
+      "options": [
+        "Greedy — the best ratio is always worth taking first",
+        "DP — with indivisible items the exchange argument fails, because a partly-used ratio cannot be swapped in",
+        "Either; they give the same answer",
+        "Greedy, but only if all weights are equal"
+      ],
+      "answerIndex": 1,
+      "explanation": "Fractional knapsack is greedy and provable: you can always top up the remaining capacity with a fraction of the best-ratio item, which is exactly the exchange. 0/1 knapsack removes that ability — the best-ratio item may not fit alongside the rest, leaving wasted capacity — so the exchange fails and you need DP over the capacity. The two problems differ by one word and by an entire algorithm."
+    },
+    {
+      "id": "q5",
+      "type": "complexity",
+      "question": "What usually dominates the running time of a greedy algorithm, and what is the typical total?",
+      "options": [
+        "The sweep, giving O(n²)",
+        "The sort, giving O(n log n) overall",
+        "The recursion depth, giving O(log n)",
+        "Building the DP table, giving O(n · W)"
+      ],
+      "answerIndex": 1,
+      "explanation": "The sweep itself is one pass with O(1) work per element, because the only state carried forward is a small summary such as the last end time. The sort that puts the elements in greedy order costs O(n log n) and dominates. Saying 'O(n log n), dominated by the sort' shows you know where the cost actually is — and it disappears if the input arrives sorted."
+    },
+    {
+      "id": "q6",
+      "type": "mcq",
+      "question": "'Remove the minimum number of intervals so that the rest do not overlap.' What is the fastest correct approach?",
+      "options": [
+        "DP over all subsets",
+        "Sort by end time, greedily keep the maximum non-overlapping set, and answer n − kept",
+        "Sort by length and remove the longest intervals first",
+        "Sort by start time and remove every interval that overlaps its predecessor"
+      ],
+      "answerIndex": 1,
+      "explanation": "Minimising removals is the complement of maximising keeps, so it is activity selection with the answer subtracted from n — and it inherits that proof for free. Removing by length has no supporting argument and fails easily; sorting by start and dropping overlappers removes the wrong interval when a long one comes first."
+    }
+  ],
+  "practiceProblems": [
+    "non-overlapping-intervals",
+    "jump-game",
+    "jump-game-ii",
+    "partition-labels",
+    "task-scheduler",
+    "gas-station"
+  ],
+  "related": [
+    "intervals",
+    "dynamic-programming-basics",
+    "heap",
+    "two-pointers"
+  ]
+}

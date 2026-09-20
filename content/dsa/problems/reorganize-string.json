@@ -1,0 +1,110 @@
+{
+  "id": "reorganize-string",
+  "title": "Reorganize String",
+  "patternId": "heap",
+  "difficulty": "intermediate",
+  "tags": [
+    "heap",
+    "priority-queue",
+    "greedy",
+    "string",
+    "counting"
+  ],
+  "statement": "Given a string s of lowercase letters, rearrange its characters so that no two adjacent characters are the same. Return any arrangement that satisfies this, or the empty string if no such arrangement exists.",
+  "realWorld": "Spacing out work so the same downstream resource is never hit twice in a row: a retry scheduler that must not send two requests for the same tenant back to back, or a playlist shuffle that refuses to play two tracks by the same artist consecutively. In both cases the constraint is 'no immediate repeat' and the scarce resource is the gaps between occurrences of the most common item.",
+  "examples": [
+    {
+      "input": "s = \"aab\"",
+      "output": "\"aba\"",
+      "explanation": "'a' occurs twice in a string of length 3. It needs positions 0 and 2, and 'b' takes the single gap between them."
+    },
+    {
+      "input": "s = \"aaab\"",
+      "output": "\"\"",
+      "explanation": "Length 4, so at most (4 + 1) / 2 = 2 positions can be pairwise non-adjacent. 'a' occurs 3 times and cannot fit; no arrangement exists and the answer is the empty string rather than a best effort."
+    },
+    {
+      "input": "s = \"vvvlo\"",
+      "output": "\"vlvov\"",
+      "explanation": "'v' occurs 3 times in a string of length 5, exactly the limit of (5 + 1) / 2 = 3, so it is possible but only just: 'v' must take positions 0, 2 and 4 and the other two letters fill 1 and 3. Any valid arrangement is accepted."
+    }
+  ],
+  "constraints": [
+    "1 <= s.length <= 500",
+    "s consists of lowercase English letters only",
+    "Return \"\" when no valid arrangement exists"
+  ],
+  "bruteForce": {
+    "idea": "Backtrack over positions: at each position try every character that still has a count left and differs from the one just placed, recurse, and undo on failure.",
+    "code": [
+      "boolean build(int[] counts, StringBuilder out, int n) {",
+      "    if (out.length() == n) return true;",
+      "    char previous = out.length() == 0 ? 0 : out.charAt(out.length() - 1);",
+      "    for (int c = 0; c < 26; c++) {",
+      "        if (counts[c] == 0 || (char) ('a' + c) == previous) continue;",
+      "        counts[c]--;",
+      "        out.append((char) ('a' + c));",
+      "        if (build(counts, out, n)) return true;",
+      "        out.deleteCharAt(out.length() - 1);   // undo and try the next letter",
+      "        counts[c]++;",
+      "    }",
+      "    return false;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(26^n) in the worst case",
+      "space": "O(n)"
+    },
+    "whySlow": "Every dead end this search backs out of is the same dead end: it ran out of room for the letter it kept postponing, having spent positions on letters that were never scarce. The recursion rediscovers that fact from scratch along every one of exponentially many prefixes, even though a single number — the count of the most frequent remaining letter — already determines whether the current prefix can still be completed. It is re-deriving a global fact by local trial and error."
+  },
+  "patternIdentification": "The greedy rule is 'place the character with the most remaining occurrences', because that character is the one most at risk of running out of gaps later; spending a position on a plentiful character is always safe, spending it on nothing is not. The counts change after every placement, so 'the largest of a changing multiset' is a heap. The twist worth recognising, and reusable well beyond this problem: when the greedy choice is also *forbidden from repeating immediately*, you do not delete it and you do not put it straight back — you hold it out of the heap for exactly one round, then return it. Holding an item aside for a cooldown is the standard way to combine a priority rule with a separation constraint.",
+  "optimized": {
+    "idea": "Count the letters. If any count exceeds (n + 1) / 2 the answer is impossible — in a row of n positions the largest set of pairwise non-adjacent positions is {0, 2, 4, ...}, which has ceil(n / 2) = (n + 1) / 2 members, so a letter appearing more often than that must land next to itself somewhere. That bound is tight in both directions: if no count exceeds it, filling positions 0, 2, 4, ... and then 1, 3, 5, ... in descending order of count always succeeds. Then run the greedy: poll the most frequent letter, append it, decrement it, and hold it aside; only after the *next* letter has been appended does the held one go back into the heap, which is what makes an immediate repeat impossible.",
+    "code": [
+      "public static String reorganizeString(String s) {",
+      "    int[] counts = new int[26];",
+      "    for (char c : s.toCharArray()) counts[c - 'a']++;",
+      "    PriorityQueue<int[]> byCount = new PriorityQueue<>((a, b) -> Integer.compare(b[1], a[1]));",
+      "    for (int c = 0; c < 26; c++) {",
+      "        if (counts[c] > (s.length() + 1) / 2) return \"\";   // more occurrences than non-adjacent slots",
+      "        if (counts[c] > 0) byCount.offer(new int[]{c, counts[c]});",
+      "    }",
+      "    StringBuilder out = new StringBuilder();",
+      "    int[] held = null;",
+      "    while (!byCount.isEmpty()) {",
+      "        int[] best = byCount.poll();",
+      "        out.append((char) ('a' + best[0]));",
+      "        best[1]--;",
+      "        if (held != null && held[1] > 0) byCount.offer(held);   // the previous letter is safe to use again NOW",
+      "        held = best;",
+      "    }",
+      "    return out.toString();",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n log 26) = O(n)",
+      "space": "O(26) = O(1) beyond the output"
+    }
+  },
+  "commonMistakes": [
+    "Re-offering the letter you just used before polling the next one. It is still the most frequent, so the heap hands it straight back and you emit a double letter: \"aaabc\" comes back as \"aacab\", with \"aa\" at the very front. The held-aside variable exists solely to make this impossible.",
+    "Pushing the held-aside entry back without checking that its count is still positive. An exhausted letter returns to the heap, gets polled again, decrements to -1, is held and pushed back again — the loop never terminates, and \"aab\" grows the output forever until the JVM dies with OutOfMemoryError.",
+    "Skipping the (n + 1) / 2 feasibility check and trusting the loop to notice. It does not notice: the heap simply empties with the dominant letter still held aside, so \"aaab\" returns the 3-character \"aba\" for a 4-character input, silently dropping a letter instead of returning \"\"."
+  ],
+  "similar": [
+    "task-scheduler",
+    "top-k-frequent",
+    "last-stone-weight",
+    "k-closest-points",
+    "group-anagrams"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 767,
+      "slug": "reorganize-string",
+      "title": "Reorganize String",
+      "url": "https://leetcode.com/problems/reorganize-string/",
+      "premium": false
+    }
+  }
+}

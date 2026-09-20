@@ -1,0 +1,103 @@
+{
+  "id": "merge-two-sorted-lists",
+  "title": "Merge Two Sorted Lists",
+  "patternId": "linked-list",
+  "difficulty": "beginner",
+  "tags": [
+    "linked-list",
+    "two-pointers",
+    "merge"
+  ],
+  "statement": "Given the heads of two lists sorted in non-decreasing order, splice them into one sorted list and return its head. Reuse the existing nodes — do not allocate a new node per value.",
+  "realWorld": "External sorting: when a dataset does not fit in memory it is written out as sorted runs and then merged, and the merge step is exactly this. The same operation combines a replica's ordered write-ahead log with the leader's, and merges two time-ordered event streams into one feed. In every case both inputs are already ordered and the only question per step is which cursor to advance.",
+  "examples": [
+    {
+      "input": "a = [1,2,4], b = [1,3,4]",
+      "output": "[1,1,2,3,4,4]",
+      "explanation": "Six appends, each choosing the smaller of the two current heads. The tie at 1 goes to list a because the comparison is <=, which keeps the merge stable."
+    },
+    {
+      "input": "a = [], b = [0]",
+      "output": "[0]",
+      "explanation": "The while loop never runs because a is null. The final line attaches whatever is left — here the whole of b — and dummy.next is node 0. This is precisely the case the dummy node makes free."
+    },
+    {
+      "input": "a = [5], b = [1,2,3]",
+      "output": "[1,2,3,5]",
+      "explanation": "b is exhausted first, after which the leftover [5] is attached with a single pointer assignment rather than walked node by node."
+    }
+  ],
+  "constraints": [
+    "0 <= number of nodes in each list <= 50",
+    "-100 <= Node.val <= 100",
+    "both input lists are already sorted in non-decreasing order"
+  ],
+  "bruteForce": {
+    "idea": "Collect every value from both lists into one array, sort it, and build a new list from the sorted values.",
+    "code": [
+      "List<Integer> all = new ArrayList<>();",
+      "for (Node p = a; p != null; p = p.next) all.add(p.val);",
+      "for (Node q = b; q != null; q = q.next) all.add(q.val);",
+      "Collections.sort(all);",
+      "Node dummy = new Node(0);",
+      "Node tail = dummy;",
+      "for (int value : all) {",
+      "    tail.next = new Node(value);",
+      "    tail = tail.next;",
+      "}",
+      "return dummy.next;"
+    ],
+    "complexity": {
+      "time": "O((n + m) log(n + m))",
+      "space": "O(n + m)"
+    },
+    "whySlow": "The sort re-discovers an ordering we were handed. A comparison sort spends (n+m)log(n+m) comparisons establishing which element precedes which, but every comparison between two elements that came from the same input list has an answer that list already guaranteed. Only the comparisons across the two lists carry any new information, and there are at most n+m of those. Everything else is information being paid for twice — plus a second copy of the data and a fresh node per value, when the nodes we were given were already the right nodes."
+  },
+  "patternIdentification": "Two inputs that are each already sorted, one sorted output. That is the merge half of merge sort, and the word 'sorted' in the input description is the whole signal: never re-sort data that arrives sorted. The shape is one cursor per input, compare the two current heads, emit the smaller, advance only the cursor you consumed. It scales directly — k sorted inputs is the same loop with a heap picking the smallest head instead of an if.",
+  "optimized": {
+    "idea": "Walk both lists at once with a cursor each, always appending the smaller head to the output and advancing that cursor. Two details do the real work. First, a dummy head: a throwaway node that the first append hangs off, so the code never has to ask 'is this the first element, in which case I must set head instead of tail.next?'. Second, when one list runs out the other is already sorted and already linked, so the remainder is attached with one assignment instead of a loop — which is why no node is ever allocated or copied.",
+    "code": [
+      "public static Node mergeTwoLists(Node a, Node b) {",
+      "    Node dummy = new Node(0);   // a stand-in head, so the first append needs no special case",
+      "    Node tail = dummy;",
+      "    while (a != null && b != null) {",
+      "        if (a.val <= b.val) {",
+      "            tail.next = a;",
+      "            a = a.next;",
+      "        } else {",
+      "            tail.next = b;",
+      "            b = b.next;",
+      "        }",
+      "        tail = tail.next;",
+      "    }",
+      "    tail.next = (a != null) ? a : b;   // the rest is already sorted and already linked",
+      "    return dummy.next;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n + m)",
+      "space": "O(1)"
+    }
+  },
+  "commonMistakes": [
+    "Omitting the final tail.next = (a != null) ? a : b. The loop stops the moment either list empties, so the tail of the longer list is silently dropped — [1,2,4] and [1,3,4] returns [1,1,2,3,4] and the last 4 disappears.",
+    "Allocating a new Node per value instead of relinking the existing ones. The output is correct, so every test passes, but the solution uses O(n+m) extra space; an interviewer who asks 'and in O(1) space?' has already concluded you did not see that the nodes could simply be spliced.",
+    "Using < instead of <= on the comparison. The merge is no longer stable, so equal elements from b jump ahead of equal elements from a. Invisible when the nodes hold bare ints, and wrong the moment they carry a payload — two events with the same timestamp come out in the wrong order."
+  ],
+  "similar": [
+    "merge-k-sorted-lists",
+    "merge-sorted-array",
+    "sort-list",
+    "reverse-linked-list",
+    "add-two-numbers"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 21,
+      "slug": "merge-two-sorted-lists",
+      "title": "Merge Two Sorted Lists",
+      "url": "https://leetcode.com/problems/merge-two-sorted-lists/",
+      "premium": false
+    }
+  }
+}

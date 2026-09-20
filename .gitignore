@@ -1,0 +1,23 @@
+# Build output
+node_modules/
+frontend/dist/
+frontend/tsconfig.tsbuildinfo
+backend/target/
+
+# Generated: a copy of /content, rebuilt by `npm run sync-content` on every dev/build.
+frontend/src/content-bundle/
+
+# Local data
+data/
+*.db
+*.db-journal
+logs/
+*.log
+
+# Netlify CLI link state — machine-local, and it names the site you deployed to.
+.netlify/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store

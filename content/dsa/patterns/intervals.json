@@ -1,0 +1,373 @@
+{
+  "id": "intervals",
+  "kind": "pattern",
+  "title": "Intervals",
+  "group": "Sorting & Intervals",
+  "level": 3,
+  "difficulty": "intermediate",
+  "estimatedMinutes": 35,
+  "summary": "Sort ranges by start, and every overlap question collapses to a comparison against the one block you are currently building — turning an O(n²) pairwise problem into a single pass after the sort.",
+  "prerequisites": [
+    "arrays",
+    "two-pointers"
+  ],
+  "tags": [
+    "array",
+    "sorting",
+    "intervals",
+    "greedy",
+    "sweep-line",
+    "scheduling",
+    "level-3"
+  ],
+  "analogy": {
+    "beginner": "You are tidying a wall calendar covered in sticky notes, each one a booking with a start and an end. Comparing every note with every other is chaos. Instead, peel them all off and lay them out left to right by start time. Now you hold exactly one note at a time and only ever ask one question: does this one begin before the block in my hand has finished? If yes, stretch the block; if no, pin the block up and start a new one. You never look backwards, because anything to the left started earlier and is already pinned.",
+    "interview": "Sort the intervals by start ascending. Maintain a single open interval — the block being built. For each next interval, either `cur.start > open.end` (disjoint: close the block, open a new one) or it overlaps (extend: `open.end = max(open.end, cur.end)`). The sort is O(n log n) and dominates; the sweep itself is O(n) with O(1) extra state. The variants — insert, intersect, count concurrency — are the same sweep with a different thing being maintained."
+  },
+  "intuition": "Two intervals overlap when neither one finishes before the other starts:\n\n```\na.start <= b.end && b.start <= a.end\n```\n\nWrite that down and check it against the awkward cases rather than trusting intuition — `[1,3]` vs `[3,5]` (touching, counts as overlapping under `<=`), `[1,10]` vs `[3,4]` (one fully inside the other), `[1,2]` vs `[5,6]` (disjoint). Every interval problem rests on getting this one line right, and it is where most wrong answers begin.\n\nBut the *test* is not the pattern. The pattern is what sorting buys you.\n\nUnsorted, 'which intervals overlap?' is a question about every pair: n(n-1)/2 tests, and worse, merging two of them creates a new interval that has to be re-tested against everything you already looked at. The set you are iterating over changes while you iterate it — which is not just slow, it is genuinely awkward to write correctly.\n\nSort by start, and something disappears:\n\n```\n[1,3] [2,6] [8,10] [15,18]\n  ^ open block\n```\n\nWhen you reach `[2,6]`, can it overlap `[8,10]` or `[15,18]`? No — they start later, and you have not opened them yet. Can it overlap something you already closed? Also no: you closed that block precisely because the current interval started after it ended, and every interval from here on starts even later.\n\nSo there is exactly one candidate at any moment: the block currently open. The full pairwise test collapses to `cur.start <= open.end`, because sorting has already guaranteed `open.start <= cur.start`. The half of the overlap test that compared starts is now true by construction.\n\nOne detail carries real weight: when you extend, write `open.end = max(open.end, cur.end)`. Merging `[1,10]` with `[3,4]` must leave `[1,10]`. Assigning `cur.end` blindly would shrink the block to `[1,4]` and silently lose six units of coverage — the single most common bug in this pattern, and one that passes the small test cases.",
+  "problemFirst": {
+    "motivatingProblem": "A room booking system holds `[[1,3], [8,10], [2,6], [15,18]]` — start and end times of meetings, in arbitrary order. Overlapping bookings must be collapsed into single blocks, so the calendar shows real occupancy: `[[1,6], [8,10], [15,18]]`.",
+    "bruteForce": {
+      "idea": "Compare every pair. When two overlap, replace them with their union and start the scan again, because the new, wider interval may now overlap something that did not overlap either original.",
+      "code": [
+        "List<int[]> work = new ArrayList<>(Arrays.asList(intervals));",
+        "boolean changed = true;",
+        "while (changed) {",
+        "    changed = false;",
+        "    outer:",
+        "    for (int i = 0; i < work.size(); i++) {",
+        "        for (int j = i + 1; j < work.size(); j++) {",
+        "            int[] a = work.get(i), b = work.get(j);",
+        "            if (a[0] <= b[1] && b[0] <= a[1]) {              // they overlap",
+        "                work.set(i, new int[]{ Math.min(a[0], b[0]), Math.max(a[1], b[1]) });",
+        "                work.remove(j);                              // mutating what we iterate",
+        "                changed = true;",
+        "                break outer;                                 // and start all over again",
+        "            }",
+        "        }",
+        "    }",
+        "}",
+        "return work.toArray(new int[0][]);"
+      ],
+      "complexity": {
+        "time": "O(n³) in the worst case",
+        "space": "O(n) for the working list"
+      },
+      "whySlow": "Each scan is O(n²), and every successful merge forces a fresh scan — up to n-1 merges, so O(n³). The deeper problem is not the count but the structure: merging changes the collection you are iterating over, so the loop has to restart to stay correct. That restart is the code admitting it has no idea where the next overlap might be."
+    },
+    "observation": "The only reason the brute force must look everywhere is that the intervals arrive in arbitrary order. If they were sorted by start, every interval already seen begins no later than the current one — so the only interval that could still be extended is the most recent one.",
+    "leap": "Sort by start. Then keep exactly one open block. Each interval either starts after the block ends (close it, open a new one) or overlaps it (extend the end with `max`). Nothing earlier can ever be revisited, so one pass suffices and the merged list comes out already sorted.",
+    "optimizedSketch": [
+      "Arrays.sort(intervals, (a, b) -> Integer.compare(a[0], b[0]));   // O(n log n), dominates",
+      "List<int[]> merged = new ArrayList<>();",
+      "for (int[] cur : intervals) {",
+      "    int[] open = merged.isEmpty() ? null : merged.get(merged.size() - 1);",
+      "    if (open == null || cur[0] > open[1]) {",
+      "        merged.add(new int[]{ cur[0], cur[1] });       // gap — start a new block",
+      "    } else {",
+      "        open[1] = Math.max(open[1], cur[1]);           // overlap — extend, never shrink",
+      "    }",
+      "}"
+    ]
+  },
+  "howItWorks": [
+    "**The overlap test** — `a.start <= b.end && b.start <= a.end`. Two ranges overlap unless one finishes entirely before the other begins. Decide deliberately whether touching endpoints count: `<=` treats `[1,3]` and `[3,5]` as overlapping (right for merging bookings recorded inclusively), `<` treats them as adjacent (right for half-open `[start, end)` times, where a meeting ending at 3 frees the room at 3).",
+    "**Sort by start** — this is the pattern. After sorting, `open.start <= cur.start` holds for free, so half of the overlap test is already satisfied and only `cur.start <= open.end` needs checking.",
+    "**Keep one open block** — the last element of the output list *is* the state. `merged.get(merged.size() - 1)` is the block being built; there is no second pointer and no lookback.",
+    "**Extend with `max`** — `open.end = Math.max(open.end, cur.end)`. A fully contained interval such as `[3,4]` inside `[1,10]` must not shrink the block. This is the bug that survives small tests.",
+    "**Insert into an already-sorted list** — when the input is sorted and you are adding one interval, skip everything ending before the new one starts, absorb everything overlapping it (`min` of starts, `max` of ends), then append the rest. No sort needed: O(n).",
+    "**Sweep line for concurrency** — when the question is 'how many at once?' rather than 'what are the blocks?', stop thinking in intervals and think in events. Sort by start, and keep a min-heap of the end times of meetings still running. For each meeting, pop every end that is `<= cur.start` (those rooms are free again); the heap size after pushing is the number of rooms in use. The answer is the maximum size the heap ever reaches.",
+    "**The two-array variant** — the same count can be had without a heap: sort all starts and all ends into two arrays, walk them with two pointers, and increment a counter on each start, decrement on each end. Same O(n log n), less machinery — worth mentioning as the follow-up.",
+    "**Intersection of two sorted lists** — two pointers, one per list. The intersection of `a` and `b` is `[max(a.start, b.start), min(a.end, b.end)]`, kept only if that range is non-empty; then advance whichever interval ends first, since it cannot intersect anything further along."
+  ],
+  "patternRecognition": {
+    "signals": [
+      "The input is a list of `[start, end]` pairs — bookings, tasks, ranges, segments, versions",
+      "'Merge', 'overlapping', 'conflicting', 'non-overlapping', 'insert into', 'intersect'",
+      "Scheduling language: meeting rooms, CPU tasks, flight bookings, calendar conflicts",
+      "'Minimum number of X needed to cover all of these' or 'maximum number running at once' → sweep line with a heap",
+      "'Remove the fewest intervals so none overlap' → sort by **end** and take greedily, not by start",
+      "The brute force in your head is 'compare each pair'"
+    ],
+    "antiSignals": [
+      "The values are single points, not ranges → sorting plus two pointers, or a hash map",
+      "The intervals must keep their original input order → sorting destroys it; store the original index alongside each interval before sorting",
+      "You need to answer many queries against a *static* set of ranges → build an interval tree or a segment tree instead of re-sweeping",
+      "Ranges arrive as a live stream needing answers after each insert → keep a `TreeMap` keyed by start and use `floorEntry` / `ceilingEntry`; re-sorting per insert is wasteful",
+      "Nothing about the problem is ordered along a line → the sorting insight has nothing to bite on"
+    ]
+  },
+  "visualizations": [
+    {
+      "id": "merge-intervals",
+      "title": "Merge overlapping bookings — the sort is the whole trick",
+      "engine": "mergeIntervals",
+      "input": {
+        "intervals": [
+          [
+            1,
+            3
+          ],
+          [
+            8,
+            10
+          ],
+          [
+            2,
+            6
+          ],
+          [
+            15,
+            18
+          ]
+        ]
+      },
+      "code": [
+        "List<int[]> out = new ArrayList<>();",
+        "Arrays.sort(iv, (a, b) -> Integer.compare(a[0], b[0]));   // sort by start",
+        "for (int[] cur : iv) {",
+        "    if (out.isEmpty() || cur[0] > out.get(out.size() - 1)[1]) out.add(new int[]{ cur[0], cur[1] });",
+        "    // otherwise it overlaps the block being built, so stretch that block's end",
+        "    else out.get(out.size() - 1)[1] = Math.max(out.get(out.size() - 1)[1], cur[1]);",
+        "}",
+        "return out.toArray(new int[0][]);"
+      ]
+    }
+  ],
+  "implementations": [
+    {
+      "label": "Simple",
+      "language": "java",
+      "explanation": "Merge overlapping intervals — the canonical form of the pattern. Two lines carry everything: the sort, and the `Math.max`. Note that the result comes out sorted for free, because the input was sorted and blocks are appended left to right.",
+      "code": [
+        "import java.util.ArrayList;",
+        "import java.util.Arrays;",
+        "import java.util.List;",
+        "",
+        "/** Collapses overlapping intervals. O(n log n) time, O(n) output space. */",
+        "public static int[][] merge(int[][] intervals) {",
+        "    if (intervals == null || intervals.length <= 1) {",
+        "        return intervals;",
+        "    }",
+        "",
+        "    // Sort by start. After this, an interval can only overlap the block being built.",
+        "    Arrays.sort(intervals, (a, b) -> Integer.compare(a[0], b[0]));",
+        "",
+        "    List<int[]> merged = new ArrayList<>();",
+        "    for (int[] current : intervals) {",
+        "        int[] open = merged.isEmpty() ? null : merged.get(merged.size() - 1);",
+        "",
+        "        if (open == null || current[0] > open[1]) {",
+        "            // Starts after the open block ends — a genuine gap, so close and reopen.",
+        "            merged.add(new int[]{ current[0], current[1] });",
+        "        } else {",
+        "            // Overlaps. max, not assignment: [1,10] merged with [3,4] stays [1,10].",
+        "            open[1] = Math.max(open[1], current[1]);",
+        "        }",
+        "    }",
+        "    return merged.toArray(new int[0][]);",
+        "}"
+      ]
+    },
+    {
+      "label": "Optimized",
+      "language": "java",
+      "explanation": "The sweep-line variant, for when the question is 'how many at once?' rather than 'what are the blocks?'. The min-heap holds the end times of meetings still running, and its root is always the next room to free up — the only end time worth comparing against. The second method shows the same answer without a heap, which some interviewers prefer as the follow-up.",
+      "code": [
+        "import java.util.Arrays;",
+        "import java.util.PriorityQueue;",
+        "",
+        "/**",
+        " * Minimum meeting rooms for a set of [start, end) meetings.",
+        " * O(n log n) time — the sort plus at most n heap pushes and pops.",
+        " * O(n) space for the heap in the worst case (everything concurrent).",
+        " */",
+        "public static int minMeetingRooms(int[][] meetings) {",
+        "    if (meetings == null || meetings.length == 0) {",
+        "        return 0;",
+        "    }",
+        "",
+        "    Arrays.sort(meetings, (a, b) -> Integer.compare(a[0], b[0]));   // chronological arrivals",
+        "",
+        "    // Min-heap of end times: the root is the meeting that frees a room soonest.",
+        "    PriorityQueue<Integer> busyUntil = new PriorityQueue<>();",
+        "    int best = 0;",
+        "",
+        "    for (int[] meeting : meetings) {",
+        "        // Every meeting that has already ended releases its room. Half-open [start, end):",
+        "        // an end exactly at this start is free to reuse.",
+        "        while (!busyUntil.isEmpty() && busyUntil.peek() <= meeting[0]) {",
+        "            busyUntil.poll();",
+        "        }",
+        "        busyUntil.add(meeting[1]);",
+        "        best = Math.max(best, busyUntil.size());   // peak concurrency is the answer",
+        "    }",
+        "    return best;",
+        "}",
+        "",
+        "/**",
+        " * The same answer with two sorted arrays instead of a heap: walk the starts and",
+        " * ends together, +1 on a start, -1 on an end, and track the running peak.",
+        " */",
+        "public static int minMeetingRoomsNoHeap(int[][] meetings) {",
+        "    int n = meetings.length;",
+        "    int[] starts = new int[n];",
+        "    int[] ends = new int[n];",
+        "    for (int i = 0; i < n; i++) {",
+        "        starts[i] = meetings[i][0];",
+        "        ends[i] = meetings[i][1];",
+        "    }",
+        "    Arrays.sort(starts);",
+        "    Arrays.sort(ends);",
+        "",
+        "    int rooms = 0;",
+        "    int best = 0;",
+        "    int endIndex = 0;",
+        "    for (int startIndex = 0; startIndex < n; startIndex++) {",
+        "        while (endIndex < n && ends[endIndex] <= starts[startIndex]) {",
+        "            rooms--;          // a room was freed before this meeting begins",
+        "            endIndex++;",
+        "        }",
+        "        rooms++;",
+        "        best = Math.max(best, rooms);",
+        "    }",
+        "    return best;",
+        "}"
+      ]
+    }
+  ],
+  "complexity": {
+    "time": "O(n log n)",
+    "space": "O(n) for the output, or O(log n) to O(n) for the sort itself depending on the implementation",
+    "why": "The sweep after sorting is a single pass — each interval is examined exactly once and either opens a block or extends the open one, both O(1). So the sort is the entire cost: O(n log n), and it cannot be improved in the comparison model, because merging intervals would otherwise let you sort numbers faster than n log n (map each value v to the interval [v, v] — the merged output is sorted). Space is the output list; the sweep keeps no auxiliary state beyond a reference to the last block. For the meeting-rooms variant the heap adds O(n log n) in the worst case — n pushes and n pops at O(log n) each — which does not change the total, and O(n) space when every meeting overlaps every other."
+  },
+  "commonMistakes": [
+    {
+      "mistake": "Forgetting to sort",
+      "fix": "Every guarantee the one-pass sweep relies on comes from sorting by start. Without it the 'only the open block can overlap' claim is simply false."
+    },
+    {
+      "mistake": "Assigning `open.end = cur.end` instead of `Math.max(open.end, cur.end)`",
+      "fix": "A fully contained interval would shrink the block: merging [1,10] with [3,4] must give [1,10], not [1,4]. Test with a containment case, not just a staircase."
+    },
+    {
+      "mistake": "Getting the strictness wrong on touching endpoints",
+      "fix": "Decide up front whether [1,3] and [3,5] merge. With inclusive ends they do (`cur.start > open.end` is the gap test); with half-open [start, end) they do not (`cur.start >= open.end`). Say which convention you are using."
+    },
+    {
+      "mistake": "Mutating the list while iterating it",
+      "fix": "Append to a separate output list and only ever modify its last element. Never remove from the input mid-loop."
+    },
+    {
+      "mistake": "Sorting by start for 'remove the fewest overlapping intervals'",
+      "fix": "That problem is the opposite greedy: sort by **end** and keep whichever finishes earliest, because an early finish leaves the most room for everything after it."
+    },
+    {
+      "mistake": "Overflow in a comparator written as `(a, b) -> a[0] - b[0]`",
+      "fix": "Subtraction overflows for large or negative bounds and silently inverts the order. Use `Integer.compare(a[0], b[0])`."
+    },
+    {
+      "mistake": "Losing the original indices after sorting",
+      "fix": "If the answer must reference input positions, pair each interval with its index before sorting, or sort an index array instead of the data."
+    },
+    {
+      "mistake": "Not handling an empty or single-element input",
+      "fix": "Return early. The sweep is correct for one interval, but the null and zero-length cases still need a defined answer."
+    }
+  ],
+  "realWorldUses": [
+    "Calendar and booking systems: collapsing busy blocks for a free/busy view, and rejecting a new booking that conflicts with an existing one.",
+    "Capacity planning: peak concurrency over a day of sessions is exactly the meeting-rooms sweep, and it sizes connection pools and thread pools.",
+    "Log and trace analysis: merging overlapping spans to find the true window an incident covered, and spotting requests running concurrently.",
+    "Network and IP management: coalescing adjacent CIDR ranges, and detecting conflicting address allocations.",
+    "Video and audio editing: merging overlapping clips or subtitle windows on a timeline.",
+    "Genomics: merging overlapping read alignments or gene annotations along a chromosome, where inputs run into the millions and the sort really is the cost."
+  ],
+  "interviewNotes": [
+    "Say 'sort by start' within the first fifteen seconds. It is the recognition signal, and everything after it is bookkeeping.",
+    "Ask whether touching endpoints count as overlapping before you write anything. It is a real ambiguity, and asking reads as care rather than confusion.",
+    "State that the sort dominates and that O(n log n) is optimal here — the reduction from sorting is a strong thing to mention if you have time.",
+    "Know the three greedy sorts and why they differ: by start for merging, by end for 'keep the most non-overlapping', and by start with a heap of ends for concurrency.",
+    "Walk a containment case ([1,10] then [3,4]) out loud when you write the `max` — it shows you know which line the bug lives on.",
+    "Common follow-ups: 'now do it without the heap', 'what if the list is already sorted and one interval is inserted?', 'what if intervals arrive as a stream?' (TreeMap), 'what if there are millions and they do not fit in memory?' (external sort, then the same sweep)."
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "identify-pattern",
+      "question": "'Given a list of meeting times, return the minimum number of rooms required.' Which approach fits?",
+      "options": [
+        "Sort by start and merge overlapping meetings",
+        "Sort by start, then sweep with a min-heap of end times and track the maximum heap size",
+        "Dynamic programming over subsets of meetings",
+        "Binary search on the number of rooms"
+      ],
+      "answerIndex": 1,
+      "explanation": "Merging answers 'what are the occupied blocks?', not 'how many at once?'. Peak concurrency needs the sweep: the heap holds meetings still running, and its largest size is the number of rooms."
+    },
+    {
+      "id": "q2",
+      "type": "complexity",
+      "question": "What is the time complexity of merging n intervals, and where does it come from?",
+      "options": [
+        "O(n) — a single pass over the list",
+        "O(n log n) — the sort dominates; the sweep after it is one linear pass",
+        "O(n²) — every interval may overlap every other",
+        "O(n log n) — the heap operations dominate"
+      ],
+      "answerIndex": 1,
+      "explanation": "Each interval is looked at once during the sweep, and it either opens a block or extends the open one in O(1). All of the cost is the sort — and it cannot be beaten, since merging the intervals [v, v] would sort the values v."
+    },
+    {
+      "id": "q3",
+      "type": "mcq",
+      "question": "Why must an overlapping interval be merged with `end = Math.max(open.end, cur.end)` rather than `end = cur.end`?",
+      "options": [
+        "To avoid integer overflow",
+        "Because a fully contained interval such as [3,4] inside [1,10] would otherwise shrink the block to [1,4]",
+        "Because the intervals are sorted by end, not start",
+        "It makes no difference once the list is sorted"
+      ],
+      "answerIndex": 1,
+      "explanation": "Sorting by start says nothing about ends: the next interval may finish long before the open block does. Assigning its end truncates the block and silently loses coverage — and small staircase test cases never catch it."
+    },
+    {
+      "id": "q4",
+      "type": "mcq",
+      "question": "Which condition tests whether intervals a and b overlap (with inclusive ends)?",
+      "options": [
+        "a.start < b.start && a.end < b.end",
+        "a.start <= b.end && b.start <= a.end",
+        "a.start == b.start || a.end == b.end",
+        "a.end - a.start > b.end - b.start"
+      ],
+      "answerIndex": 1,
+      "explanation": "They overlap unless one ends strictly before the other begins. Negating 'a ends before b starts, or b ends before a starts' gives exactly `a.start <= b.end && b.start <= a.end` — which also handles containment and touching endpoints."
+    },
+    {
+      "id": "q5",
+      "type": "mcq",
+      "question": "For 'remove the minimum number of intervals so that the rest do not overlap', what should you sort by?",
+      "options": [
+        "By start ascending, as in merging",
+        "By end ascending, keeping each interval that starts at or after the last kept end",
+        "By length descending",
+        "By start descending"
+      ],
+      "answerIndex": 1,
+      "explanation": "This is the classic activity-selection greedy. Keeping the interval that finishes earliest leaves the largest possible remaining timeline, so it is never worse than any other choice — an exchange argument proves it. Sorting by start would let one long interval block many short ones."
+    }
+  ],
+  "practiceProblems": [
+    "merge-intervals",
+    "meeting-rooms",
+    "insert-interval",
+    "minimum-arrows-burst-balloons",
+    "meeting-rooms-ii"
+  ],
+  "related": [
+    "arrays",
+    "two-pointers",
+    "binary-search"
+  ]
+}

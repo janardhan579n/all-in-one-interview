@@ -1,0 +1,361 @@
+{
+  "id": "shortest-paths",
+  "kind": "pattern",
+  "title": "Shortest Paths (Dijkstra)",
+  "group": "Graphs",
+  "level": 4,
+  "difficulty": "advanced",
+  "estimatedMinutes": 45,
+  "summary": "When edges carry different costs, always settle the nearest unsettled node — safe precisely because no edge is negative, and wrong the moment one is.",
+  "prerequisites": [
+    "graphs",
+    "bfs",
+    "queue"
+  ],
+  "tags": [
+    "dijkstra",
+    "shortest-path",
+    "weighted-graph",
+    "priority-queue",
+    "greedy",
+    "level-4"
+  ],
+  "analogy": {
+    "beginner": "Imagine pouring water into a pipe network at one junction. The water spreads along every pipe at the same speed, but longer pipes simply take longer to fill. The instant water first reaches a junction, that is the fastest it could possibly have arrived — because any other route would have had to be shorter, and shorter routes fill first. Dijkstra is that flood, done on paper: you always process whichever junction the water reaches next. The catch is that a pipe cannot have negative length. If some pipe magically sent water backwards in time, 'first arrival is fastest' would stop being true, and the whole method collapses.",
+    "interview": "Single-source shortest paths on a graph with non-negative edge weights. Maintain a tentative distance per vertex, repeatedly extract the unsettled vertex of minimum tentative distance, mark it settled, and relax its outgoing edges. Correctness rests on the non-negativity of weights: the minimum tentative distance is final because any alternative route leaves through another unsettled vertex whose distance is already at least as large, and the remainder of that route cannot reduce it. With a binary heap, O((V + E) log V)."
+  },
+  "intuition": "BFS already solves shortest paths — when every edge costs the same. It works because the queue processes nodes in non-decreasing distance order, so first arrival is best arrival. Weights break that: a path of one expensive edge can be worse than a path of five cheap ones, and a FIFO queue has no way to know.\n\nDijkstra keeps BFS's shape and fixes exactly one thing: **replace the queue with a priority queue keyed on distance-so-far.** Instead of 'oldest first', it is 'cheapest first'. That is the entire change.\n\nThe claim that makes it correct is worth stating precisely, because it is also the boundary of the algorithm. When you pull out the unsettled node `u` with the smallest tentative distance `d[u]`, that distance is already final. Why? Any other route to `u` must leave the settled region through some unsettled node `x`, and `d[x] ≥ d[u]` because `u` was the minimum. That route then continues from `x` to `u` over some edges — **and since no edge is negative, that continuation can only add cost.** So the alternative is at least `d[x] ≥ d[u]`. Nothing can beat what you already have.\n\nRead that argument again and notice exactly where 'no negative edges' load-bears. Remove it and the sentence 'the continuation can only add cost' becomes false: a later edge of weight −10 could pull an already-settled node's distance down, and Dijkstra never looks back at settled nodes. **This is not a corner case, it is the hypothesis of the proof.** It is also why Bellman-Ford exists: by relaxing every edge V−1 times instead of settling greedily, it tolerates negative weights (and detects negative cycles) at O(V·E).\n\nThe other direction matters too. If all weights are equal, the priority queue gives you exactly the BFS order — every node in the current 'ring' has the same key. So Dijkstra on an unweighted graph is not wrong, it is just a **slower BFS**: you have paid a log factor to reproduce an ordering a plain `ArrayDeque` gives you for free. Recognising 'all weights are 1' and writing BFS is the stronger answer.",
+  "problemFirst": {
+    "motivatingProblem": "A courier network connects cities by routes with different costs. Given the routes and their prices, find the cheapest total cost from the depot to every other city.",
+    "bruteForce": {
+      "idea": "Enumerate every simple path from the source to each destination and keep the cheapest.",
+      "code": [
+        "int best = Integer.MAX_VALUE;",
+        "",
+        "void allPaths(int node, int target, int cost, boolean[] onPath) {",
+        "    if (node == target) { best = Math.min(best, cost); return; }",
+        "    onPath[node] = true;",
+        "    for (int[] edge : adj.get(node)) {       // edge = {neighbour, weight}",
+        "        if (onPath[edge[0]]) continue;       // no revisiting within one path",
+        "        allPaths(edge[0], target, cost + edge[1], onPath);",
+        "    }",
+        "    onPath[node] = false;                    // backtrack",
+        "}"
+      ],
+      "complexity": {
+        "time": "Exponential — O(V!) paths in a dense graph",
+        "space": "O(V) recursion depth"
+      },
+      "whySlow": "The number of simple paths between two nodes in a dense graph grows factorially. Twenty fully connected cities give more routes than there are atoms in a small building, and the search re-walks the same expensive prefixes over and over: every path through city C repeats all the work of getting to C."
+    },
+    "observation": "Once we know the true cheapest cost to reach some city, every path that continues through it shares that prefix — there is no reason to recompute it. And among all cities we have not finalised yet, the one with the smallest known cost cannot possibly be reached more cheaply another way, because any other way would first have to pass through a city that is already at least as expensive, and travelling further only adds cost.",
+    "leap": "Keep one tentative cost per city and a priority queue ordered by it. Pop the cheapest unfinalised city, declare its cost final, and use it to improve (relax) its neighbours. Each edge is relaxed once per useful improvement instead of once per path, turning an exponential search into O((V + E) log V).",
+    "optimizedSketch": [
+      "int[] dist = new int[n];",
+      "Arrays.fill(dist, Integer.MAX_VALUE);",
+      "dist[src] = 0;",
+      "",
+      "PriorityQueue<int[]> pq =                       // {distance, node}",
+      "    new PriorityQueue<>((a, b) -> Integer.compare(a[0], b[0]));",
+      "pq.offer(new int[]{0, src});",
+      "",
+      "while (!pq.isEmpty()) {",
+      "    int[] top = pq.poll();",
+      "    if (top[0] > dist[top[1]]) continue;        // stale entry — already settled",
+      "    /* relax every outgoing edge of top[1] */",
+      "}"
+    ]
+  },
+  "howItWorks": [
+    "**Initialise** — `dist[src] = 0`, everything else `Integer.MAX_VALUE` (the 'no route known yet' marker). Push `{0, src}` onto a min-heap keyed on distance.",
+    "**Pop the nearest unsettled node.** `PriorityQueue<int[]>` with a comparator on element 0 is the standard Java shape; `PriorityQueue<long[]>` if sums can overflow an int.",
+    "**Skip stale entries.** Java's `PriorityQueue` has no decrease-key, so the usual trick is to push a *new* entry every time a distance improves and leave the old one in the heap. When you pop an entry whose stored distance exceeds the current `dist[node]`, it is an outdated copy — `continue`. Without this line the node is processed several times and the complexity degrades; a `boolean[] settled` check works equally well.",
+    "**Relax** — for each edge `u → v` of weight `w`, if `dist[u] + w < dist[v]`, set `dist[v] = dist[u] + w` and push `{dist[v], v}`. 'Relaxation' just means 'this newly found route is cheaper, so loosen the current estimate'.",
+    "**Guard the arithmetic.** `dist[u] + w` overflows if `dist[u]` is `Integer.MAX_VALUE`. The stale-entry skip already prevents reaching an unreachable node, but if you write the loop differently, test `dist[u] != Integer.MAX_VALUE` first or use `long`.",
+    "**Reconstructing the route** — keep `parent[v] = u` whenever you relax, then walk backwards from the target.",
+    "**All weights equal? Use BFS.** The priority queue would reproduce the BFS ordering anyway, so you would be paying O(log V) per operation for an ordering an `ArrayDeque` gives in O(1). Weights only 0 and 1? 0-1 BFS with a deque — push 0-weight neighbours to the front, 1-weight to the back — is O(V + E).",
+    "**A negative edge? Stop.** The greedy argument no longer holds and Dijkstra can return a wrong answer with no warning. Bellman-Ford relaxes every edge V−1 times in O(V·E) and handles negative weights, plus one extra pass to detect a negative cycle (where 'shortest' becomes undefined). SPFA and Johnson's algorithm are refinements of the same idea.",
+    "**Pointer only:** A* is Dijkstra with an added admissible heuristic `h(v)` estimating the remaining distance to a single target, which steers the search toward the goal instead of expanding uniformly in all directions."
+  ],
+  "patternRecognition": {
+    "signals": [
+      "'Shortest', 'cheapest', 'fastest', 'minimum cost' on a graph whose edges carry **different, non-negative** weights",
+      "Travel time, latency, price, distance, signal delay attached to each connection",
+      "'Minimum time for a signal to reach all nodes' — Dijkstra from the source, then take the maximum",
+      "Grid problems where moving to a cell has a cost rather than a fixed step of 1",
+      "'Minimise the maximum edge along a path' — same loop with the relaxation changed from a sum to a max"
+    ],
+    "antiSignals": [
+      "All edge weights are equal → plain BFS; Dijkstra here is just a slower BFS",
+      "Any edge weight is negative → the greedy argument breaks; use Bellman-Ford (and check for negative cycles)",
+      "You need shortest paths between **all** pairs on a small dense graph → Floyd-Warshall, O(V³)",
+      "You need to connect every node as cheaply as possible rather than reach one node cheaply → minimum spanning tree (Prim/Kruskal), a different problem with a similar-looking loop",
+      "The graph is a DAG → relax edges in topological order in O(V + E), no heap needed, and negative weights are fine",
+      "You need to count paths or enumerate them → DFS or dynamic programming"
+    ],
+    "decisionTreeId": "graph-algorithm"
+  },
+  "visualizations": [
+    {
+      "id": "dijkstra-walk",
+      "title": "Dijkstra — settle the nearest unsettled node, then relax its edges",
+      "engine": "dijkstra",
+      "input": {},
+      "code": [
+        "int[] dist = new int[n];  Arrays.fill(dist, Integer.MAX_VALUE);",
+        "dist[src] = 0;  pq.offer(new int[]{0, src});      // min-heap on distance",
+        "while (!pq.isEmpty()) {",
+        "    int[] top = pq.poll();",
+        "    int d = top[0], u = top[1];",
+        "    if (d > dist[u]) continue;                    // stale entry: u is settled",
+        "    for (int[] e : adj.get(u)) {                  // e = {neighbour, weight}",
+        "        int cand = d + e[1];",
+        "        if (cand < dist[e[0]]) { dist[e[0]] = cand; pq.offer(new int[]{cand, e[0]}); }",
+        "    }",
+        "}",
+        "return dist;"
+      ]
+    }
+  ],
+  "implementations": [
+    {
+      "label": "Simple",
+      "language": "java",
+      "explanation": "The standard Java shape: a min-heap of `{distance, node}` pairs, lazy deletion via the stale-entry skip, and `long` arithmetic so a sum of large weights cannot overflow. Note that `dist` is only ever read and written through the array — the heap is a scheduling device, not the source of truth.",
+      "code": [
+        "/**",
+        " * Shortest distance from src to every node. Long.MAX_VALUE means unreachable.",
+        " * adj.get(u) holds {neighbour, weight} pairs; every weight must be >= 0.",
+        " * O((V + E) log V) time, O(V + E) space.",
+        " */",
+        "public static long[] dijkstra(int n, List<List<int[]>> adj, int src) {",
+        "    long[] dist = new long[n];",
+        "    Arrays.fill(dist, Long.MAX_VALUE);",
+        "    dist[src] = 0;",
+        "",
+        "    // {distance, node} ordered by distance. No decrease-key in Java, so we",
+        "    // push a fresh entry on every improvement and discard the outdated ones.",
+        "    PriorityQueue<long[]> heap = new PriorityQueue<>(Comparator.comparingLong(entry -> entry[0]));",
+        "    heap.offer(new long[]{0L, src});",
+        "",
+        "    while (!heap.isEmpty()) {",
+        "        long[] top = heap.poll();",
+        "        long d = top[0];",
+        "        int u = (int) top[1];",
+        "",
+        "        if (d > dist[u]) continue;   // STALE: u was already settled more cheaply",
+        "",
+        "        for (int[] edge : adj.get(u)) {",
+        "            int v = edge[0];",
+        "            long candidate = d + edge[1];      // d is finite here, so no overflow",
+        "            if (candidate < dist[v]) {",
+        "                dist[v] = candidate;           // relax",
+        "                heap.offer(new long[]{candidate, v});",
+        "            }",
+        "        }",
+        "    }",
+        "    return dist;",
+        "}"
+      ]
+    },
+    {
+      "label": "Optimized",
+      "language": "java",
+      "explanation": "Two practical variants. The first reconstructs the actual route, which interviewers ask for as a follow-up. The second is the honest boundary: Bellman-Ford, for when an edge can be negative and Dijkstra's greedy step is simply invalid — plus the extra pass that detects a negative cycle, where 'shortest path' has no meaning at all.",
+      "code": [
+        "/** Dijkstra that also returns the path, by remembering each node's predecessor. */",
+        "public static List<Integer> shortestRoute(int n, List<List<int[]>> adj, int src, int dst) {",
+        "    long[] dist = new long[n];",
+        "    Arrays.fill(dist, Long.MAX_VALUE);",
+        "    int[] parent = new int[n];",
+        "    Arrays.fill(parent, -1);",
+        "    dist[src] = 0;",
+        "",
+        "    PriorityQueue<long[]> heap = new PriorityQueue<>(Comparator.comparingLong(e -> e[0]));",
+        "    heap.offer(new long[]{0L, src});",
+        "",
+        "    while (!heap.isEmpty()) {",
+        "        long[] top = heap.poll();",
+        "        int u = (int) top[1];",
+        "        if (top[0] > dist[u]) continue;",
+        "        if (u == dst) break;               // dst is settled: its distance is final",
+        "        for (int[] edge : adj.get(u)) {",
+        "            long candidate = top[0] + edge[1];",
+        "            if (candidate < dist[edge[0]]) {",
+        "                dist[edge[0]] = candidate;",
+        "                parent[edge[0]] = u;",
+        "                heap.offer(new long[]{candidate, edge[0]});",
+        "            }",
+        "        }",
+        "    }",
+        "",
+        "    if (dist[dst] == Long.MAX_VALUE) return List.of();   // unreachable",
+        "    LinkedList<Integer> route = new LinkedList<>();",
+        "    for (int at = dst; at != -1; at = parent[at]) route.addFirst(at);",
+        "    return route;",
+        "}",
+        "",
+        "/**",
+        " * Bellman-Ford: what you use when a weight can be negative.",
+        " * V-1 rounds of relaxing EVERY edge, then one more round to detect a negative cycle.",
+        " * O(V * E) time, O(V) space.",
+        " */",
+        "public static long[] bellmanFord(int n, int[][] edges, int src) {",
+        "    long[] dist = new long[n];",
+        "    Arrays.fill(dist, Long.MAX_VALUE);",
+        "    dist[src] = 0;",
+        "",
+        "    for (int round = 0; round < n - 1; round++) {",
+        "        boolean changed = false;",
+        "        for (int[] edge : edges) {            // edge = {from, to, weight}",
+        "            if (dist[edge[0]] == Long.MAX_VALUE) continue;",
+        "            long candidate = dist[edge[0]] + edge[2];",
+        "            if (candidate < dist[edge[1]]) {",
+        "                dist[edge[1]] = candidate;",
+        "                changed = true;",
+        "            }",
+        "        }",
+        "        if (!changed) break;                  // settled early",
+        "    }",
+        "",
+        "    for (int[] edge : edges) {                // an improvement now means a negative cycle",
+        "        if (dist[edge[0]] != Long.MAX_VALUE && dist[edge[0]] + edge[2] < dist[edge[1]]) {",
+        "            throw new IllegalArgumentException(\"negative cycle: no shortest path exists\");",
+        "        }",
+        "    }",
+        "    return dist;",
+        "}"
+      ]
+    }
+  ],
+  "complexity": {
+    "time": "O((V + E) log V) with a binary heap",
+    "space": "O(V + E) — the adjacency list, plus up to O(E) entries in the heap under lazy deletion",
+    "why": "Every vertex is settled once and every edge is relaxed once, so the raw amount of work is O(V + E). **The log factor is entirely the priority queue.** A binary heap does `offer` and `poll` in O(log k) for k entries, and each successful relaxation pushes one entry — so there are at most E pushes and E pops, giving O(E log E) = O(E log V) (since E ≤ V², log E ≤ 2 log V), plus O(V log V) for settling the vertices. Put differently: the cost is not in walking the graph, it is in repeatedly asking 'which unsettled node is currently nearest?', and a heap answers that in logarithmic rather than linear time. Answering it by scanning the distance array instead gives O(V²), which is actually *faster* on dense graphs where E ≈ V². A Fibonacci heap gives O(E + V log V) in theory and is almost never used in practice. Lazy deletion means the heap can hold O(E) entries rather than O(V), which costs memory but avoids needing decrease-key."
+  },
+  "commonMistakes": [
+    {
+      "mistake": "Forgetting the stale-entry skip",
+      "fix": "`if (d > dist[u]) continue;` right after the poll. Java has no decrease-key, so outdated copies stay in the heap; without the skip a node is expanded repeatedly and the running time degrades badly."
+    },
+    {
+      "mistake": "Running Dijkstra on a graph with a negative edge",
+      "fix": "It can return a wrong answer silently — no exception, no hint. Once a node is settled it is never revisited, so a negative edge discovered later cannot correct it. Use Bellman-Ford."
+    },
+    {
+      "mistake": "Comparing `int[]` entries with a natural ordering",
+      "fix": "Arrays do not implement Comparable. Always pass a comparator: `new PriorityQueue<>((a, b) -> Integer.compare(a[0], b[0]))`, or use `Comparator.comparingLong`."
+    },
+    {
+      "mistake": "Overflow when relaxing from an unreachable node",
+      "fix": "`Integer.MAX_VALUE + w` wraps negative and poisons the distances. Skip nodes at infinity, or use `long`."
+    },
+    {
+      "mistake": "Using Dijkstra when every weight is 1",
+      "fix": "Correct, but needlessly slower — BFS gives the same answer in O(V + E) with no heap. For weights of only 0 and 1, use 0-1 BFS with a deque."
+    },
+    {
+      "mistake": "Assuming the first time you reach the target is its final distance",
+      "fix": "That is BFS's guarantee, not Dijkstra's. A node's distance is final only when it is *popped and settled*, not when it is first pushed."
+    },
+    {
+      "mistake": "Confusing it with minimum spanning tree",
+      "fix": "Prim's loop looks almost identical but compares the edge weight alone, while Dijkstra compares distance-from-source plus the edge. Different problems, one character apart in the code."
+    }
+  ],
+  "realWorldUses": [
+    "Route planning in maps and navigation — real systems use A* or contraction hierarchies on top, but the core relaxation is Dijkstra's.",
+    "Network routing: OSPF and IS-IS compute link-state shortest paths with Dijkstra on every router.",
+    "Latency-aware request routing and CDN edge selection.",
+    "Flight and transit fare search, where the edge weight is price or time rather than distance.",
+    "Game pathfinding on weighted terrain — mud costs more than road — usually as A*.",
+    "Dependency resolution scored by cost, and telecom circuit provisioning."
+  ],
+  "interviewNotes": [
+    "State the precondition out loud: 'Dijkstra, assuming non-negative weights.' Interviewers frequently plant a negative edge to see whether you noticed.",
+    "Do not just say the complexity — say where the log comes from. 'O((V+E) log V), and the log is the heap answering \"which unsettled node is nearest?\"' is the answer that lands.",
+    "Mention the stale-entry skip before you write it and explain why Java needs it. It is the line that separates people who have implemented this from people who have read about it.",
+    "If weights are uniform, say so and write BFS instead. Reaching for the heavier tool when the lighter one suffices is a real signal.",
+    "Know the neighbours: Bellman-Ford for negative weights, Floyd-Warshall for all pairs, topological-order relaxation for DAGs, Prim for MST, A* as Dijkstra plus a heuristic."
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "mcq",
+      "question": "Why is it safe to declare the popped minimum-distance node's distance final?",
+      "options": [
+        "Because the priority queue is sorted",
+        "Because any other route must exit the settled set through an unsettled node whose distance is already at least as large, and non-negative edges mean continuing from there can only add cost",
+        "Because each node is visited only once",
+        "Because the graph is acyclic"
+      ],
+      "answerIndex": 1,
+      "explanation": "That is the correctness proof, and non-negativity is its hypothesis, not a footnote. Remove it and 'continuing can only add cost' is false, so the conclusion fails."
+    },
+    {
+      "id": "q2",
+      "type": "mcq",
+      "question": "One edge in the graph has weight -3. What happens if you run Dijkstra?",
+      "options": [
+        "It throws an exception",
+        "It still works, just more slowly",
+        "It may return a wrong answer with no indication — a settled node can no longer be revisited even when a later negative edge would improve it",
+        "It loops forever"
+      ],
+      "answerIndex": 2,
+      "explanation": "Silent wrongness is the dangerous part. Bellman-Ford exists for exactly this case: it relaxes every edge V-1 times instead of settling greedily, and one extra pass detects a negative cycle."
+    },
+    {
+      "id": "q3",
+      "type": "mcq",
+      "question": "Why does `if (d > dist[u]) continue;` appear right after the poll?",
+      "options": [
+        "To skip nodes that are unreachable",
+        "Java's PriorityQueue has no decrease-key, so improved distances are pushed as new entries and the outdated copies must be discarded when popped",
+        "To break ties between equal distances",
+        "It is an optional micro-optimisation with no effect on complexity"
+      ],
+      "answerIndex": 1,
+      "explanation": "Lazy deletion: a node can sit in the heap several times with different keys. The first pop is the real one; later pops carry a distance larger than the recorded best and are dropped. Without the check the node is expanded repeatedly."
+    },
+    {
+      "id": "q4",
+      "type": "identify-pattern",
+      "question": "'Every road between cities takes exactly one hour. Find the fewest hours from A to B.' Which approach?",
+      "options": [
+        "Dijkstra with a priority queue",
+        "BFS — all weights are equal, so the FIFO queue already yields shortest-path order",
+        "Bellman-Ford",
+        "Floyd-Warshall"
+      ],
+      "answerIndex": 1,
+      "explanation": "Uniform weights collapse Dijkstra into BFS. The heap would order nodes exactly as the queue does, so you would be paying an O(log V) factor for nothing — correct, but strictly a slower BFS."
+    },
+    {
+      "id": "q5",
+      "type": "complexity",
+      "question": "In O((V + E) log V), where does the log V come from?",
+      "options": [
+        "From dividing the graph in half at each step",
+        "From the binary heap: each push and pop of a tentative distance costs O(log) in the number of heap entries",
+        "From recursion depth",
+        "From sorting the edges up front"
+      ],
+      "answerIndex": 1,
+      "explanation": "Walking the graph is O(V + E). The extra factor is the repeated question 'which unsettled node is nearest?' — a heap answers it in logarithmic time. Answering it by scanning the distance array gives O(V²), which is actually better on dense graphs."
+    }
+  ],
+  "practiceProblems": [
+    "network-delay-time",
+    "path-with-maximum-probability",
+    "cheapest-flights-k-stops",
+    "path-with-minimum-effort",
+    "swim-in-rising-water"
+  ],
+  "related": [
+    "graphs",
+    "bfs",
+    "topological-sort",
+    "dynamic-programming-basics"
+  ]
+}

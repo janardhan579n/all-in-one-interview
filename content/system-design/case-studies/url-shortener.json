@@ -1,0 +1,812 @@
+{
+  "id": "url-shortener",
+  "title": "Design a URL Shortener",
+  "difficulty": "beginner",
+  "estimatedMinutes": 45,
+  "summary": "Turn a long URL into a short code and redirect. Small surface, but it exercises estimation, key generation, caching, read/write asymmetry and eventually sharding.",
+  "interactive": "url-shortener",
+  "steps": [
+    {
+      "key": "requirements",
+      "title": "1. Clarify the problem",
+      "content": "Before designing anything, establish what is actually being asked. Good questions here:\n\n- Are custom aliases (`/my-brand`) required, or only generated codes?\n- Do links expire?\n- Do we need click analytics? Real-time or batch?\n- Is the same long URL always mapped to the same short code, or may duplicates create new codes?\n- What is the expected read:write ratio?\n\nThe answers change the design substantially. For this walkthrough: generated codes with optional custom aliases, optional expiry, asynchronous analytics, duplicates allowed to create distinct codes (which simplifies a great deal)."
+    },
+    {
+      "key": "functional",
+      "title": "2. Functional requirements",
+      "content": "- `POST /urls` with a long URL returns a short code.\n- `GET /{code}` redirects to the original URL.\n- Optional custom alias, rejected if already taken.\n- Optional expiry time, after which the code returns 404 or 410.\n- Click counts available to the link owner (eventually consistent is fine)."
+    },
+    {
+      "key": "nonfunctional",
+      "title": "3. Non-functional requirements",
+      "content": "- **Read-heavy**: roughly 100 reads per write. The redirect path is the one that matters.\n- **Latency**: redirect p99 under 50 ms. The user is staring at a blank tab.\n- **Availability**: 99.9%+ on reads. A dead shortener breaks every link ever shared — including in printed material.\n- **Durability**: a mapping must never be lost or, worse, silently repointed.\n- **Scale target**: 100M new links per month, 10B redirects per month.\n\nNote which one drives the design: availability and read latency, not write throughput."
+    },
+    {
+      "key": "estimation",
+      "title": "4. Back-of-the-envelope estimation",
+      "content": "Do this early — it decides whether you need one machine or a hundred, and interviewers weight it heavily.\n\n**Writes**: 100M/month ÷ (30 × 86,400 s) ≈ **40 writes/s**. Peak at 3x ≈ 120/s. That is small; a single database handles it comfortably.\n\n**Reads**: 10B/month ≈ **4,000 reads/s**, peak ≈ 12,000/s. This is the number that shapes the architecture.\n\n**Storage**: each row ≈ short code (7 B) + long URL (~200 B) + user id, timestamps, expiry (~50 B) ≈ **~300 bytes**. 100M/month × 300 B = **30 GB/month**, ≈ **360 GB/year**, ~1.8 TB over five years. Comfortably within one machine's disk, so sharding is not needed for storage — only possibly for throughput.\n\n**Keyspace**: base62 (a-z, A-Z, 0-9) with 7 characters = 62⁷ ≈ **3.5 trillion** codes. At 100M/month that is ~2,900 years of supply. Six characters gives 56 billion — about 47 years, also fine, but 7 leaves more headroom against collisions.\n\n**Cache**: link popularity is extremely skewed. Caching the hottest 20% plausibly serves 80%+ of redirects. 20% of one year's links × 300 B ≈ 72 GB — too big for one node, so cache by recency/popularity with an LRU and a modest memory budget instead of trying to hold everything."
+    },
+    {
+      "key": "api",
+      "title": "5. API design",
+      "content": "Keep the redirect path as simple as physically possible — it is the hot path.\n\nNote the choice of **301 vs 302**: a 301 (permanent) is cached by browsers, which cuts your traffic dramatically but means you stop seeing clicks and can never change or revoke the target for those users. A 302 (temporary) sends every click to you, which is what you want if analytics or revocation matter. Most shorteners use 302 for exactly that reason — a good detail to raise unprompted."
+    },
+    {
+      "key": "datamodel",
+      "title": "6. Data model",
+      "content": "A single table, keyed by the short code, with a unique index on it. The access pattern is a point lookup by primary key — the simplest and fastest thing a database does.\n\nNo joins are needed on the redirect path. Analytics are written separately and aggregated offline so they never slow a redirect."
+    },
+    {
+      "key": "keygen",
+      "title": "7. Generating the short code",
+      "content": "Three approaches, in increasing order of sophistication:\n\n**(a) Random base62 + collision check.** Generate 7 random characters, attempt the insert with a unique constraint, retry on conflict. With 3.5 trillion slots and 6 billion links, the collision probability per insert is under 0.2% — retries are negligible. Simple, stateless, codes are unguessable.\n\n**(b) Counter + base62 encode.** Take a globally increasing integer and encode it. No collisions by construction, and codes are short from the start. But it needs a global counter (a single point of contention), and the codes are sequential, so anyone can enumerate every link ever created — usually disqualifying.\n\n**(c) Hash the URL, take a prefix.** MD5/SHA the long URL, base62-encode the first 43 bits. Deterministic, so the same URL gives the same code — which may be desirable or not. Collisions require a check-and-extend strategy.\n\n**Choice: (a)** for this design, because it is stateless, scales horizontally with no coordination, and does not leak how many links exist or let anyone walk the namespace."
+    },
+    {
+      "key": "architecture",
+      "title": "8. Basic architecture",
+      "content": "Start with the simplest thing that satisfies the requirements — a load balancer, stateless app servers, one database. Then find the pressure points and add exactly what relieves each one. The Evolution tab shows that sequence stage by stage; do not skip to the final picture."
+    },
+    {
+      "key": "caching",
+      "title": "9. Caching the redirect path",
+      "content": "Redirects are 99% of traffic and the mapping is immutable once created — the ideal caching situation. Cache-aside with Redis: check cache, on a miss read the database and populate, then redirect.\n\nAt an 90% hit rate the database sees 400 reads/s instead of 4,000. Cache the *negative* results too (a short TTL for 'no such code'), otherwise a scanner hammering random codes bypasses the cache entirely and lands every request on the database — that is cache penetration, and it is a real attack.\n\nBecause entries are immutable, invalidation is nearly free: there is nothing to invalidate except deletions and expiries."
+    },
+    {
+      "key": "scaling",
+      "title": "10. Scaling",
+      "content": "Follow the pressure:\n\n- **App tier**: stateless, so add instances behind the load balancer. Trivial.\n- **Reads**: cache first, then read replicas. Replication lag is harmless here because rows never change after creation.\n- **Writes at 40/s**: nowhere near a bottleneck. Do not shard for this.\n- **Storage at 1.8 TB/5 years**: fits one machine. Still no sharding needed.\n- **If you did shard**: partition by the short code's hash. Every read and write already carries the code, so every operation is single-shard — an unusually clean sharding story.\n\nThe honest conclusion, and a good thing to say out loud: this system does not need sharding at the stated scale. Being able to say 'we do not need this yet, and here is when we would' scores better than adding it reflexively."
+    },
+    {
+      "key": "analytics",
+      "title": "11. Click analytics without slowing redirects",
+      "content": "Do not write a row to the database on every redirect — that turns a 4,000/s read workload into a 4,000/s write workload and destroys the design.\n\nInstead, publish a lightweight event to a queue (or a local buffer flushed in batches) and let consumers aggregate. The redirect returns before any of that completes. Counts become eventually consistent, which is exactly right for a click counter."
+    },
+    {
+      "key": "failure",
+      "title": "12. Failure handling",
+      "content": "- **Cache down**: fail open to the database. Slower, still correct. Ensure the database has the headroom to absorb it, or you have converted a cache outage into a full outage.\n- **Database primary down**: promote a replica. Reads continue from cache and replicas throughout; writes pause. Losing the ability to create links for a minute is far less serious than failing redirects.\n- **A bad code**: return 404, and cache that fact briefly.\n- **Expired link**: 410 Gone is more informative than 404, and tells caches it is deliberate.\n- **Hot link** (a code in a viral post): the cache absorbs it; this is the case a CDN in front of the redirect would help most."
+    },
+    {
+      "key": "tradeoffs",
+      "title": "13. Trade-offs to state explicitly",
+      "content": "- 301 vs 302: browser caching and lower traffic versus analytics and revocability.\n- Random vs sequential codes: unguessable versus shortest-possible and collision-free.\n- Deduplicating identical URLs: saves storage, but breaks per-link analytics and per-link expiry.\n- Strong vs eventual consistency for click counts: eventual, obviously — and saying so quickly shows judgement.\n- Sharding now vs later: later, with the partition key identified in advance."
+    },
+    {
+      "key": "final",
+      "title": "14. Final architecture",
+      "content": "Client → CDN/DNS → Load balancer → stateless app servers → Redis cache → database (primary + replicas), with an async analytics pipeline hanging off the redirect path via a queue.\n\nEvery component in that list is there because a specific number from the estimation step put pressure on something. That is the argument to be able to make."
+    }
+  ],
+  "estimation": {
+    "assumptions": [
+      "100M new links per month",
+      "100:1 read:write ratio",
+      "~300 bytes stored per link",
+      "5-year retention",
+      "3x peak factor"
+    ],
+    "calculations": [
+      {
+        "label": "Writes/s (average)",
+        "value": "~40/s",
+        "working": "100,000,000 / (30 × 86,400)"
+      },
+      {
+        "label": "Reads/s (average)",
+        "value": "~4,000/s",
+        "working": "40/s × 100"
+      },
+      {
+        "label": "Reads/s (peak)",
+        "value": "~12,000/s",
+        "working": "4,000 × 3"
+      },
+      {
+        "label": "Storage per year",
+        "value": "~360 GB",
+        "working": "100M × 12 × 300 bytes"
+      },
+      {
+        "label": "Storage over 5 years",
+        "value": "~1.8 TB",
+        "working": "360 GB × 5 — fits one machine"
+      },
+      {
+        "label": "Keyspace, 7 base62 chars",
+        "value": "~3.5 trillion",
+        "working": "62^7 = 3,521,614,606,208"
+      },
+      {
+        "label": "Years of code supply",
+        "value": "~2,900 years",
+        "working": "3.5e12 / 1.2e9 per year"
+      }
+    ]
+  },
+  "api": [
+    {
+      "method": "POST",
+      "path": "/api/v1/urls",
+      "request": "{ \"longUrl\": \"https://…\", \"customAlias\": \"optional\", \"expiresAt\": \"optional ISO-8601\" }",
+      "response": "201 { \"shortCode\": \"a1B9xKq\", \"shortUrl\": \"https://sho.rt/a1B9xKq\", \"expiresAt\": null }",
+      "notes": "409 if the custom alias is taken. Accepts an Idempotency-Key so a retry does not create a second link."
+    },
+    {
+      "method": "GET",
+      "path": "/{code}",
+      "request": "—",
+      "response": "302 Found, Location: <longUrl>",
+      "notes": "The hot path. Cache-first, no auth, no database write. 404 if unknown, 410 if expired."
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/urls/{code}/stats",
+      "request": "—",
+      "response": "200 { \"clicks\": 18422, \"createdAt\": \"…\", \"lastClickAt\": \"…\" }",
+      "notes": "Owner only. Eventually consistent — served from the aggregated analytics store, not counted live."
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/urls/{code}",
+      "request": "—",
+      "response": "204",
+      "notes": "Owner only. Must also evict the cache entry, or the link stays alive until the TTL expires."
+    }
+  ],
+  "dataModel": [
+    {
+      "name": "urls",
+      "fields": [
+        {
+          "name": "short_code",
+          "type": "VARCHAR(10) PRIMARY KEY",
+          "notes": "base62; the partition key if ever sharded"
+        },
+        {
+          "name": "long_url",
+          "type": "TEXT NOT NULL",
+          "notes": "~200 bytes typical, cap at 2048"
+        },
+        {
+          "name": "user_id",
+          "type": "BIGINT",
+          "notes": "nullable for anonymous links"
+        },
+        {
+          "name": "created_at",
+          "type": "TIMESTAMP NOT NULL",
+          "notes": ""
+        },
+        {
+          "name": "expires_at",
+          "type": "TIMESTAMP",
+          "notes": "nullable; indexed for the cleanup job"
+        }
+      ],
+      "indexes": [
+        "PRIMARY KEY (short_code)",
+        "INDEX (user_id, created_at) for the user's link list",
+        "INDEX (expires_at) WHERE expires_at IS NOT NULL"
+      ]
+    },
+    {
+      "name": "click_events (append-only, async)",
+      "fields": [
+        {
+          "name": "short_code",
+          "type": "VARCHAR(10)",
+          "notes": ""
+        },
+        {
+          "name": "occurred_at",
+          "type": "TIMESTAMP",
+          "notes": "partitioned by day"
+        },
+        {
+          "name": "referrer",
+          "type": "TEXT",
+          "notes": ""
+        },
+        {
+          "name": "country",
+          "type": "CHAR(2)",
+          "notes": "derived at the edge"
+        }
+      ],
+      "indexes": [
+        "Partitioned by day; rolled up into daily counters and dropped after 90 days"
+      ]
+    }
+  ],
+  "evolution": [
+    {
+      "stage": "Stage 1 — 100 users",
+      "problem": "Nothing is wrong. This is the correct starting architecture and it would be a mistake to build anything more.",
+      "change": "One server, one database.",
+      "why": "At 100 users you are optimising for the ability to change your mind, not for throughput. Every component you add now is a component you must operate and debug while the product is still being defined.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "client",
+            "label": "Clients",
+            "type": "client",
+            "x": 180,
+            "y": 300
+          },
+          {
+            "id": "app",
+            "label": "App server",
+            "type": "server",
+            "x": 500,
+            "y": 300,
+            "note": "Creates codes, serves redirects."
+          },
+          {
+            "id": "db",
+            "label": "Database",
+            "type": "db",
+            "x": 820,
+            "y": 300,
+            "note": "Single Postgres instance. Point lookups by primary key."
+          }
+        ],
+        "edges": [
+          {
+            "from": "client",
+            "to": "app"
+          },
+          {
+            "from": "app",
+            "to": "db"
+          }
+        ]
+      }
+    },
+    {
+      "stage": "Stage 2 — 10,000 users",
+      "problem": "The single app server is both the capacity ceiling and a single point of failure. Deploys cause visible downtime, and a crash at 3am is a full outage.",
+      "change": "Add a load balancer and a second app server.",
+      "why": "Availability is the driver here, not throughput — one server could still handle this load. Two instances behind a balancer give rolling deploys and survive a single crash. This requires the app to be stateless, which is why session state (if any) moves out now rather than later.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "client",
+            "label": "Clients",
+            "type": "client",
+            "x": 120,
+            "y": 300
+          },
+          {
+            "id": "lb",
+            "label": "Load Balancer",
+            "type": "lb",
+            "x": 380,
+            "y": 300,
+            "note": "Health checks remove a dead instance within seconds."
+          },
+          {
+            "id": "app1",
+            "label": "App 1",
+            "type": "server",
+            "x": 660,
+            "y": 200
+          },
+          {
+            "id": "app2",
+            "label": "App 2",
+            "type": "server",
+            "x": 660,
+            "y": 400
+          },
+          {
+            "id": "db",
+            "label": "Database",
+            "type": "db",
+            "x": 920,
+            "y": 300
+          }
+        ],
+        "edges": [
+          {
+            "from": "client",
+            "to": "lb"
+          },
+          {
+            "from": "lb",
+            "to": "app1"
+          },
+          {
+            "from": "lb",
+            "to": "app2"
+          },
+          {
+            "from": "app1",
+            "to": "db"
+          },
+          {
+            "from": "app2",
+            "to": "db"
+          }
+        ]
+      }
+    },
+    {
+      "stage": "Stage 3 — 1M users, ~500 redirects/s",
+      "problem": "Every redirect is a database query. The database is at 70% CPU, p99 latency is climbing, and the connection pool saturates during spikes.",
+      "change": "Add a Redis cache in front of the database, cache-aside, including short-TTL negative caching.",
+      "why": "Redirect data is immutable once written and access is heavily skewed toward recent and popular links — the textbook caching profile. At a 90% hit rate the database load drops tenfold and p99 falls from ~15 ms to ~2 ms. Negative caching matters here: without it, a scanner requesting random codes bypasses the cache entirely.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "client",
+            "label": "Clients",
+            "type": "client",
+            "x": 100,
+            "y": 300
+          },
+          {
+            "id": "lb",
+            "label": "Load Balancer",
+            "type": "lb",
+            "x": 320,
+            "y": 300
+          },
+          {
+            "id": "app1",
+            "label": "App 1",
+            "type": "server",
+            "x": 560,
+            "y": 200
+          },
+          {
+            "id": "app2",
+            "label": "App 2",
+            "type": "server",
+            "x": 560,
+            "y": 400
+          },
+          {
+            "id": "cache",
+            "label": "Redis cache",
+            "type": "cache",
+            "x": 800,
+            "y": 180,
+            "note": "~90% hit rate. Also caches 'not found' briefly."
+          },
+          {
+            "id": "db",
+            "label": "Database",
+            "type": "db",
+            "x": 800,
+            "y": 420
+          }
+        ],
+        "edges": [
+          {
+            "from": "client",
+            "to": "lb"
+          },
+          {
+            "from": "lb",
+            "to": "app1"
+          },
+          {
+            "from": "lb",
+            "to": "app2"
+          },
+          {
+            "from": "app1",
+            "to": "cache"
+          },
+          {
+            "from": "app2",
+            "to": "cache"
+          },
+          {
+            "from": "app1",
+            "to": "db",
+            "label": "miss",
+            "dashed": true
+          },
+          {
+            "from": "app2",
+            "to": "db",
+            "label": "miss",
+            "dashed": true
+          }
+        ]
+      }
+    },
+    {
+      "stage": "Stage 4 — 10M users, ~4,000 redirects/s",
+      "problem": "Two things now. Cache misses alone exceed what one database comfortably serves, and writing a click row per redirect has turned a read workload into a write workload.",
+      "change": "Add read replicas for cache misses, and move analytics onto a queue with batch aggregation.",
+      "why": "Replicas absorb miss traffic and give a failover target; replication lag is irrelevant because rows never change after creation. Moving analytics off the request path is the bigger win — it removes 4,000 writes/s from the primary and means an analytics outage can never affect a redirect.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "client",
+            "label": "Clients",
+            "type": "client",
+            "x": 80,
+            "y": 300
+          },
+          {
+            "id": "lb",
+            "label": "Load Balancer",
+            "type": "lb",
+            "x": 260,
+            "y": 300
+          },
+          {
+            "id": "app",
+            "label": "App servers",
+            "type": "server",
+            "x": 460,
+            "y": 300
+          },
+          {
+            "id": "cache",
+            "label": "Redis",
+            "type": "cache",
+            "x": 680,
+            "y": 150
+          },
+          {
+            "id": "primary",
+            "label": "DB primary",
+            "type": "db",
+            "x": 680,
+            "y": 300
+          },
+          {
+            "id": "replica",
+            "label": "Read replica",
+            "type": "replica",
+            "x": 900,
+            "y": 300
+          },
+          {
+            "id": "queue",
+            "label": "Click event queue",
+            "type": "queue",
+            "x": 460,
+            "y": 470
+          },
+          {
+            "id": "agg",
+            "label": "Aggregator",
+            "type": "worker",
+            "x": 700,
+            "y": 470,
+            "note": "Batches click events into daily counters."
+          },
+          {
+            "id": "analytics",
+            "label": "Analytics store",
+            "type": "db",
+            "x": 920,
+            "y": 470
+          }
+        ],
+        "edges": [
+          {
+            "from": "client",
+            "to": "lb"
+          },
+          {
+            "from": "lb",
+            "to": "app"
+          },
+          {
+            "from": "app",
+            "to": "cache"
+          },
+          {
+            "from": "app",
+            "to": "replica",
+            "label": "miss",
+            "dashed": true
+          },
+          {
+            "from": "app",
+            "to": "primary",
+            "label": "writes"
+          },
+          {
+            "from": "primary",
+            "to": "replica",
+            "label": "replication"
+          },
+          {
+            "from": "app",
+            "to": "queue",
+            "label": "click event",
+            "dashed": true
+          },
+          {
+            "from": "queue",
+            "to": "agg"
+          },
+          {
+            "from": "agg",
+            "to": "analytics"
+          }
+        ]
+      }
+    },
+    {
+      "stage": "Stage 5 — 100M users, global",
+      "problem": "Users in Asia and Europe pay 150–250 ms just in network latency to reach a US region. That dwarfs everything the application does.",
+      "change": "Multi-region deployment with GeoDNS, a CDN in front of redirects, and regional read replicas. Writes stay in one region.",
+      "why": "At this point the bottleneck is the speed of light, not compute. Serving redirects from an edge close to the user is the only fix. Writes are only 40/s and do not benefit from being distributed — keeping a single write region preserves the simplicity of one authoritative copy and avoids multi-leader conflict resolution for no gain.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "u1",
+            "label": "Users (Asia)",
+            "type": "client",
+            "x": 80,
+            "y": 180
+          },
+          {
+            "id": "u2",
+            "label": "Users (EU)",
+            "type": "client",
+            "x": 80,
+            "y": 420
+          },
+          {
+            "id": "cdn",
+            "label": "CDN / GeoDNS",
+            "type": "cdn",
+            "x": 290,
+            "y": 300,
+            "note": "Routes each user to the nearest region; caches redirects at the edge."
+          },
+          {
+            "id": "r1",
+            "label": "Region: Asia\\n(app + cache + replica)",
+            "type": "server",
+            "x": 560,
+            "y": 180
+          },
+          {
+            "id": "r2",
+            "label": "Region: EU\\n(app + cache + replica)",
+            "type": "server",
+            "x": 560,
+            "y": 420
+          },
+          {
+            "id": "primary",
+            "label": "Write region\\n(DB primary)",
+            "type": "db",
+            "x": 870,
+            "y": 300,
+            "note": "All writes, 40/s. Async replication outward."
+          }
+        ],
+        "edges": [
+          {
+            "from": "u1",
+            "to": "cdn"
+          },
+          {
+            "from": "u2",
+            "to": "cdn"
+          },
+          {
+            "from": "cdn",
+            "to": "r1"
+          },
+          {
+            "from": "cdn",
+            "to": "r2"
+          },
+          {
+            "from": "r1",
+            "to": "primary",
+            "label": "writes + async replication",
+            "dashed": true
+          },
+          {
+            "from": "r2",
+            "to": "primary",
+            "label": "writes + async replication",
+            "dashed": true
+          }
+        ]
+      }
+    }
+  ],
+  "tradeoffs": [
+    {
+      "option": "302 Found (temporary redirect)",
+      "pros": [
+        "Every click reaches you, so analytics are complete",
+        "Links can be revoked or retargeted at any time"
+      ],
+      "cons": [
+        "No browser caching, so you carry the full traffic",
+        "Higher infrastructure cost"
+      ]
+    },
+    {
+      "option": "301 Moved Permanently",
+      "pros": [
+        "Browsers cache it, cutting your traffic dramatically",
+        "Faster for repeat visitors, better for SEO"
+      ],
+      "cons": [
+        "You stop seeing most clicks",
+        "Revocation does not reach clients that cached it — effectively permanent"
+      ]
+    },
+    {
+      "option": "Random codes",
+      "pros": [
+        "Unguessable, no enumeration of other people's links",
+        "Stateless generation, scales horizontally with no coordination"
+      ],
+      "cons": [
+        "Needs a collision check",
+        "Codes are longer than strictly necessary"
+      ]
+    },
+    {
+      "option": "Counter-based codes",
+      "pros": [
+        "No collisions by construction",
+        "Shortest possible codes"
+      ],
+      "cons": [
+        "Global counter is a coordination point",
+        "Sequential codes leak volume and allow anyone to walk the entire namespace"
+      ]
+    }
+  ],
+  "interviewStages": [
+    {
+      "key": "requirements",
+      "prompt": "What questions would you ask before designing this?",
+      "hints": [
+        "Think about what changes the design: custom aliases, expiry, analytics, deduplication",
+        "Ask about the read:write ratio — it is the single most shaping number here"
+      ],
+      "modelAnswer": [
+        "Custom aliases? Expiry? Analytics, and how fresh?",
+        "Same URL → same code, or always a new code?",
+        "Expected traffic and read:write ratio",
+        "Availability target — redirects breaking is worse than creation breaking"
+      ]
+    },
+    {
+      "key": "estimation",
+      "prompt": "100M new links/month, 100:1 read:write. Work out traffic, storage and keyspace.",
+      "hints": [
+        "Seconds in a month ≈ 2.6M",
+        "Assume ~300 bytes per row",
+        "62^7 for a 7-character base62 code"
+      ],
+      "modelAnswer": [
+        "~40 writes/s, ~4,000 reads/s, peak ~12,000/s",
+        "~360 GB/year, ~1.8 TB over five years — fits one machine",
+        "62^7 ≈ 3.5 trillion codes ≈ 2,900 years of supply"
+      ]
+    },
+    {
+      "key": "api",
+      "prompt": "Define the API. Which status code does the redirect return, and why?",
+      "hints": [
+        "The choice between 301 and 302 has real consequences",
+        "How would you make link creation safe to retry?"
+      ],
+      "modelAnswer": [
+        "POST /urls to create; GET /{code} to redirect",
+        "302, because 301 is cached by browsers and you lose analytics and the ability to revoke",
+        "Idempotency-Key on creation so a retried request does not create a second link"
+      ]
+    },
+    {
+      "key": "keygen",
+      "prompt": "How do you generate the short code?",
+      "hints": [
+        "Consider random, counter-based and hash-based",
+        "What does each leak, and what does each require in the way of coordination?"
+      ],
+      "modelAnswer": [
+        "Random base62 with a unique-constraint retry: stateless, unguessable, collisions negligible at this keyspace",
+        "Counter-based is collision-free but needs coordination and lets anyone enumerate every link",
+        "Hashing gives deduplication for free but couples the code to the URL"
+      ]
+    },
+    {
+      "key": "scaling",
+      "prompt": "Traffic reaches 4,000 redirects/s. Walk me through what you add and in what order.",
+      "hints": [
+        "What is cheapest and highest-leverage first?",
+        "Does this system actually need sharding?"
+      ],
+      "modelAnswer": [
+        "Cache first — immutable data, skewed access, ~90% hit rate, tenfold database reduction",
+        "Then read replicas for misses, plus a failover target",
+        "Move analytics to a queue so redirects never write to the database",
+        "No sharding: 40 writes/s and 1.8 TB do not justify it. Name the partition key (the code) as the plan if it ever does"
+      ]
+    },
+    {
+      "key": "failure",
+      "prompt": "Redis goes down at peak. What happens?",
+      "hints": [
+        "Fail open or fail closed?",
+        "Can the database absorb the full load?"
+      ],
+      "modelAnswer": [
+        "Fail open to the database: slower but correct",
+        "This only works if the database has headroom — otherwise a cache outage becomes a full outage",
+        "Mitigate with per-instance local caches and by keeping replica capacity for the miss path"
+      ]
+    }
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "architecture",
+      "question": "At 100M links/month, how long does a 7-character base62 keyspace last?",
+      "options": [
+        "About 3 years",
+        "About 290 years",
+        "About 2,900 years",
+        "It runs out immediately"
+      ],
+      "answerIndex": 2,
+      "explanation": "62^7 ≈ 3.5 trillion. At 1.2 billion links per year that is roughly 2,900 years — the keyspace is emphatically not the constraint."
+    },
+    {
+      "id": "q2",
+      "type": "architecture",
+      "question": "Why do most URL shorteners return 302 rather than 301?",
+      "options": [
+        "302 is faster",
+        "301 is cached by browsers, so you stop seeing clicks and can no longer revoke or retarget the link",
+        "301 is not supported by all browsers",
+        "302 uses less bandwidth"
+      ],
+      "answerIndex": 1,
+      "explanation": "A 301 is a genuine performance win and a genuine loss of control. If analytics or revocation matter — and for a shortener they usually do — 302 is the right trade."
+    },
+    {
+      "id": "q3",
+      "type": "architecture",
+      "question": "Does this system need sharding at 100M links/month?",
+      "options": [
+        "Yes, immediately",
+        "No — 40 writes/s and ~1.8 TB over five years fit one primary comfortably; caching and replicas handle the reads",
+        "Yes, because of the read volume",
+        "Only if you use NoSQL"
+      ],
+      "answerIndex": 1,
+      "explanation": "Reads are handled by cache and replicas; writes and storage are both small. Recognising when NOT to add a component is as valuable as knowing how to add it — though you should still name the short code as the partition key you would use."
+    },
+    {
+      "id": "q4",
+      "type": "architecture",
+      "question": "Someone scans random 7-character codes at 5,000 requests/s. What breaks and how do you defend it?",
+      "options": [
+        "Nothing",
+        "Every request misses the cache and hits the database (cache penetration) — defend with negative caching, a bloom filter and rate limiting",
+        "The load balancer fails",
+        "The CDN blocks it automatically"
+      ],
+      "answerIndex": 1,
+      "explanation": "Caches only protect against repeated *hits*. Missing keys pass straight through, which is why negative caching and rate limiting belong in the design rather than being added after the incident."
+    }
+  ],
+  "related": [
+    "cache",
+    "sharding",
+    "rate-limiting",
+    "cdn"
+  ]
+}

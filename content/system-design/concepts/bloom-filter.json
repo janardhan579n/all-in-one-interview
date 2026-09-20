@@ -1,0 +1,244 @@
+{
+  "id": "bloom-filter",
+  "title": "Bloom Filters",
+  "group": "Data",
+  "level": 2,
+  "estimatedMinutes": 26,
+  "summary": "A bit array and a handful of hash functions that answer 'have I seen this?' in a fraction of the memory a real set would need. It will sometimes say 'maybe' about something it has never seen — but it will never say 'no' about something it has.",
+  "analogy": "A nightclub door where, instead of a guest list, the doorman ticks seven boxes on a wall chart for each name he admits. To check a name he recomputes its seven boxes: if any is blank, that person definitely never came in, and he turns them away without a second thought. If all seven are ticked they probably came in — or seven other guests happened to tick those boxes between them, and he lets in a stranger. The chart fits on one wall where the guest list would fill a filing cabinet. And he can never un-tick a box when someone leaves, because that box is very likely load-bearing for somebody still inside.",
+  "explanation": {
+    "beginner": "Storing a million user ids in a hash set so you can ask 'is this one of them?' costs tens of megabytes, because you keep every id. A Bloom filter keeps no ids at all. It is one long row of bits, all zero to start. To add an id you run it through k different hash functions, each giving a position in the row, and set those k bits to 1. To check an id you compute the same k positions: if any of them is still 0, that id was definitely never added. If all k are 1 it was probably added — or other ids happened to set those same bits. So the answer is either 'definitely not' or 'maybe', never 'definitely yes'.",
+    "interview": "A probabilistic set membership structure: an m-bit array and k independent hash functions. Insert sets k bits; query returns 'definitely not present' the instant any of the k bits is 0, and 'possibly present' otherwise. False positives occur and false negatives cannot, which is the entire reason it is useful — you may only use it to *skip* expensive work, never to prove work is needed. The false-positive rate is (1 - e^(-kn/m))^k, minimised at k = (m/n) ln 2; about 9.6 bits per element with k = 7 gives roughly 1%, and every further 10x reduction costs about 4.8 more bits per element. Deletion is impossible because clearing a bit may break an unrelated key that shares it; counting Bloom filters replace bits with small counters at typically 4x the space. Failure modes: an oversubscribed filter (n far above the design point) saturates to nearly all ones and approaches a 100% false-positive rate while still reporting success, and correlated or weak hash functions raise the rate above the formula."
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "client",
+        "label": "Client",
+        "type": "client",
+        "x": 110,
+        "y": 300,
+        "note": "Requests a key. Many requested keys do not exist at all — that is the case this design is about."
+      },
+      {
+        "id": "app",
+        "label": "App server",
+        "type": "server",
+        "x": 380,
+        "y": 300,
+        "note": "Consults the filter before spending anything on a lookup."
+      },
+      {
+        "id": "bloom",
+        "label": "Bloom filter",
+        "type": "cache",
+        "x": 650,
+        "y": 130,
+        "note": "An in-memory bit array with k hash functions. Answers 'definitely not' or 'maybe'.",
+        "why": {
+          "without": [
+            "Requests for ids that do not exist miss the cache and then miss the database — every one of them pays a full round trip to disk",
+            "An attacker (or a buggy client) asking for random ids turns that into a free denial-of-service against the database: cache penetration",
+            "An LSM-tree read with no filter must check every level's file on disk before it can say 'not here'"
+          ],
+          "with": [
+            "A key the filter has never seen is rejected in a few nanoseconds, before any cache or disk is touched",
+            "At ~1% false positives, 99 of every 100 nonexistent keys never reach the database",
+            "1M keys at ~10 bits each is a little over a megabyte, against tens of megabytes to hold the keys themselves"
+          ],
+          "conclusion": "The filter is only ever allowed to say 'skip this' — never 'do this'. Because false negatives are impossible, skipping is always safe."
+        }
+      },
+      {
+        "id": "cache",
+        "label": "Cache",
+        "type": "cache",
+        "x": 650,
+        "y": 330,
+        "note": "Consulted only for keys the filter said might exist."
+      },
+      {
+        "id": "db",
+        "label": "Database",
+        "type": "db",
+        "x": 910,
+        "y": 470,
+        "note": "The source of truth, and the thing whose 'no such row' answers cost the most."
+      }
+    ],
+    "edges": [
+      {
+        "from": "client",
+        "to": "app",
+        "label": "1. get(key)"
+      },
+      {
+        "from": "app",
+        "to": "bloom",
+        "label": "2. might it exist?"
+      },
+      {
+        "from": "bloom",
+        "to": "app",
+        "label": "definitely not -> 404",
+        "dashed": true
+      },
+      {
+        "from": "app",
+        "to": "cache",
+        "label": "3. maybe -> look up"
+      },
+      {
+        "from": "cache",
+        "to": "db",
+        "label": "4. on miss",
+        "dashed": true
+      }
+    ]
+  },
+  "why": {
+    "without": [
+      "Answering 'does this key exist?' exactly means keeping every key: a million 16-byte ids in a hash set is tens of megabytes once you count the table's own overhead, and it grows with every key you add",
+      "Every request for a key that does not exist still costs a cache lookup and then a database query, because nothing cheap can rule it out first — 10,000 requests/s for random nonexistent ids is 10,000 database queries/s that return nothing",
+      "An LSM-tree read for a missing key must open and check each level's files before concluding it is absent, turning a nonexistent key into several disk reads"
+    ],
+    "with": [
+      "m bits and k hashes hold no keys at all: memory depends on the number of elements and the false-positive rate you accept, not on key length",
+      "A 'definitely not present' answer is exact and costs a few memory probes, so most nonexistent keys are dismissed before any I/O",
+      "About 9.6 bits per element with k = 7 buys a ~1% false-positive rate — a million elements in a little over a megabyte"
+    ],
+    "conclusion": "You trade exactness in one direction only. 'Maybe' costs you a wasted lookup you would have done anyway; 'definitely not' is always right, and that asymmetry is what makes it safe to build on."
+  },
+  "whenToUse": [
+    "Guarding an expensive lookup against keys that do not exist — cache penetration, where misses for absent ids would otherwise reach the database",
+    "Skipping disk reads in LSM-tree storage engines: a per-file filter tells a read that a key is certainly not in that file",
+    "Deduplication where a rare duplicate slipping through is acceptable — 'have we already sent this notification?' with a cheap idempotent send behind it",
+    "Cheap pre-filtering before a network hop: ask 'could the remote side possibly have this?' without paying the round trip",
+    "Any set too large to hold exactly in memory, where the expensive operation is the one you want to avoid, not the one you want to trigger"
+  ],
+  "whenNotToUse": [
+    "A false positive is expensive rather than merely a wasted lookup — if 'maybe present' triggers a charge, a rejection, a deletion or an alert, 1% wrong is a correctness bug, not a tuning parameter",
+    "The set is small enough to hold exactly: a few hundred thousand ids in a hash set is a handful of megabytes, is exact, supports deletion, and is one line of code",
+    "You need to delete or the membership set shrinks — a standard filter cannot unset a bit without corrupting unrelated keys, and a counting filter costs roughly 4x the memory",
+    "You need to enumerate the set, or ask anything beyond membership — the filter stores no keys and can never give one back",
+    "The element count will far exceed what you sized for: a saturated filter still answers cheerfully while its false-positive rate climbs toward 100%, and there is no signal in the answers themselves that this has happened",
+    "Most queries are for keys that *do* exist — almost every answer is 'maybe', so you pay the filter's cost and skip almost nothing"
+  ],
+  "tradeoffs": [
+    {
+      "option": "Bloom filter",
+      "pros": [
+        "Memory depends on element count and target error rate, not key size — ~1.2 MB for a million elements at ~1%",
+        "Insert and query are O(k) memory probes, independent of how many elements are stored",
+        "No false negatives, so 'definitely not present' can be trusted absolutely"
+      ],
+      "cons": [
+        "False positives, so it can never be the final authority on presence",
+        "No deletion at all; the only way to shrink it is to rebuild it",
+        "You must size it up front, and exceeding that size degrades it silently",
+        "k hash computations and k scattered memory probes per query — the probes are random addresses, so they are cache-unfriendly"
+      ]
+    },
+    {
+      "option": "Exact hash set",
+      "pros": [
+        "No false positives or negatives — the answer is simply correct",
+        "Supports deletion, iteration, and storing a value alongside the key",
+        "Standard library, no sizing decision, nothing to tune"
+      ],
+      "cons": [
+        "Stores every key: tens of megabytes where a filter needs one, and it scales with key length as well as count",
+        "That memory sits in your process or in a cache server you have to pay for and keep warm",
+        "For sets that do not fit in memory it is simply not an option"
+      ]
+    },
+    {
+      "option": "Counting Bloom filter",
+      "pros": [
+        "Supports deletion by decrementing counters instead of clearing bits",
+        "Same 'no false negatives' guarantee as the standard filter",
+        "Lets you track a set that shrinks as well as grows"
+      ],
+      "cons": [
+        "Counters instead of bits — 4-bit counters are roughly 4x the memory of the equivalent Bloom filter",
+        "Counters can overflow if the same slot is hit many times, and an overflowed counter can never be safely decremented again",
+        "More complex, and a delete of a key that was never inserted silently corrupts the structure"
+      ]
+    }
+  ],
+  "keyNumbers": [
+    {
+      "label": "Bits per element for a ~1% false-positive rate",
+      "value": "~9.6, with the optimal k near 7"
+    },
+    {
+      "label": "Cost of each further 10x reduction in false positives",
+      "value": "~4.8 more bits per element (so ~14.4 bits for ~0.1%)"
+    },
+    {
+      "label": "1 million elements at ~10 bits each",
+      "value": "~1.2 MB, against tens of MB for a hash set of the keys"
+    },
+    {
+      "label": "Optimal number of hash functions",
+      "value": "k = (m/n) x ln 2 ~ 0.693 x bits-per-element"
+    },
+    {
+      "label": "False-positive probability",
+      "value": "(1 - e^(-kn/m))^k — and 0.5^k at the optimal k"
+    },
+    {
+      "label": "Counting Bloom filter overhead",
+      "value": "~4x the memory, for the ability to delete"
+    }
+  ],
+  "interactive": "bloom-filter-sim",
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "mcq",
+      "question": "A Bloom filter reports that a key is present. What do you actually know?",
+      "options": [
+        "The key is present, with certainty",
+        "The key may be present, or k unrelated keys happened to set those same k bits — you must check the real store to find out",
+        "The key was present but may since have been deleted",
+        "Nothing at all; the answer carries no information"
+      ],
+      "answerIndex": 1,
+      "explanation": "'Present' means 'all k of its bits are 1', which other insertions can cause collectively. That is a false positive. The useful direction is the other one: if any of the k bits is 0, no insertion ever set it, so the key was definitely never added. Option 3 is wrong for a different reason worth knowing — a standard filter has no deletion at all, so nothing can have been removed from it."
+    },
+    {
+      "id": "q2",
+      "type": "architecture",
+      "question": "Your product API caches by product id. An attacker requests random 12-digit ids at 20,000 requests/s; none exist, so every request misses the cache and queries the database, which starts shedding load. What is this called and what fixes it?",
+      "options": [
+        "Cache stampede; add single-flight locking around each key",
+        "Cache penetration; keep a Bloom filter of all real product ids and reject a request the moment the filter says the id is definitely absent, so the ~99% of fabricated ids never reach the cache or database",
+        "Hot key; replicate the key across nodes",
+        "Thundering herd; add TTL jitter"
+      ],
+      "answerIndex": 1,
+      "explanation": "Cache penetration is traffic for keys that do not exist, so a cache can never help — there is nothing to store. A Bloom filter over the real id set rules out almost all of them in nanoseconds, and because false negatives are impossible you can never wrongly reject a real product. At a ~1% false-positive rate, roughly 200 of those 20,000 requests/s still reach the database, which is survivable. The cheap partial alternative — caching a negative marker for ids you have already proved absent — does not help here, because the attacker never repeats an id."
+    },
+    {
+      "id": "q3",
+      "type": "architecture",
+      "question": "A team wants to use a Bloom filter of banned account ids to block logins, arguing it saves a database call per attempt. What is wrong with this?",
+      "options": [
+        "Nothing — the filter has no false negatives, so no banned user can slip through",
+        "Bloom filters are too slow for the login path",
+        "A false positive here means locking out a legitimate user who was never banned. The filter may only be used to skip work, and blocking is an action — so at most it can short-circuit the 'definitely not banned' case and must fall through to the database on 'maybe'",
+        "The ban list changes, and Bloom filters cannot be rebuilt"
+      ],
+      "answerIndex": 2,
+      "explanation": "The guarantee runs one way only. 'Definitely not present' is exact, so skipping the ban check for those users is safe and covers the overwhelming majority of logins. 'Maybe present' is a guess, and acting on a guess locks out roughly 1% of innocent users. The rule of thumb: a Bloom filter may tell you not to do something expensive, never tell you to do something consequential. (Rebuilding is fine — periodically regenerating the filter from the source list is the normal way to handle a changing set, since you cannot delete from it.)"
+    }
+  ],
+  "related": [
+    "cache",
+    "database",
+    "sharding",
+    "indexing",
+    "url-shortener"
+  ]
+}

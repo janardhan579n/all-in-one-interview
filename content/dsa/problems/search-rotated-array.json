@@ -1,0 +1,93 @@
+{
+  "id": "search-rotated-array",
+  "title": "Search in Rotated Sorted Array",
+  "patternId": "binary-search",
+  "difficulty": "intermediate",
+  "tags": [
+    "array",
+    "binary-search"
+  ],
+  "statement": "A sorted array of distinct values was rotated at an unknown pivot (e.g. [0,1,2,4,5,6,7] became [4,5,6,7,0,1,2]). Given the rotated array and a target, return its index, or -1. Must run in O(log n).",
+  "realWorld": "Searching a circular log buffer or a ring of time-series shards where the write head has wrapped around — the data is still ordered, just starting from an arbitrary offset.",
+  "examples": [
+    {
+      "input": "nums = [4,5,6,7,0,1,2], target = 0",
+      "output": "4",
+      "explanation": ""
+    },
+    {
+      "input": "nums = [4,5,6,7,0,1,2], target = 3",
+      "output": "-1",
+      "explanation": ""
+    }
+  ],
+  "constraints": [
+    "1 <= nums.length <= 5000",
+    "All values distinct",
+    "The array is a rotation of a sorted array"
+  ],
+  "bruteForce": {
+    "idea": "Linear scan, ignoring the structure.",
+    "code": [
+      "for (int i = 0; i < nums.length; i++) if (nums[i] == target) return i;",
+      "return -1;"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(1)"
+    },
+    "whySlow": "The array is not globally sorted, but it is *locally* sorted in a way binary search can still exploit — a linear scan leaves that on the table, and the problem demands O(log n)."
+  },
+  "patternIdentification": "The key observation: when you split a rotated sorted array at any midpoint, at least one of the two halves is fully sorted. Test which one, then decide whether the target lies inside that sorted half. That restores the halving property.",
+  "optimized": {
+    "idea": "At each step determine which half is sorted by comparing nums[low] with nums[mid]. If the target lies within the sorted half's range, search there; otherwise search the other half.",
+    "code": [
+      "public static int search(int[] nums, int target) {",
+      "    int low = 0, high = nums.length - 1;",
+      "",
+      "    while (low <= high) {",
+      "        int mid = low + (high - low) / 2;",
+      "        if (nums[mid] == target) return mid;",
+      "",
+      "        if (nums[low] <= nums[mid]) {           // left half is sorted",
+      "            if (nums[low] <= target && target < nums[mid]) {",
+      "                high = mid - 1;                 // target is inside the sorted left",
+      "            } else {",
+      "                low = mid + 1;",
+      "            }",
+      "        } else {                                // right half is sorted",
+      "            if (nums[mid] < target && target <= nums[high]) {",
+      "                low = mid + 1;                  // target is inside the sorted right",
+      "            } else {",
+      "                high = mid - 1;",
+      "            }",
+      "        }",
+      "    }",
+      "    return -1;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(log n)",
+      "space": "O(1)"
+    }
+  },
+  "commonMistakes": [
+    "Using < instead of <= in nums[low] <= nums[mid]; when low == mid the left half is trivially sorted and the wrong branch is taken.",
+    "Getting the inclusive/exclusive bounds wrong in the range tests — target < nums[mid] but target <= nums[high].",
+    "Trying to find the pivot first with a separate search and then binary searching; correct, but two passes where one suffices.",
+    "Assuming it still works with duplicates — it does not; nums[low] == nums[mid] becomes ambiguous and the worst case degrades to O(n)."
+  ],
+  "similar": [
+    "binary-search-basic",
+    "koko-eating-bananas"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 33,
+      "slug": "search-in-rotated-sorted-array",
+      "title": "Search in Rotated Sorted Array",
+      "url": "https://leetcode.com/problems/search-in-rotated-sorted-array/",
+      "premium": false
+    }
+  }
+}

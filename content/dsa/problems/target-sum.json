@@ -1,0 +1,101 @@
+{
+  "id": "target-sum",
+  "title": "Target Sum",
+  "patternId": "dp-patterns",
+  "difficulty": "intermediate",
+  "tags": [
+    "array",
+    "dynamic-programming",
+    "knapsack"
+  ],
+  "statement": "Given an array of non-negative integers and a target, put a '+' or a '-' in front of every number and concatenate them into an expression. Return how many different assignments of signs produce an expression that evaluates to the target.",
+  "realWorld": "Balancing a ledger: given a set of amounts that must each be credited or debited, count the ways the two sides can differ by a required figure. The same reduction turns any 'assign each item to one of two groups' question — two-machine load balancing, splitting a batch across two regions — into a subset-sum.",
+  "examples": [
+    {
+      "input": "nums = [1,1,1,1,1], target = 3",
+      "output": "5",
+      "explanation": "Four plus signs and one minus: 5 - 1 - 1 = 3, and the minus can sit on any of the five ones. Equivalently, choose which four numbers are positive: C(5,4) = 5."
+    },
+    {
+      "input": "nums = [1,2,7], target = 5",
+      "output": "0",
+      "explanation": "The total is 10, so the positive group would have to sum to (10 + 5) / 2 = 7.5. No integer subset exists, and the parity check catches this before any searching happens."
+    },
+    {
+      "input": "nums = [1,0,1], target = 0",
+      "output": "4",
+      "explanation": "+1+0-1, +1-0-1, -1+0+1, -1-0+1. A zero can carry either sign without changing the value, so every zero doubles the count — an easy case to get wrong."
+    }
+  ],
+  "constraints": [
+    "1 <= nums.length <= 20",
+    "0 <= nums[i] <= 1000",
+    "0 <= sum(nums) <= 1000",
+    "-1000 <= target <= 1000",
+    "Zeros are allowed and each one doubles the number of assignments"
+  ],
+  "bruteForce": {
+    "idea": "Recurse over the numbers, trying both signs at each step, and count the leaves whose running total equals the target.",
+    "code": [
+      "public static int findTargetSumWays(int[] nums, int target) {",
+      "    return ways(nums, 0, 0, target);",
+      "}",
+      "",
+      "private static int ways(int[] nums, int i, int running, int target) {",
+      "    if (i == nums.length) return running == target ? 1 : 0;",
+      "    return ways(nums, i + 1, running + nums[i], target)",
+      "         + ways(nums, i + 1, running - nums[i], target);",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(2^n)",
+      "space": "O(n)"
+    },
+    "whySlow": "Two branches per number gives 2^n leaves — a million for twenty numbers, and every one of them is expanded to full depth before the comparison happens. The repetition is easy to name: the state that matters at index i is only the running total, yet with twenty small numbers there are a few thousand reachable totals and a million paths reaching them, so 'the number of ways to finish from index 10 with a running total of 7' is recomputed hundreds of times and returns the same value every time."
+  },
+  "patternIdentification": "Every element gets one of two symmetric labels and the question is about the resulting totals — that is the signal to stop searching over sign assignments and solve for the groups algebraically. Call P the sum of the numbers given a plus and N the sum of the rest. Then P + N = total and P - N = target, so P = (total + target) / 2, and counting sign assignments becomes counting subsets that sum to P: plain 0/1 subset-sum. The algebra also hands you two free rejections that no search would find on its own — if total + target is odd then P is not an integer, and if |target| > total then P is out of range, so the answer is 0 before any work is done. From there the state is dp[s] = the number of subsets of the numbers seen so far that sum to exactly s, the recurrence per number is dp[s] += dp[s - num], and the base case is dp[0] = 1 because exactly one subset (the empty one) sums to zero. Partition Equal Subset Sum is the same machine with 'count' swapped for 'is it reachable'.",
+  "optimized": {
+    "idea": "Reduce to subset-sum with capacity (total + target) / 2, guarding parity and range first. Then run the counting knapsack over a single array: for each number, sweep the capacity axis downwards so that dp[s - num] still describes the state before this number was offered, which is what keeps each number from being used twice.",
+    "code": [
+      "public static int findTargetSumWays(int[] nums, int target) {",
+      "    int total = 0;",
+      "    for (int num : nums) total += num;",
+      "    // +P - (total - P) = target  =>  P = (total + target) / 2",
+      "    if (Math.abs(target) > total || ((total + target) & 1) != 0) return 0;",
+      "    int capacity = (total + target) / 2;",
+      "    int[] dp = new int[capacity + 1];",
+      "    dp[0] = 1;   // the empty subset is the one way to make 0",
+      "    for (int num : nums) {",
+      "        for (int s = capacity; s >= num; s--) {   // downwards: each number used at most once",
+      "            dp[s] += dp[s - num];",
+      "        }",
+      "    }",
+      "    return dp[capacity];",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n * sum)",
+      "space": "O(sum)"
+    }
+  },
+  "commonMistakes": [
+    "Skipping the parity check and letting Java's integer division round (total + target) / 2 down. The code then confidently solves a different problem: [1,2,7] with target 5 gives capacity 7, finds the subset {7}, and returns 1 where the answer is 0.",
+    "Omitting the |target| > total guard. When target is below -total the capacity comes out negative and new int[capacity + 1] throws NegativeArraySizeException — nums = [1] with target = -100 crashes rather than returning 0.",
+    "Sweeping the capacity axis upwards (for s = num; s <= capacity; s++). dp[s - num] has already been updated for this same number, so numbers get reused and the count is inflated: [1,1,1,1,1] with target 3 returns far more than 5, while small inputs with distinct values can still look correct."
+  ],
+  "similar": [
+    "partition-equal-subset-sum",
+    "coin-change",
+    "subsets",
+    "longest-common-subsequence"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 494,
+      "slug": "target-sum",
+      "title": "Target Sum",
+      "url": "https://leetcode.com/problems/target-sum/",
+      "premium": false
+    }
+  }
+}

@@ -1,0 +1,285 @@
+{
+  "id": "dotnet-async-memory",
+  "trackId": "dotnet",
+  "topic": "async-memory",
+  "title": "Async and Memory",
+  "summary": "A state machine pretending to be sequential code, a thread pool you can starve in one line, and a heap that only compacts the parts you do not care about.",
+  "questions": [
+    {
+      "id": "dam-01",
+      "level": "junior",
+      "type": "concept",
+      "question": "What does the compiler do with async/await, and does async make code run in parallel?",
+      "answer": "The compiler rewrites the method into a **state machine**. Your body becomes a `MoveNext` method with a `switch` over an integer state, and every local that has to survive an `await` becomes a field on that state machine rather than a stack slot. A builder (`AsyncTaskMethodBuilder`) owns the `Task` that is handed back to the caller.\n\nAt each `await` the generated code asks the awaitable for its awaiter and checks `IsCompleted`. If the operation has already finished — a cache hit, a buffered stream read — execution simply continues on the same thread, with no suspension and no allocation at all. If it has not, the state machine records which state to resume at, hands the continuation to the awaiter via `OnCompleted`, and **returns** to the caller. The method has not finished; the thread is free.\n\nThat last sentence is the answer to the second half. `async` does not create a thread, and it does not make anything parallel. For real I/O there is no thread waiting anywhere — the request is with the operating system, and when it completes the runtime schedules your continuation onto a thread-pool thread. What you have bought is *not occupying a thread while waiting*, which is scalability, not speed. A single request that awaits five calls in sequence takes exactly as long as it did before.\n\nParallelism is an explicit decision: `Task.WhenAll` for independent I/O, `Parallel.ForEachAsync` for bounded fan-out, `Task.Run` to push CPU work onto the pool — which on a server just moves the work between pool threads and adds no capacity.\n\nJava engineers: virtual threads in Java 21 reach the same goal — not blocking an OS thread — without colouring your methods. C# chose a compiler transformation, which is why `async` spreads up the call chain.",
+      "keyPoints": [
+        "await compiles to a state machine: locals become fields, the body becomes MoveNext with a state switch",
+        "An already-completed awaitable continues synchronously with no suspension and no allocation",
+        "async creates no threads — for real I/O there is no thread waiting at all",
+        "It buys scalability (threads not blocked), never latency for a single request",
+        "Parallelism is explicit: Task.WhenAll, Parallel.ForEachAsync, Task.Run"
+      ],
+      "followUps": [
+        {
+          "q": "When should a method return ValueTask instead of Task?",
+          "a": "When it usually completes synchronously and is called often enough for the `Task` allocation to matter — a cache lookup, a buffered read, `IAsyncEnumerable` plumbing. The cost is a set of rules: a `ValueTask` may be awaited only once, must not be awaited concurrently, and must not be blocked on. If you need to do any of those, call `AsTask()` first. For ordinary application code, return `Task`."
+        },
+        {
+          "q": "Is there a cost to marking a method async when it just forwards a call?",
+          "a": "Yes, a small one: you get a state machine and an extra `Task` for nothing. `public Task<T> GetAsync() => _inner.GetAsync();` without `async`/`await` skips both. The catch is that exceptions thrown before the first await now surface at the call site rather than on the returned task, and the method no longer appears in async stack traces — so do it deliberately, not as a habit."
+        }
+      ],
+      "redFlags": [
+        "\"async runs the method on another thread\"",
+        "Expecting await to make sequential calls faster",
+        "Using Task.Run around I/O-bound work in a server application"
+      ],
+      "related": [
+        "java-concurrency"
+      ]
+    },
+    {
+      "id": "dam-02",
+      "level": "junior",
+      "type": "concept",
+      "question": "Why is async void dangerous, and when is it ever correct?",
+      "answer": "An `async Task` method hands the caller a `Task` — a handle to completion and to any exception. An `async void` method hands back nothing, and everything bad follows from that.\n\n**Exceptions terminate the process.** Because there is no task to carry the failure, the builder for an `async void` method rethrows the exception on the captured `SynchronizationContext`, or on the thread pool if there is none. That is an unhandled exception on a background thread, which in .NET Core tears down the process. And it is unhandled no matter what you do at the call site: a `try`/`catch` around the call cannot help, because the call returned at the first `await`, long before the failure.\n\n**Nothing can wait for it.** There is no completion signal, so the work races with whatever comes next — the scope disposing, the request finishing, the host shutting down, the test asserting. Tests are the cruel case: an `async void` test body returns immediately and the framework reports a pass for code that never ran.\n\nThe trap is that you often write one without noticing. A lambda passed where an `Action` is expected becomes `async void` silently:\n\n```csharp\nitems.ForEach(async x => await ProcessAsync(x));   // async void — fire and forget\nforeach (var x in items) await ProcessAsync(x);    // what you meant\n```\n\nThe only legitimate use is a UI event handler, where the signature is fixed by the framework — and there the handler should have a `try`/`catch` around its entire body. For deliberate fire-and-forget on a server, return a `Task` and hand it to something that observes it: a `Channel` drained by a `BackgroundService`, or at minimum a helper that awaits and logs.\n\nJava engineers: closest to a `Runnable` swallowing an exception into an executor, except .NET escalates it to process exit.",
+      "keyPoints": [
+        "No Task means no way to observe completion or failure",
+        "Its exception is rethrown on the context or thread pool and terminates the process",
+        "try/catch at the call site cannot catch it — the call already returned at the first await",
+        "async lambdas passed as Action (ForEach, Timer callbacks) become async void silently",
+        "Only for UI event handlers, and then wrap the whole body in try/catch"
+      ],
+      "followUps": [
+        {
+          "q": "What happens to an exception in a Task nobody awaits?",
+          "a": "It is stored on the task and stays silent. Since .NET 4.5 an unobserved task exception does **not** crash the process — it raises `TaskScheduler.UnobservedTaskException` when the task is finalised and is then swallowed. So fire-and-forget on a `Task` loses errors quietly, while `async void` loses the process loudly. Neither is acceptable; subscribe to that event at startup and log it so you at least find out."
+        },
+        {
+          "q": "How do you do fire-and-forget correctly?",
+          "a": "Decide who owns the work. If it must happen, it belongs in durable infrastructure — an outbox row or a queue message picked up by a worker. If it is genuinely best-effort (a metric, a cache warm), write it to a bounded `Channel<T>` that a `BackgroundService` drains, so the work is bounded, observable and shuts down cleanly. The one thing not to do is start a task and drop the reference."
+        }
+      ],
+      "redFlags": [
+        "Using async void for anything other than an event handler",
+        "Believing a try/catch around the call protects you",
+        "async void test methods",
+        "Starting work with a discarded task and calling it fire-and-forget"
+      ]
+    },
+    {
+      "id": "dam-03",
+      "level": "mid",
+      "type": "concept",
+      "question": "ASP.NET Core has no SynchronizationContext. So does ConfigureAwait(false) still matter in .NET 8?",
+      "answer": "By default, `await` captures the current `SynchronizationContext` (or the current `TaskScheduler` if there is none) and posts the continuation back to it, so your code resumes where it started. `ConfigureAwait(false)` says you do not care where you resume, and lets the continuation run on the thread pool — or inline on whichever thread completed the operation.\n\nIn an ASP.NET Core application the premise of the question is right: there is no `SynchronizationContext`, so there is nothing to capture and `ConfigureAwait(false)` changes nothing functionally. This is the main difference from classic ASP.NET, where the request context was the thing that deadlocked.\n\nWhere it still matters in .NET 8:\n\n- **Library code**, which is the real answer. A library does not know its caller. If a WPF, WinForms or MAUI application calls your library and blocks on the result, the missing `ConfigureAwait(false)` is what completes the deadlock. Libraries should use it on every await; application code generally should not bother.\n- **Blazor.** Both Server and WebAssembly install a `SynchronizationContext`. Here `ConfigureAwait(false)` is actively harmful in component code — it takes you off the renderer's context, and touching component state from there is unsafe. Use `InvokeAsync` instead.\n- **Performance, marginally.** Capturing and posting has a cost, so in a hot library path it is worth the noise it adds.\n\nOne correction worth making pre-emptively: `ConfigureAwait(false)` does **not** lose `AsyncLocal` state. `ExecutionContext` — and therefore `IHttpContextAccessor`, logging scopes and activity/trace context — flows across awaits either way.\n\n.NET 8 also added `ConfigureAwait(ConfigureAwaitOptions)` on `Task`, with `ForceYielding` to guarantee an asynchronous resume and `SuppressThrowing` to await a task without rethrowing its exception.",
+      "keyPoints": [
+        "await captures the SynchronizationContext (or TaskScheduler) and posts the continuation back by default",
+        "ASP.NET Core has none, so ConfigureAwait(false) is functionally a no-op there",
+        "It still matters in libraries, which cannot know whether a UI or legacy caller will block on them",
+        "Blazor Server and WebAssembly do have a context — ConfigureAwait(false) there is a bug, not an optimisation",
+        "It does not affect AsyncLocal or ExecutionContext flow; logging scopes and HttpContextAccessor still work"
+      ],
+      "followUps": [
+        {
+          "q": "So should application code ever write it?",
+          "a": "In an ASP.NET Core service, no — it is noise on every line for no behavioural change, and it obscures the places where context genuinely matters. In a shared internal library that any app in the company might consume, yes, on every await, and enforce it with an analyzer. The dividing line is whether you control the caller."
+        },
+        {
+          "q": "What is ConfigureAwaitOptions.ForceYielding for?",
+          "a": "It guarantees the continuation is scheduled rather than running synchronously, even when the awaited task is already complete. That matters when you must not let a caller's thread run your continuation inline — for instance when completing a `TaskCompletionSource` while holding a lock, where inline continuations can re-enter and deadlock. Before .NET 8 you reached for `Task.Yield` or `TaskCreationOptions.RunContinuationsAsynchronously`."
+        }
+      ],
+      "redFlags": [
+        "\"ConfigureAwait(false) makes it faster\" as the whole explanation",
+        "Claiming it loses HttpContext or AsyncLocal state",
+        "Sprinkling it through Blazor component code"
+      ],
+      "related": [
+        "java-concurrency"
+      ]
+    },
+    {
+      "id": "dam-04",
+      "level": "mid",
+      "type": "code",
+      "question": "This code deadlocks in a desktop app and merely degrades in ASP.NET Core. Explain both outcomes.",
+      "answer": "**The deadlock.** On a UI thread there is a `SynchronizationContext` backed by a single thread — the message loop. `GetDataAsync` runs until its first real `await`, then returns an incomplete task and schedules its continuation *back onto the UI thread*. But the UI thread is inside `.Result`, blocked, waiting for that task to complete. The continuation can only run on the thread that is waiting for it. Neither side moves. Classic self-deadlock, and it is the same with `.Wait()` and `GetAwaiter().GetResult()`.\n\n**Why ASP.NET Core \"works\".** There is no `SynchronizationContext`, so the continuation goes to the thread pool and eventually completes — the blocked thread is released. Nothing hangs, and this is why teams conclude sync-over-async is safe now. It is not. You have taken a thread-pool thread and parked it for the entire duration of the I/O, doing nothing. One request now costs two threads: one blocked, one running the continuation. Under load the pool cannot keep up, its queue grows, and latency collapses — thread-pool starvation, which is a worse failure than a hang because it only appears under traffic and looks like a database problem.\n\nThere is a smaller difference too: `.Result` and `.Wait()` wrap failures in an `AggregateException`, so your `catch (HttpRequestException)` stops matching. `await` rethrows the original exception with its stack intact.\n\n**The fix is always the same**: async all the way up. Make the caller `async Task`, and let it propagate — controllers, minimal API handlers and `Main` can all be async. Where a synchronous boundary is genuinely forced on you by an interface you cannot change, `Task.Run(() => FooAsync()).GetAwaiter().GetResult()` avoids the deadlock by running on a context-free thread, but it does not stop you blocking one. Treat it as a temporary patch with a comment saying so.",
+      "codeExample": {
+        "language": "csharp",
+        "code": [
+          "// UI button handler, or any single-threaded SynchronizationContext",
+          "private void OnClick(object sender, EventArgs e)",
+          "{",
+          "    var data = GetDataAsync().Result;   // blocks the UI thread",
+          "    label.Text = data;",
+          "}",
+          "",
+          "private async Task<string> GetDataAsync()",
+          "{",
+          "    var res = await _http.GetStringAsync(url);  // continuation posted to the UI thread",
+          "    return res.Trim();                          // ...which is blocked in .Result",
+          "}"
+        ]
+      },
+      "keyPoints": [
+        "The continuation is posted back to the one thread that is blocked waiting for it",
+        ".Result, .Wait() and GetAwaiter().GetResult() all block the same way",
+        "ASP.NET Core has no context so it does not hang — it starves the thread pool instead",
+        "Blocking costs two threads per request and only fails under load",
+        ".Result wraps exceptions in AggregateException; await rethrows the original"
+      ],
+      "followUps": [
+        {
+          "q": "You need async initialisation in a constructor. What do you do?",
+          "a": "Not block. Constructors cannot be async, so either use a static async factory (`public static async Task<Foo> CreateAsync()` with a private constructor), or make initialisation an explicit `InitializeAsync` the caller awaits, or keep a `Lazy<Task<T>>` field that the first consumer awaits. In DI, register a factory or an `IHostedService` that does the work at startup rather than in a constructor."
+        },
+        {
+          "q": "How do you stop this being reintroduced?",
+          "a": "An analyzer. `Microsoft.VisualStudio.Threading.Analyzers` flags `.Result`, `.Wait()` and `GetAwaiter().GetResult()` (VSTHRD002) and synchronous blocking in async methods; turn those into build errors. Grep is a fine first pass but it will not catch blocking hidden inside a helper method that is itself called from async code."
+        }
+      ],
+      "redFlags": [
+        "\"We are on ASP.NET Core so .Result is fine\"",
+        "Wrapping everything in Task.Run to avoid the deadlock and calling it fixed",
+        "Catching AggregateException everywhere instead of removing the block"
+      ],
+      "related": [
+        "java-concurrency"
+      ]
+    },
+    {
+      "id": "dam-05",
+      "level": "mid",
+      "type": "concept",
+      "question": "How do you propagate a CancellationToken properly, and what goes wrong when you do not?",
+      "answer": "A `CancellationTokenSource` owns cancellation; the `CancellationToken` it hands out is a cheap struct you pass down every level of the call chain. Cancellation is **cooperative** — nothing is aborted, nothing is interrupted. A method that ignores the token runs to completion regardless, so an unpropagated token is the same as no cancellation at all.\n\nThe discipline: every async method takes a `CancellationToken` as its last parameter, passes it to every async call it makes, and calls `ThrowIfCancellationRequested()` inside any long loop or CPU-bound stretch that has no I/O to carry the token. The CA2016 analyzer flags the forwarding you forget.\n\nIn ASP.NET Core the token arrives for free: declare a `CancellationToken` parameter on a controller action or a minimal API handler and it is bound to `HttpContext.RequestAborted`, which fires when the client disconnects. Combining it with a timeout uses a linked source — and the linked source **must be disposed**, or it leaves a registration on the parent token that lives as long as the parent does:\n\n```csharp\nusing var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);\ncts.CancelAfter(TimeSpan.FromSeconds(5));\nawait _client.GetAsync(url, cts.Token);\n```\n\nTwo judgement calls matter more than the mechanics. First, do not log `OperationCanceledException` as an error when it is your own token — a client hanging up is normal traffic, and treating it as a failure will drown your error rate. Check `token.IsCancellationRequested` in the `catch` to tell your cancellation from a downstream timeout. Second, **do not pass the request token to work that must complete.** Cancelling halfway through writing an audit record, committing an outbox row or finishing a multi-step save leaves inconsistent state. That work gets its own token, or none.\n\nJava engineers: this is interruption or `Future.cancel`, equally cooperative. .NET has nothing like `Thread.Abort` any more — it throws `PlatformNotSupportedException` on .NET Core.",
+      "keyPoints": [
+        "Cancellation is cooperative: an ignored token means no cancellation, not a forced stop",
+        "Take the token as the last parameter, forward it everywhere, ThrowIfCancellationRequested in loops",
+        "ASP.NET Core binds a CancellationToken parameter to RequestAborted automatically",
+        "Dispose linked token sources or you leak a registration on the parent token",
+        "Never hand the request token to work that must complete, like an audit write or an outbox commit"
+      ],
+      "followUps": [
+        {
+          "q": "What happens if SaveChangesAsync is cancelled mid-flight?",
+          "a": "The database transaction rolls back, so the data is consistent — but EF's own documentation warns that the `DbContext` may be left in an unknown state afterwards, because the change tracker was mid-way through accepting changes. Do not keep using that context; let the scope end and get a fresh one. This is a concrete reason not to pass the request token into a save that must happen."
+        },
+        {
+          "q": "How do you cancel something that does not accept a token?",
+          "a": "You cannot cancel the operation itself, only stop waiting for it. `Task.WhenAny(work, Task.Delay(timeout, ct))` lets you give up and return, but the underlying work keeps running to completion in the background — which means resources stay held and, if it throws, the exception is unobserved. Always observe the abandoned task, and prefer fixing the API to accept a token."
+        }
+      ],
+      "redFlags": [
+        "Accepting a CancellationToken and never passing it on",
+        "Logging every OperationCanceledException as an error",
+        "Not disposing a linked CancellationTokenSource",
+        "Passing RequestAborted into a write that must not be half-done"
+      ],
+      "related": [
+        "java-concurrency",
+        "java-rest-api"
+      ]
+    },
+    {
+      "id": "dam-06",
+      "level": "mid",
+      "type": "concept",
+      "question": "Explain GC generations and the large object heap. Where do the production problems come from?",
+      "answer": "The .NET GC bets on the generational hypothesis: most objects die young. New allocations go into **gen 0**, which is small and collected often; survivors are promoted to **gen 1**, which acts as a buffer, and survivors of that to **gen 2**, the long-lived heap. A gen 0 collection is cheap precisely because almost everything in it is already garbage — the collector only pays for what *survives*, tracing and compacting the live objects and leaving a contiguous block behind. Allocation is then just a pointer bump.\n\nThe consequence is that garbage is nearly free and *survival* is expensive. Performance problems are not \"too many allocations\"; they are objects living long enough to be promoted. A per-request buffer that outlives the request, a cache with no eviction, a static event handler holding subscribers — these turn gen 0 traffic into gen 2 pressure, and gen 2 collections are full, expensive and touch the whole heap.\n\nThe **large object heap** is the other half. Any object of 85,000 bytes or more is allocated straight onto the LOH, which is collected only as part of a gen 2 collection and, by default, is **not compacted**. Free space accumulates as holes that nothing fits into, so the process holds a large heap while still triggering collections. `GCSettings.LargeObjectHeapCompactionMode = GCLargeObjectHeapCompactionMode.CompactOnce` forces a one-off compaction, and it is expensive and blocking.\n\nThe usual sources are big `byte[]` buffers — file uploads, serialisation, image work — and collections that grow past the threshold, where each doubling allocates a new large array. The fixes are pooling and streaming: `ArrayPool<T>.Shared`, `RecyclableMemoryStream`, and processing a payload as a stream instead of buffering it whole.\n\nJava engineers: gen 2 is the old generation and the ideas map directly. The tuning surface is much smaller — you choose Workstation or Server GC and whether background collection is on, not between a family of collectors.",
+      "keyPoints": [
+        "Gen 0 is cheap because you pay only for survivors; dying young is free",
+        "The real problem is promotion — caches, static handlers and leaked per-request state fill gen 2",
+        "Objects of 85,000 bytes or more go straight to the LOH, collected only with gen 2",
+        "The LOH is not compacted by default, so it fragments; CompactOnce is a blocking last resort",
+        "Pool and stream large buffers instead: ArrayPool<T>, RecyclableMemoryStream"
+      ],
+      "followUps": [
+        {
+          "q": "How do you tell whether GC is actually your problem?",
+          "a": "`dotnet-counters monitor --counters System.Runtime` gives you gen 0/1/2 collection counts, heap size, LOH size, allocation rate and `% Time in GC`. A healthy service has many gen 0 collections, few gen 2, and time-in-GC in the low single digits. A rising gen 2 rate with a growing heap points at promotion or a leak; take a `dotnet-gcdump` and compare two snapshots to see which type is accumulating and what is rooting it."
+        },
+        {
+          "q": "Server GC or Workstation GC?",
+          "a": "Server GC — the default for ASP.NET Core — gives each core its own heap and collection thread, which raises throughput at the cost of memory. In a container with a small memory limit that can be exactly wrong, and historically teams switched to Workstation GC. .NET 8 shipped DATAS, which adapts the heap count to the actual load; it is opt-in in .NET 8 (`System.GC.DynamicAdaptationMode`) and became the default in .NET 9."
+        }
+      ],
+      "redFlags": [
+        "Calling GC.Collect() in application code",
+        "Treating allocation count as the metric rather than survival and promotion",
+        "Not knowing the LOH exists or that it is not compacted",
+        "Buffering an entire upload into a byte[] to \"simplify\" the code"
+      ],
+      "related": [
+        "java-jvm-memory",
+        "sql-performance"
+      ]
+    },
+    {
+      "id": "dam-07",
+      "level": "senior",
+      "type": "concept",
+      "question": "IDisposable, finalizers and IAsyncDisposable — when do you implement which?",
+      "answer": "`IDisposable` is deterministic cleanup driven by the caller. `using` compiles to `try`/`finally` around `Dispose`, and that is the only reliable way a resource is released at a known point. It is what you implement whenever your type holds something that must be released promptly: a handle, a socket, a pooled connection, a lock, a subscription.\n\nA **finalizer** is the GC's safety net, and its costs are severe enough that the answer is almost always \"do not write one\". An object with a finalizer is put on the finalization queue when it is allocated, so it survives its first collection, gets promoted, and drags everything it references along with it. The actual finalizers run later on a single dedicated thread, in no defined order, possibly on a partially constructed object — and in .NET Core they are not guaranteed to run at process exit at all. One slow finalizer stalls every other object's cleanup. If you own an unmanaged resource directly, derive from `SafeHandle`, which has a critical finalizer the runtime handles correctly, and then your type only needs `IDisposable`. If you do write one, `Dispose` must call `GC.SuppressFinalize(this)` so the object is not needlessly promoted.\n\n`IAsyncDisposable` exists because some cleanup is itself I/O: flushing a buffered stream, sending a close frame, draining a channel, returning a connection to a pool with a reset round trip. A synchronous `Dispose` on those either blocks a thread or does the job incompletely, and a finalizer cannot do async work at all. Implement it when cleanup does I/O, and use `await using`.\n\nTwo practical notes. If a type implements both, `using` picks the synchronous path and `await using` the asynchronous one, so the keyword decides. And DI will refuse to dispose an async-only service from a synchronous scope disposal — it throws telling you to use `DisposeAsync`. ASP.NET Core's request scope is async-disposed, so this mostly bites in tests and console hosts.",
+      "keyPoints": [
+        "IDisposable is the only deterministic release; using is try/finally around it",
+        "A finalizer promotes the object and everything it references, runs on one shared thread, and may never run",
+        "Own unmanaged resources through SafeHandle instead of writing a finalizer",
+        "If you do have one, Dispose must call GC.SuppressFinalize(this)",
+        "IAsyncDisposable is for cleanup that performs I/O; await using selects it over Dispose"
+      ],
+      "followUps": [
+        {
+          "q": "What must Dispose itself guarantee?",
+          "a": "That it is idempotent and does not throw. It gets called from `finally` blocks, often while an exception is already in flight, and a throwing `Dispose` replaces the original exception with a less useful one. Guard with a `_disposed` flag, return early on the second call, and swallow or log anything that cannot be handled. It should also not be async-over-sync — if cleanup needs I/O, that is what `DisposeAsync` is for."
+        },
+        {
+          "q": "Do you need to implement IDisposable for a class that just holds other disposables?",
+          "a": "Yes — implement `IDisposable` and dispose them — but you do not need the full `Dispose(bool)` pattern with a finalizer. That pattern exists to distinguish \"called by the user, managed objects still valid\" from \"called by the finalizer, touch nothing managed\". With no unmanaged resource there is no finalizer, so a plain `Dispose()` that disposes the fields is the correct, complete implementation."
+        }
+      ],
+      "redFlags": [
+        "Writing a finalizer for a class that only holds managed objects",
+        "Expecting finalizers to run reliably, or at shutdown",
+        "Blocking on async cleanup inside Dispose",
+        "A Dispose that can throw"
+      ]
+    },
+    {
+      "id": "dam-08",
+      "level": "senior",
+      "type": "scenario",
+      "question": "Under load, p99 latency climbs from 80ms to 30 seconds, requests queue up, and CPU sits at 15%. Restarting fixes it for an hour. Diagnose and fix.",
+      "answer": "High latency with **low CPU** means threads are blocked, not busy — saturation, not a hot path, and a CPU profiler will show you nothing. In a .NET service the likely cause is thread-pool starvation from sync-over-async on the request path.\n\n**The mechanism.** Something blocks a pool thread on I/O — `.Result`, `.Wait()`, `GetAwaiter().GetResult()`, a synchronous HTTP or database call, `SemaphoreSlim.Wait` instead of `WaitAsync`. That thread is parked, not working, so the pool sees no CPU pressure and injects replacements only slowly, on the order of one or two a second past the minimum. Requests queue, queued requests take longer, concurrency rises, more threads block. That feedback loop is why this is a cliff rather than a slope, and why a restart buys exactly as long as it takes to climb back.\n\n**Confirm it.** `dotnet-counters monitor --counters System.Runtime` and watch three numbers: `ThreadPool Queue Length` rising and staying up, `ThreadPool Thread Count` climbing past core count, `ThreadPool Completed Work Item Count` flat while the queue grows. Low `% Time in GC` rules out the other classic cause. The runtime also emits a thread-pool worker adjustment event with reason **Starvation**, which `dotnet-trace` or PerfView captures — that is unambiguous. Then `dotnet-dump collect` and `analyze`: `!threadpool` for the queue, `clrstack -all` to find threads parked in `Task.Wait` or `Monitor.Wait` under a `GetAwaiter().GetResult()` frame. That names the call.\n\n**Fix.** Make the path async end to end. `SetMinThreads` is a legitimate emergency mitigation — it removes the injection delay — but it costs about a megabyte of stack per thread and hides the problem until traffic grows again. Where blocking legacy code cannot be changed, isolate it behind a bounded `Channel` with dedicated threads so it cannot consume the shared pool.\n\n**Prevent.** Ban sync-over-async with `Microsoft.VisualStudio.Threading.Analyzers` at error severity, and alert on thread-pool queue length rather than latency. Java engineers: this is Tomcat thread-pool exhaustion, and the reason virtual threads exist.",
+      "keyPoints": [
+        "Low CPU with high latency means blocked threads; profile saturation, not hot paths",
+        "Sync-over-async parks pool threads; injection is slow, so queueing feeds back into more blocking",
+        "Confirm with ThreadPool Queue Length rising while completed work items stay flat",
+        "The runtime's thread-pool adjustment event with reason Starvation is the definitive signal",
+        "SetMinThreads is a mitigation, not a fix; the fix is async end to end or isolating blocking work on its own threads"
+      ],
+      "followUps": [
+        {
+          "q": "How do you distinguish this from connection-pool exhaustion?",
+          "a": "Both give low CPU and rising latency, and they often occur together. The stacks separate them: pool starvation shows threads parked in `Task.Wait`/`Monitor.Wait` across many different call sites, while connection-pool exhaustion shows them all waiting inside connection acquisition with a matching \"timeout expired prior to obtaining a connection from the pool\" in the logs. Check the ADO.NET pool counters alongside the thread-pool ones before choosing a fix."
+        },
+        {
+          "q": "Why does raising MinThreads help at all if the code is still blocking?",
+          "a": "Because the pool's slow injection rate is what turns blocking into a cliff. Starting with a large pool means the blocked threads are replaced immediately rather than one per half-second, so the queue never builds and the feedback loop does not start. It buys headroom proportional to the number you set, and it stops buying it the moment concurrency exceeds that number — which is why it belongs in an incident, not in a design."
+        }
+      ],
+      "redFlags": [
+        "Reaching for a CPU profiler when CPU is idle",
+        "Scaling out to absorb the load without finding the blocking call",
+        "Setting MinThreads to a large number and closing the ticket",
+        "Raising timeouts so the timeouts stop"
+      ],
+      "related": [
+        "java-concurrency",
+        "scenarios-production-incidents",
+        "scaling"
+      ]
+    }
+  ]
+}

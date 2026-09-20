@@ -1,0 +1,96 @@
+{
+  "id": "move-zeroes",
+  "title": "Move Zeroes",
+  "patternId": "arrays",
+  "difficulty": "beginner",
+  "tags": [
+    "array",
+    "in-place",
+    "read-write-pointer"
+  ],
+  "statement": "Given an integer array nums, move all 0s to the end of it while keeping the relative order of the non-zero elements. You must do this in place, without allocating a second array.",
+  "realWorld": "Compaction after soft deletes: a column store or a free-list marks rows dead and later squeezes the live rows to the front so the tail can be truncated in a single operation. Doing it in place matters because the buffer is often the size of a page and copying it doubles the memory high-water mark.",
+  "examples": [
+    {
+      "input": "nums = [0,1,0,3,12]",
+      "output": "[1,3,12,0,0]",
+      "explanation": "The non-zero elements keep their order — 1 before 3 before 12 — and the two zeros are pushed to the tail."
+    },
+    {
+      "input": "nums = [0,0,1]",
+      "output": "[1,0,0]",
+      "explanation": "The single non-zero element travels two slots left. This is the case where the write index falls furthest behind the read index."
+    },
+    {
+      "input": "nums = [1,2,3]",
+      "output": "[1,2,3]",
+      "explanation": "No zeros at all, so the write index tracks the read index exactly and nothing actually moves."
+    }
+  ],
+  "constraints": [
+    "1 <= nums.length <= 10^4",
+    "-2^31 <= nums[i] <= 2^31 - 1",
+    "The array must be modified in place",
+    "The relative order of non-zero elements must be preserved"
+  ],
+  "bruteForce": {
+    "idea": "Scan for a zero; when one is found, shift the whole remaining tail one slot left and write a zero into the last position. Repeat.",
+    "code": [
+      "for (int i = 0; i < nums.length; i++) {",
+      "    if (nums[i] == 0) {",
+      "        for (int j = i; j < nums.length - 1; j++) {",
+      "            nums[j] = nums[j + 1];",
+      "        }",
+      "        nums[nums.length - 1] = 0;",
+      "        i--;   // re-inspect this slot, it now holds whatever shifted in",
+      "    }",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n^2)",
+      "space": "O(1)"
+    },
+    "whySlow": "Every zero found drags the entire remaining tail one slot left, and the next zero drags most of those same elements again. An element sitting behind k zeros is copied k separate times to achieve a net displacement of k — the intermediate positions are written and immediately overwritten. On an array that is mostly zeros, almost every element is copied almost n times, when one write per surviving element would have sufficed."
+  },
+  "patternIdentification": "When the task is 'keep some elements, in order, in place', stop thinking about removing and start thinking about writing. One index reads every element; a second index marks where the next kept element belongs. The gap between them is precisely the number of discarded elements so far, the write index never overtakes the read index, and so nothing ever needs shifting.",
+  "optimized": {
+    "idea": "One pass copies every non-zero element to the front, in order, using a separate write index. Because the write index only advances when something is kept, it is always at or behind the read index — so a write can never clobber an element that has not been read yet. A second, trivial pass fills everything from the write index onwards with zeros.",
+    "code": [
+      "public static void moveZeroes(int[] nums) {",
+      "    int write = 0;",
+      "    for (int read = 0; read < nums.length; read++) {",
+      "        if (nums[read] != 0) {",
+      "            nums[write++] = nums[read];   // write <= read always, so nothing is lost",
+      "        }",
+      "    }",
+      "    while (write < nums.length) {",
+      "        nums[write++] = 0;",
+      "    }",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(1)"
+    }
+  },
+  "commonMistakes": [
+    "Stopping the zero-fill at nums.length - 1: [0,1,0,3,12] comes out as [1,3,12,0,12], because the final slot keeps the stale copy left behind by the compaction pass. The bug is invisible on every input that already ends in 0.",
+    "Swapping nums[read] and nums[write] on every iteration instead of only when nums[read] != 0 — the write index then advances in lockstep with the read index, every swap is an element with itself, and the array comes back completely unchanged.",
+    "Building the result in a new array and returning it when the method is supposed to mutate its argument: the caller's array is untouched, every assertion reads the original, and the method looks like a silent no-op."
+  ],
+  "similar": [
+    "remove-duplicates-sorted",
+    "sort-colors",
+    "rotate-array",
+    "squares-of-sorted-array"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 283,
+      "slug": "move-zeroes",
+      "title": "Move Zeroes",
+      "url": "https://leetcode.com/problems/move-zeroes/",
+      "premium": false
+    }
+  }
+}

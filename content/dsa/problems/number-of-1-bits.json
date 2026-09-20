@@ -1,0 +1,102 @@
+{
+  "id": "number-of-1-bits",
+  "title": "Number of 1 Bits",
+  "patternId": "bit-manipulation",
+  "difficulty": "beginner",
+  "tags": [
+    "bit-manipulation",
+    "popcount"
+  ],
+  "statement": "Given a 32-bit integer, return the number of bits that are set to 1 — its Hamming weight. Treat the input as an unsigned 32-bit value, so a negative Java int is the bit pattern with the sign bit set, not a negative quantity.",
+  "realWorld": "Cardinality of a bitset. Permission masks, Bloom filter fill ratios, feature flags, and the population counts inside HyperLogLog all reduce to 'how many bits are set'. It is common enough that x86 has a POPCNT instruction and Java exposes it as Integer.bitCount, which the JIT compiles down to that single instruction.",
+  "examples": [
+    {
+      "input": "n = 11",
+      "output": "3",
+      "explanation": "11 is 00000000000000000000000000001011, which has three 1s."
+    },
+    {
+      "input": "n = 128",
+      "output": "1",
+      "explanation": "128 is 00000000000000000000000010000000. A single high bit, so n & (n - 1) clears it in one step and the loop runs once — not eight times."
+    },
+    {
+      "input": "n = -3",
+      "output": "31",
+      "explanation": "As an unsigned pattern, -3 is 11111111111111111111111111111101 — every bit set except bit 1. This is the case where a loop written with `n > 0` or `>>` instead of `>>>` fails."
+    }
+  ],
+  "constraints": [
+    "The input is a 32-bit integer",
+    "In Java the input arrives as a signed int; interpret its bits as unsigned",
+    "0 <= number of 1 bits <= 32"
+  ],
+  "bruteForce": {
+    "idea": "Test every one of the 32 bit positions in turn.",
+    "code": [
+      "int count = 0;",
+      "for (int i = 0; i < 32; i++) {",
+      "    if (((n >>> i) & 1) == 1) count++;",
+      "}",
+      "return count;"
+    ],
+    "complexity": {
+      "time": "O(32) — constant, but always 32 iterations",
+      "space": "O(1)"
+    },
+    "whySlow": "The loop is not asymptotically bad, but it does a fixed 32 iterations regardless of the input. For n = 128 it performs 31 shifts and tests that all report zero, to find one bit. In a hot loop — counting the fill of every word of a large bitset, or the popcount of millions of feature masks — that constant is the whole cost, and it is being spent on bits that are known to be empty. The waste is asking about positions instead of asking about the bits that are actually there."
+  },
+  "patternIdentification": "Two habits to take away. First, the mechanical one: `(n >>> i) & 1` reads bit i, and in Java the shift must be `>>>`, not `>>`. The arithmetic right shift `>>` copies the sign bit into the vacated high positions, so on a negative n the value never reaches zero and a `while (n != 0)` loop spins forever — this is the single most common Java-specific bug in bit problems. Use `>>>` whenever an int is a bag of bits rather than a number.\n\nSecond, the real insight: **n & (n - 1) clears the lowest set bit, and nothing else.** Subtracting one from n flips that lowest 1 to a 0 and turns every 0 below it into a 1, while leaving everything above it untouched — that is just how borrowing works in binary. ANDing the two therefore kills exactly the bit that changed from 1 to 0, and the all-ones tail below it is annihilated against the all-zeros tail in n. Concretely, 12 is 1100 and 11 is 1011, and 1100 & 1011 = 1000. So the loop runs once per set bit rather than once per position, and a related trick falls straight out: `(n & (n - 1)) == 0` tests whether n is a power of two.\n\nThe transferable form is 'find an operation that removes one unit of the thing you are counting, and iterate it'. That is the same move that turns a linear scan into `counting-bits` dynamic programming and underlies subset enumeration in `subsets-bitmask`.",
+  "optimized": {
+    "idea": "Repeatedly clear the lowest set bit with n &= (n - 1), counting the iterations. The loop body runs exactly as many times as there are 1 bits, so a value with a single high bit costs one iteration and a value with all bits set costs 32. Brian Kernighan's algorithm, and worth knowing because the same expression answers 'is this a power of two?' and 'clear the lowest flag' elsewhere.\n\nBecause the loop condition is `n != 0` and each step strictly reduces the number of set bits, negative inputs need no special handling and no shifting at all — which sidesteps the `>>` versus `>>>` question entirely. In production, call Integer.bitCount(n); it compiles to a single machine instruction. Know this loop because the interview asks for it and because the identity is reusable.",
+    "code": [
+      "public static int hammingWeight(int n) {",
+      "    int count = 0;",
+      "    while (n != 0) {",
+      "        n &= (n - 1);   // n - 1 flips the lowest 1 to 0 and all zeros below it to 1, so the AND erases exactly that bit",
+      "        count++;",
+      "    }",
+      "    return count;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(number of set bits) — at most 32, often far fewer",
+      "space": "O(1)"
+    }
+  },
+  "visualization": {
+    "engine": "bitOps",
+    "input": {
+      "value": 12
+    },
+    "code": [
+      "int i = 12;",
+      "int doubled = i << 1;        // shift left  -> multiply by 2",
+      "int halved  = i >> 1;        // shift right -> integer divide by 2",
+      "int lowBit  = i & 1;         // the last bit: 1 if odd, 0 if even",
+      "int cleared = i & (i - 1);   // clears the LOWEST set bit — one 1 fewer",
+      "int lowest  = i & -i;        // isolate the lowest set bit",
+      "int zero    = i ^ i;         // XOR is its own inverse"
+    ]
+  },
+  "commonMistakes": [
+    "Writing the shift-and-test loop as `while (n != 0) { count += n & 1; n >>= 1; }`. With `>>` a negative input keeps its sign bit refilled forever, so n never becomes 0 and the method hangs. Every non-negative test passes, and n = -3 turns the program into an infinite loop rather than a wrong answer.",
+    "Looping `for (int i = 0; i < 31; i++)` or `i <= 32`. Off by one at the top: the first silently ignores the sign bit, so -3 returns 30 instead of 31, and the second shifts by 32, which in Java is a shift by 32 % 32 = 0 and re-counts bit 0 — Java does not shift a value to zero, it wraps the shift distance.",
+    "Using `n & (n - 1)` but forgetting to assign the result, writing `n & (n - 1);` or `n - 1 & n` inside the condition without updating n. The loop condition never changes and the method hangs — the same symptom as the sign-bit bug, from an entirely different cause."
+  ],
+  "similar": [
+    "counting-bits",
+    "single-number",
+    "reverse-bits",
+    "single-number-ii"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 191,
+      "slug": "number-of-1-bits",
+      "title": "Number of 1 Bits",
+      "url": "https://leetcode.com/problems/number-of-1-bits/",
+      "premium": false
+    }
+  }
+}

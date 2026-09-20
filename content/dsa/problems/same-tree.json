@@ -1,0 +1,92 @@
+{
+  "id": "same-tree",
+  "title": "Same Tree",
+  "patternId": "trees",
+  "difficulty": "beginner",
+  "tags": [
+    "tree",
+    "recursion",
+    "dfs"
+  ],
+  "statement": "Given the roots of two binary trees p and q, return true if they are identical: the same shape and the same value at every corresponding position.",
+  "realWorld": "A UI framework's reconciliation step compares the previous render tree with the new one to decide what to repaint, and the cheap first question at every node is 'are these two subtrees identical?'. The same check decides whether a re-parsed configuration file or a re-compiled AST differs from the cached one, and so whether any downstream work is needed at all.",
+  "examples": [
+    {
+      "input": "p = [1,2,3], q = [1,2,3]",
+      "output": "true",
+      "explanation": "Trees here use level-order notation: values listed level by level, left to right, with null for a missing child. Same shape, same values at every position."
+    },
+    {
+      "input": "p = [1,2], q = [1,null,2]",
+      "output": "false",
+      "explanation": "Same node count, same multiset of values {1,2}. The 2 is a left child in p and a right child in q, so they are different trees. Shape is part of the identity, not a detail alongside it."
+    },
+    {
+      "input": "p = [1,2,1], q = [1,1,2]",
+      "output": "false",
+      "explanation": "Identical values, identical shape, but 2 and 1 are on opposite sides. Position matters at every node, so the comparison has to happen in lockstep rather than as a set comparison."
+    }
+  ],
+  "constraints": [
+    "0 <= number of nodes in each tree <= 100",
+    "-10^4 <= node.val <= 10^4",
+    "Either tree may be empty"
+  ],
+  "bruteForce": {
+    "idea": "Flatten both trees with an inorder walk into two lists of values, then compare the lists element by element.",
+    "code": [
+      "List<Integer> flatten(TreeNode node, List<Integer> out) {",
+      "    if (node == null) return out;",
+      "    flatten(node.left, out);",
+      "    out.add(node.val);",
+      "    flatten(node.right, out);",
+      "    return out;",
+      "}",
+      "",
+      "boolean isSameTree(TreeNode p, TreeNode q) {",
+      "    return flatten(p, new ArrayList<>()).equals(flatten(q, new ArrayList<>()));",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(n)"
+    },
+    "whySlow": "Two separate faults. It builds two full n-element lists before comparing a single value, so two trees that differ at their roots still cost a complete walk of both — the very first comparison could have settled it. And it is not merely wasteful, it is wrong: a traversal without null markers does not determine a tree. The tree 'root 1 with left child 2' and the tree 'root 2 with right child 1' both flatten to [2,1], so this brute force reports 'same' for two different trees. The information it discards is the absences — where the children are not."
+  },
+  "patternIdentification": "Two structures, one question asked at every corresponding pair of positions: walk them in lockstep rather than flattening either. Compare the two nodes in front of you, then recurse on (p.left, q.left) and (p.right, q.right). The base cases carry the structural half of the answer — both null means 'they ran out together, still identical', exactly one null means 'different shape' — which is precisely the information a flattened list loses. Any 'are these two things equal' problem over a recursive structure has this shape.",
+  "optimized": {
+    "idea": "Recurse over both trees at once. Three checks at each step: both exhausted (true), one exhausted (false), values differ (false); otherwise recurse on both pairs of children. The && short-circuits, so the walk stops at the first difference instead of finishing.",
+    "code": [
+      "public static boolean isSameTree(TreeNode p, TreeNode q) {",
+      "    if (p == null && q == null) return true;    // ran out together: still identical",
+      "    if (p == null || q == null) return false;   // exactly one ran out: different shape",
+      "    if (p.val != q.val) return false;",
+      "    return isSameTree(p.left, q.left) && isSameTree(p.right, q.right);",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(min(n, m)) — it stops at the first mismatch",
+      "space": "O(h) for the call stack"
+    }
+  },
+  "commonMistakes": [
+    "Comparing `p.val != q.val` before the null checks. The moment the two trees differ in shape one of the pointers is null and you get a NullPointerException — on exactly the input the function exists to detect, so every 'same' test passes and every 'different' test crashes.",
+    "Comparing contents without comparing shape, usually by flattening to a list or a multiset of values. p = [1,2] and q = [1,null,2] both look like 'one 1 and one 2' and the function wrongly returns true.",
+    "Evaluating both recursive calls into locals first (`boolean l = isSameTree(...); boolean r = isSameTree(...); return l && r;`) or writing `&` instead of `&&`. The answer stays correct but the early exit is gone, so a mismatch in the leftmost leaf still walks both entire right subtrees — the symptom is a solution that is correct and inexplicably slower than the reference."
+  ],
+  "similar": [
+    "invert-binary-tree",
+    "balanced-binary-tree",
+    "serialize-deserialize-tree",
+    "max-depth-binary-tree"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 100,
+      "slug": "same-tree",
+      "title": "Same Tree",
+      "url": "https://leetcode.com/problems/same-tree/",
+      "premium": false
+    }
+  }
+}

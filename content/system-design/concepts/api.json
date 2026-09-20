@@ -1,0 +1,181 @@
+{
+  "id": "api",
+  "title": "APIs — The Contract",
+  "group": "Foundations",
+  "level": 1,
+  "estimatedMinutes": 20,
+  "summary": "The published set of operations a service offers, and the promises it makes about them — which is the part you cannot change later.",
+  "analogy": "A restaurant menu. It lists what you can order, what each dish contains and what it costs. The kitchen can replace its oven, hire a new chef, or move to a bigger building, and none of that concerns you — as long as the menu still means what it said. The day the menu changes what a dish means, every regular customer is surprised.",
+  "explanation": {
+    "beginner": "An API is the list of things one program will do for another, plus the exact shape of the questions and answers. 'POST /orders with these fields creates an order and returns its id.' Once other people build against it, you cannot quietly change what a field means — their code will break. That is why versioning exists.",
+    "interview": "A contract comprising resources or operations, request and response schemas, error semantics, authentication, idempotency guarantees, pagination and rate limits. The internal implementation is free to change; the contract is not. Backwards compatibility rules follow: adding optional fields is safe, removing or repurposing fields is breaking, and tightening validation is breaking."
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "mobile",
+        "label": "Mobile app",
+        "type": "client",
+        "x": 120,
+        "y": 180
+      },
+      {
+        "id": "web",
+        "label": "Web app",
+        "type": "client",
+        "x": 120,
+        "y": 420
+      },
+      {
+        "id": "gw",
+        "label": "API\\n(the contract)",
+        "type": "proxy",
+        "x": 450,
+        "y": 300,
+        "note": "Auth, validation, rate limiting, versioning. The stable surface everything else hides behind.",
+        "why": {
+          "without": [
+            "Each client would talk to internal services directly and break whenever they change"
+          ],
+          "with": [
+            "Internals can be refactored freely as long as the contract holds"
+          ],
+          "conclusion": "The API is a firewall against your own future refactoring."
+        }
+      },
+      {
+        "id": "svc1",
+        "label": "Orders service",
+        "type": "server",
+        "x": 790,
+        "y": 170
+      },
+      {
+        "id": "svc2",
+        "label": "Catalog service",
+        "type": "server",
+        "x": 790,
+        "y": 300
+      },
+      {
+        "id": "svc3",
+        "label": "Payments service",
+        "type": "server",
+        "x": 790,
+        "y": 430
+      }
+    ],
+    "edges": [
+      {
+        "from": "mobile",
+        "to": "gw",
+        "label": "HTTPS"
+      },
+      {
+        "from": "web",
+        "to": "gw",
+        "label": "HTTPS"
+      },
+      {
+        "from": "gw",
+        "to": "svc1"
+      },
+      {
+        "from": "gw",
+        "to": "svc2"
+      },
+      {
+        "from": "gw",
+        "to": "svc3"
+      }
+    ]
+  },
+  "why": {
+    "without": [
+      "Every client couples to your internal data model, so a column rename becomes a customer incident",
+      "No single place for auth, rate limiting or validation",
+      "Rewriting a service means rewriting every caller"
+    ],
+    "with": [
+      "Internals change freely behind a stable surface",
+      "Cross-cutting concerns live in one layer",
+      "Teams integrate against a document rather than a codebase"
+    ],
+    "conclusion": "The API is the promise; the implementation is a detail. Design the promise carefully because it is the expensive thing to change."
+  },
+  "whenToUse": [
+    "Anything other people (or other teams) will call",
+    "Whenever you want the freedom to rewrite internals later"
+  ],
+  "whenNotToUse": [
+    "Inside a single module where a function call is simpler and type-checked",
+    "Do not add an API gateway to a two-service system for its own sake"
+  ],
+  "tradeoffs": [
+    {
+      "option": "Versioned URLs (/v1/, /v2/)",
+      "pros": [
+        "Explicit and obvious",
+        "Old clients keep working indefinitely",
+        "Easy to route and to reason about"
+      ],
+      "cons": [
+        "Two code paths to maintain",
+        "Versions tend never to be retired"
+      ]
+    },
+    {
+      "option": "Additive-only evolution (no versions)",
+      "pros": [
+        "One code path",
+        "No migration work for clients"
+      ],
+      "cons": [
+        "The schema accretes deprecated fields forever",
+        "Some changes genuinely cannot be made additively"
+      ]
+    }
+  ],
+  "designRules": [
+    "Nouns for resources, HTTP methods for verbs: POST /orders, not POST /createOrder.",
+    "Return the created resource and a 201 with a Location header.",
+    "Paginate every list endpoint from day one — cursor-based, not offset, if the data changes underneath.",
+    "Make writes idempotent with a client-supplied Idempotency-Key so retries cannot double-charge.",
+    "Errors need a machine-readable code plus a human-readable message. Never only prose.",
+    "Adding an optional field is safe; removing one, renaming one or tightening validation is a breaking change."
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "architecture",
+      "question": "Which change to a public API is safe to ship without a new version?",
+      "options": [
+        "Renaming a response field",
+        "Adding a new optional response field",
+        "Making a previously optional request field required",
+        "Changing a status code from 200 to 204"
+      ],
+      "answerIndex": 1,
+      "explanation": "Well-written clients ignore unknown fields, so additions are safe. Renames, new requirements and changed status codes all break existing callers."
+    },
+    {
+      "id": "q2",
+      "type": "architecture",
+      "question": "A payment API times out after the charge succeeded, and the client retries. How do you prevent a double charge?",
+      "options": [
+        "Tell clients not to retry",
+        "Require a client-supplied idempotency key that the server records, returning the original result on repeat",
+        "Use GET instead of POST",
+        "Add a longer timeout"
+      ],
+      "answerIndex": 1,
+      "explanation": "The network cannot tell 'request lost' from 'response lost', so retries are inevitable. An idempotency key makes the second attempt return the first attempt's result instead of performing the action again."
+    }
+  ],
+  "related": [
+    "http",
+    "api-gateway",
+    "auth",
+    "client-server"
+  ]
+}

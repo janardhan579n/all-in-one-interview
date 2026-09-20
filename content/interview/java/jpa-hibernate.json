@@ -1,0 +1,305 @@
+{
+  "id": "java-jpa-hibernate",
+  "trackId": "java",
+  "topic": "jpa-hibernate",
+  "title": "JPA & Hibernate",
+  "summary": "The persistence context, the N+1 problem, and the traps that only appear once real data arrives.",
+  "questions": [
+    {
+      "id": "jph-01",
+      "level": "junior",
+      "type": "concept",
+      "question": "What is the persistence context, and what does it mean for an entity to be 'managed'?",
+      "answer": "The persistence context is the `EntityManager`'s first-level cache — a map of identity to entity for everything it has loaded or saved within the current transaction. An entity in that map is **managed**: Hibernate is tracking it, and changes to its fields will be written to the database automatically at flush time. You do not call `save()` for an update; you mutate the object and the transaction commit does the rest.\n\nThe four states are worth naming precisely:\n\n- **Transient** — a `new` object Hibernate has never seen.\n- **Managed** — loaded or persisted inside an open context, changes tracked.\n- **Detached** — the context closed; still a valid object, but nobody is watching it.\n- **Removed** — marked for deletion at flush.\n\nThe practical consequence people trip on is that loading the same row twice in one transaction returns the *same object instance*, not two equal copies. That is the identity guarantee, and it is why `==` works inside a transaction and stops working the moment the entity is detached.",
+      "keyPoints": [
+        "First-level cache scoped to the transaction, keyed by entity identity",
+        "Managed entities are dirty-checked; you do not call save() to update",
+        "Transient / managed / detached / removed — know the transitions",
+        "Same row loaded twice in one context is the same instance"
+      ],
+      "followUps": [
+        {
+          "q": "So when does an UPDATE statement actually get sent?",
+          "a": "At flush, which happens before a query that might be affected, and always at commit. Hibernate compares each managed entity against the snapshot it took at load time and writes only what changed. That is why `save()` on a managed entity is redundant — and why an accidental mutation inside a transaction silently persists."
+        }
+      ],
+      "redFlags": [
+        "Believing an update needs an explicit save() call",
+        "Not knowing the entity states"
+      ]
+    },
+    {
+      "id": "jph-02",
+      "level": "junior",
+      "type": "concept",
+      "question": "What is LazyInitializationException and why does it happen?",
+      "answer": "A lazy association is not loaded when the parent is loaded — Hibernate puts a proxy there instead, and fetches the real data the first time you touch it. That fetch needs an open persistence context. Touch it after the transaction has ended and there is nobody left to run the query, so you get `LazyInitializationException: could not initialize proxy — no Session`.\n\nIt shows up most often when an entity is returned straight out of a `@Transactional` service and the controller or the JSON serialiser then walks its collections — the transaction closed at the service boundary.\n\nThe fixes, worst to best:\n\n- `spring.jpa.open-in-view=true` (the default, and a trap) keeps the session open for the whole request. It makes the exception disappear and replaces it with unpredictable queries fired during serialisation, holding a database connection for the entire request. Turn it off and deal with the real problem.\n- `Hibernate.initialize()` or touching the collection inside the transaction — works, but it is manual and easy to forget.\n- **Fetch what you need in the query** — a join fetch or an `@EntityGraph` — and map to a DTO inside the transaction. The entity never escapes, so the question cannot arise.",
+      "keyPoints": [
+        "Lazy proxies need an open session to resolve",
+        "Usually caused by an entity escaping the transaction boundary",
+        "open-in-view hides it and creates worse problems — disable it",
+        "The real fix is fetching deliberately and returning DTOs"
+      ],
+      "followUps": [
+        {
+          "q": "Why is open-in-view considered harmful?",
+          "a": "It holds the database connection for the duration of the HTTP response, including serialisation and any slow client. Queries then fire from the view layer where no one is looking at them, so N+1 problems become invisible. It is on by default for backwards compatibility, and most teams that have had a production incident with connection pool exhaustion have turned it off."
+        }
+      ],
+      "redFlags": [
+        "Making every association EAGER to avoid it",
+        "Not knowing open-in-view exists or that it defaults to true"
+      ]
+    },
+    {
+      "id": "jph-03",
+      "level": "mid",
+      "type": "scenario",
+      "question": "An endpoint that returns 50 orders issues 51 SQL queries. Explain what is happening and fix it.",
+      "answer": "The N+1 problem. One query loads the 50 orders; then each order's lazy `customer` or `items` association is touched during mapping or serialisation, and each triggers its own SELECT. Fifty rows, fifty-one queries. It is invisible in development against ten rows and brutal at scale — each query is a round trip, so the cost is dominated by latency, not by the database's work.\n\n**See it first**: `spring.jpa.show-sql` is crude; `logging.level.org.hibernate.SQL=DEBUG` plus datasource-proxy or Hibernate's `generate_statistics` gives you counts. Better still, assert on the query count in an integration test so a regression fails the build.\n\n**Three real fixes, with the trade-off each carries**:\n\n1. **Join fetch** — `@Query(\"select o from Order o join fetch o.items where ...\")`. One query, no round trips. But a join fetch across *two* collections multiplies rows (a Cartesian product) and Hibernate cannot paginate a fetched collection in SQL — it silently loads everything into memory and pages there, which is a much worse bug.\n2. **`@EntityGraph`** — declarative, composes with Spring Data method names, same semantics as join fetch without hand-writing JPQL. Usually the cleanest.\n3. **`@BatchSize(size = 25)`** or `hibernate.default_batch_fetch_size` — keeps the association lazy but loads proxies in batches with `where id in (?, ?, …)`. Turns 51 queries into 3. This is the right answer when you cannot join (multiple collections, or pagination), and setting the global default is the single highest-value line of Hibernate configuration most projects are missing.\n\n**The DTO answer**: if the endpoint only needs four fields, project straight into a record with a JPQL constructor expression. No entities, no lazy loading, no problem to solve.",
+      "keyPoints": [
+        "One query for the parents, one per child association touched",
+        "Cost is round-trip latency, so it scales with row count",
+        "join fetch: one query, but breaks pagination and multiplies rows across two collections",
+        "@EntityGraph: declarative equivalent; @BatchSize: batched IN queries, works with pagination",
+        "Projecting to a DTO avoids the entire category"
+      ],
+      "followUps": [
+        {
+          "q": "Why can't Hibernate paginate a join fetch in SQL?",
+          "a": "Because the join produces one row per child, so `LIMIT 20` would cut a parent's collection in half rather than returning 20 parents. Hibernate detects this and logs `HHH000104: firstResult/maxResults specified with collection fetch; applying in memory` — it loads the entire result set and pages in the JVM. On a large table that is an OutOfMemoryError waiting for enough data."
+        },
+        {
+          "q": "How would you stop this regressing?",
+          "a": "An integration test that counts statements. Hibernate's `SessionFactory.getStatistics().getPrepareStatementCount()` around a service call, asserted against an expected number, turns a silent performance regression into a failing build."
+        }
+      ],
+      "redFlags": [
+        "Switching everything to FetchType.EAGER",
+        "Not being able to name a downside of join fetch",
+        "Fixing it by adding a cache in front of the problem"
+      ],
+      "related": [
+        "database",
+        "cache"
+      ]
+    },
+    {
+      "id": "jph-04",
+      "level": "mid",
+      "type": "tradeoff",
+      "question": "Why is FetchType.EAGER on a collection almost always the wrong choice?",
+      "answer": "Because it is a decision made in the entity that every query is then forced to live with. The association is loaded on **every** path that touches the entity — including the ones that only needed the id — and you cannot turn it off per query. `@ManyToOne` defaults to EAGER for the same reason and is nearly as bad.\n\nThree specific costs. It multiplies rows: two eager collections produce a Cartesian product, and a parent with 10 items and 10 tags fetches 100 rows. It defeats caching and pagination in the ways described for join fetch. And it hides the cost — a query that looks like a single-row lookup quietly drags in a subtree.\n\nThe principle is that **fetching is a property of the use case, not of the model**. Declare everything `LAZY`, then fetch explicitly where a particular query needs it: `@EntityGraph`, a join fetch, or a projection. That way the cost is visible at the call site, where the person deciding can see it.\n\nThe honest counter-case: a `@ManyToOne` to a small, always-needed, rarely-changing reference entity — a currency, a status — where eager costs one join and saves a proxy. Even then a batch size usually does the job without the commitment.",
+      "keyPoints": [
+        "EAGER is a global decision imposed on every query",
+        "Two eager collections give you a Cartesian product",
+        "Fetching belongs to the use case, not the entity model",
+        "Default to LAZY and fetch explicitly per query",
+        "@ManyToOne is EAGER by default — override it"
+      ],
+      "followUps": [
+        {
+          "q": "What is the Cartesian product problem exactly?",
+          "a": "Joining a parent to two collections of sizes m and n returns m × n rows, all carrying duplicated parent columns. Hibernate de-duplicates the entities in memory, so the result looks right while the database did far more work and shipped far more bytes than necessary. It is the single most common cause of a query that is slow for no visible reason."
+        }
+      ],
+      "redFlags": [
+        "\"EAGER avoids N+1\" — it converts it into a different, often worse, problem",
+        "Not knowing @ManyToOne defaults to EAGER"
+      ]
+    },
+    {
+      "id": "jph-05",
+      "level": "mid",
+      "type": "concept",
+      "question": "Explain the first and second level caches. When is the second level actually worth it?",
+      "answer": "**First level** is the persistence context: per transaction, always on, not optional. It guarantees identity within the transaction and saves repeated lookups of the same row.\n\n**Second level** is a shared cache across transactions and sessions, held per `SessionFactory` and backed by something like Ehcache, Infinispan or Hazelcast. It has to be enabled deliberately and configured per entity with `@Cache`.\n\nIt is worth it for entities that are read far more than written, small enough to hold, and tolerant of slight staleness — reference data, configuration, catalogues. It is a poor fit for anything written frequently, because every write invalidates entries, and for anything where a stale read is a correctness problem.\n\nThe complications to raise unprompted, because they are what bite in production: in a multi-instance deployment each node has its own cache unless you run a distributed one, so two nodes can disagree; a query cache is a separate thing again and is invalidated by *any* write to the tables it touches, which often makes it useless; and anything writing to the database outside Hibernate — a migration, another service, a DBA — leaves the cache confidently wrong.\n\nWhich is why the common judgement is: put the cache in front of the service (Redis, keyed by your own domain keys, invalidated by your own events) rather than under the ORM, where you control both the key and the invalidation.",
+      "keyPoints": [
+        "L1 = persistence context, per transaction, mandatory",
+        "L2 = shared across sessions, opt-in, per entity",
+        "Read-mostly, small, staleness-tolerant entities only",
+        "Multi-instance means multiple caches unless distributed",
+        "Writes bypassing Hibernate silently corrupt it"
+      ],
+      "followUps": [
+        {
+          "q": "Why is the query cache usually a disappointment?",
+          "a": "It caches result-set *ids* keyed by the query and its parameters, and any insert, update or delete on a participating table invalidates the whole region. On a table with steady writes the hit rate approaches zero while you still pay the bookkeeping. It works for genuinely static lookup queries and little else."
+        }
+      ],
+      "redFlags": [
+        "Enabling L2 for all entities by default",
+        "Not mentioning invalidation or multi-node consistency"
+      ],
+      "related": [
+        "cache",
+        "replication"
+      ]
+    },
+    {
+      "id": "jph-06",
+      "level": "mid",
+      "type": "code",
+      "question": "Why does this entity break when used in a HashSet, and how should equals and hashCode be written for a JPA entity?",
+      "answer": "Because the id is null until the entity is persisted. Add a transient entity to a `HashSet`, save it, and its hash code changes — the object is now in the wrong bucket and `contains()` returns false for an object that is demonstrably in the set. Bidirectional `@OneToMany` collections mapped as `Set` hit this constantly.\n\nThere are two defensible approaches.\n\n**Use a business key** — something naturally unique and immutable: an order number, an email, an ISBN. This is the correct answer when one exists.\n\n**When there is no business key**, use the shape Hibernate's own documentation recommends: a constant hash code, and equality on id with a null guard.\n\n```java\n@Override\npublic boolean equals(Object o) {\n    if (this == o) return true;\n    if (!(o instanceof Order other)) return false;\n    return id != null && id.equals(other.id);   // unsaved entities are equal only to themselves\n}\n\n@Override\npublic int hashCode() { return getClass().hashCode(); }   // constant: stable across the id being assigned\n```\n\nA constant hash code looks wrong until you see why: it degrades a `HashSet` of entities to a linear scan, which is fine because those sets are small, and it is the only value that does not change when the id is assigned. Note also `instanceof` rather than `getClass() ==` — Hibernate proxies are subclasses, so a `getClass()` comparison fails against a lazy proxy of the same row.",
+      "codeExample": {
+        "language": "java",
+        "code": [
+          "@Entity",
+          "public class Order {",
+          "    @Id @GeneratedValue",
+          "    private Long id;",
+          "",
+          "    @Override",
+          "    public boolean equals(Object o) {",
+          "        if (!(o instanceof Order other)) return false;",
+          "        return Objects.equals(id, other.id);      // both null before save → all equal!",
+          "    }",
+          "",
+          "    @Override",
+          "    public int hashCode() { return Objects.hash(id); }   // changes when id is assigned",
+          "}"
+        ]
+      },
+      "keyPoints": [
+        "A generated id is null before persist, so hash code changes on save",
+        "Two unsaved entities both compare equal with Objects.equals(null, null)",
+        "Business key if one exists; otherwise id-equality plus a constant hashCode",
+        "Use instanceof, not getClass() — Hibernate proxies are subclasses"
+      ],
+      "followUps": [
+        {
+          "q": "Does making the entity a record solve this?",
+          "a": "No — JPA entities cannot be records. They need a no-arg constructor, non-final fields for proxying and dirty checking, and mutable state. A record is the right shape for the DTO you map the entity into, which is a good reason to have one."
+        }
+      ],
+      "redFlags": [
+        "Using Lombok's @Data or @EqualsAndHashCode on an entity — it includes every field, touches lazy associations, and can trigger loading during a hash",
+        "getClass() == o.getClass() without knowing about proxies"
+      ],
+      "related": [
+        "hashing"
+      ]
+    },
+    {
+      "id": "jph-07",
+      "level": "mid",
+      "type": "concept",
+      "question": "What does @Transactional(readOnly = true) actually do?",
+      "answer": "Three distinct things, and it is worth separating them because only one is about the database.\n\n**Hibernate sets the flush mode to MANUAL.** No dirty checking, no automatic flush — which means Hibernate does not take a snapshot of every loaded entity for comparison. On a query returning thousands of rows that is a real memory and CPU saving, and it is the main reason to use the flag.\n\n**Spring marks the JDBC connection read-only**, and the driver may pass that to the database. PostgreSQL will reject writes on such a connection; MySQL's behaviour depends on the driver version. So it is a safety net, but not a portable guarantee.\n\n**It can route to a replica**, if you have configured a routing datasource keyed on the transaction's read-only flag. That is a common and clean pattern for read scaling.\n\nWhat it does *not* do is make the method faster in any general sense, and it does not prevent you from mutating an object in memory — it only prevents that mutation being flushed. Silent non-persistence of a change is the one surprise: an update inside a read-only transaction does not throw, it simply does nothing.",
+      "keyPoints": [
+        "Flush mode MANUAL — no dirty-check snapshots, real savings on large reads",
+        "Marks the JDBC connection read-only; enforcement is driver-dependent",
+        "Enables replica routing when a routing datasource is configured",
+        "A write inside it is silently discarded rather than rejected"
+      ],
+      "followUps": [
+        {
+          "q": "Should every read method have it?",
+          "a": "For anything returning a meaningful number of rows, yes — it is free. For a single-row lookup the saving is negligible, but consistency is worth more than micro-optimisation, so a blanket convention on query methods is reasonable."
+        }
+      ],
+      "redFlags": [
+        "Believing it guarantees the database will reject writes",
+        "Not knowing it disables dirty checking"
+      ],
+      "related": [
+        "replication"
+      ]
+    },
+    {
+      "id": "jph-08",
+      "level": "senior",
+      "type": "concept",
+      "question": "Explain optimistic locking with @Version, and how you handle the failure.",
+      "answer": "Add a `@Version` column and Hibernate appends it to every update: `UPDATE orders SET ..., version = 4 WHERE id = ? AND version = 3`. If another transaction already moved the row to version 4, zero rows match, and Hibernate raises `OptimisticLockException`. No locks are ever taken — hence *optimistic*: you assume conflicts are rare and detect them at write time instead of preventing them.\n\nThe contrast with pessimistic (`SELECT ... FOR UPDATE`) is the trade you are making. Pessimistic serialises access, so it is correct under heavy contention but holds a database lock for the duration of your transaction and can deadlock. Optimistic costs nothing when conflicts are rare and costs a retry when they are not. Under genuinely high contention on one row, optimistic degrades badly — every writer retries and most lose again.\n\n**Handling the failure is the real question**, and there are only two honest answers:\n\n- **Retry** when the operation is a computed change that can simply be re-applied to fresh state — incrementing a balance, recalculating a total. Reload, re-apply, save, with a bounded number of attempts and jitter. Spring Retry or a small loop; never an unbounded `while (true)`.\n- **Surface it to the user** when the change carries human intent that cannot be replayed safely — someone edited a description based on what they read. Silently retrying overwrites the other person's edit, which is data loss wearing the costume of a fix. The correct response is a 409 and \"this record changed while you were editing\".\n\nChoosing between them is a product decision, not a technical one, and saying so is what distinguishes a senior answer.",
+      "keyPoints": [
+        "Version column in the WHERE clause; zero rows updated means conflict",
+        "No locks held — detection at write time, not prevention",
+        "Retry only when the change can be recomputed from fresh state",
+        "Return 409 when the change carries human intent — retrying is data loss",
+        "Bound the retries with backoff and jitter"
+      ],
+      "followUps": [
+        {
+          "q": "When would you choose pessimistic locking instead?",
+          "a": "When conflicts are frequent enough that retries dominate, and the critical section is short — decrementing inventory for the last few units of a hot item, for example. You pay lock contention to avoid a retry storm. Keep the transaction tiny and always take locks in a consistent order."
+        },
+        {
+          "q": "How does this interact with a REST API?",
+          "a": "Very neatly: expose the version as an ETag, require `If-Match` on updates, and return 412 or 409 on mismatch. That pushes the same optimistic concurrency model out to the client, so two browser tabs cannot silently overwrite each other."
+        }
+      ],
+      "redFlags": [
+        "Retrying blindly on every OptimisticLockException",
+        "Unbounded retry loops",
+        "Not knowing the difference from pessimistic locking"
+      ],
+      "related": [
+        "database",
+        "api"
+      ]
+    },
+    {
+      "id": "jph-09",
+      "level": "senior",
+      "type": "scenario",
+      "question": "A save() intermittently throws OptimisticLockException under load — but only for a handful of 'popular' records. Diagnose it.",
+      "answer": "The distribution is the clue. If it were a bug in the version handling it would fail uniformly; failing only on popular records means **genuine write contention on a few hot rows**, and the version check is doing exactly its job.\n\n**Confirm the shape first.** Log the entity id on the exception and aggregate — if a handful of ids account for nearly all failures, that is contention, not a defect. Also check whether the same entity is being loaded in one transaction and saved in another (a detached entity carrying a stale version is a different bug with the same exception).\n\n**Then ask what the write actually is.** Almost always one of three:\n\n1. **A counter or aggregate on a parent row** — an order count on a customer, a view count, a stock level. Many concurrent writers updating one row is the classic case, and the fix is not concurrency control at all: move the counter out of the entity. An append-only event row plus a periodic or streaming aggregate removes the contention entirely, because appends do not conflict.\n2. **Too coarse an entity.** The version guards the whole row, so two transactions changing unrelated fields still conflict. Splitting a fat entity into the parts that change independently removes most false conflicts.\n3. **Too long a transaction.** The window between read and write is where conflicts live. A transaction that reads, calls an HTTP API, then writes has a window measured in hundreds of milliseconds. Shrinking it to read-modify-write with the remote call outside can cut conflict rates by an order of magnitude on its own — and a transaction should never span a network call to another service anyway.\n\n**The immediate mitigation** is a bounded retry with jittered backoff for the recomputable cases, while you fix the underlying design. **The metric to add** is conflict rate per entity type, because this failure mode scales with traffic and will return.",
+      "keyPoints": [
+        "Failures concentrated on few ids = real contention, not a bug",
+        "Rule out a detached entity carrying a stale version first",
+        "Hot counters on a shared row are the usual cause — move them out",
+        "A coarse entity makes unrelated field changes conflict",
+        "Shorten the read-to-write window; never hold a transaction across a network call",
+        "Retry with jitter as mitigation, not as the fix"
+      ],
+      "followUps": [
+        {
+          "q": "Why does jitter matter in the retry?",
+          "a": "Without it, everyone who lost the race retries at the same instant and collides again — a synchronised retry storm that makes contention worse than the original conflict. Randomising the delay spreads the retries out, which is the same reason jitter matters in any distributed backoff."
+        },
+        {
+          "q": "Would switching to SELECT FOR UPDATE fix it?",
+          "a": "It would convert lost retries into queueing, which for a short critical section on a hot row is often better. But it holds a lock for the transaction's life, so it is only safe once the transaction is short — which means you have to do the third fix anyway."
+        }
+      ],
+      "redFlags": [
+        "Removing @Version to make the exception go away",
+        "Unbounded retries with no backoff",
+        "Not noticing that the failures are concentrated"
+      ],
+      "related": [
+        "database",
+        "message-queue"
+      ]
+    },
+    {
+      "id": "jph-10",
+      "level": "senior",
+      "type": "tradeoff",
+      "question": "When would you not use an ORM at all?",
+      "answer": "An ORM earns its cost when you are doing CRUD on a graph of objects that maps cleanly to tables, with a mature domain model and many similar operations. It stops earning it in four situations.\n\n**Reporting and analytics.** Aggregations, window functions and complex joins over millions of rows are what SQL is for, and expressing them through JPQL or Criteria is strictly worse than writing the query. Use jOOQ, JdbcTemplate or plain SQL with a projection.\n\n**Bulk operations.** `deleteAll()` on 100,000 entities loads every one into the persistence context to fire lifecycle callbacks. A single `DELETE FROM ... WHERE` is four orders of magnitude cheaper. The same is true of bulk updates and imports — where the right answer may not even be JDBC but the database's own bulk loader.\n\n**When the SQL matters more than the objects.** If you need a specific index used, a particular join order, or a vendor feature — `INSERT ... ON CONFLICT`, recursive CTEs, `LATERAL` — fighting the ORM to emit it is wasted effort.\n\n**Very high throughput on a narrow path.** The mapping, dirty checking and proxying have a real per-entity cost. On a hot path doing millions of simple operations, hand-written SQL with a row mapper is measurably faster.\n\nThe pragmatic position, and the one I would defend: use both in the same codebase. Hibernate for the transactional domain model, plain SQL for reporting and bulk. The idea that a project must choose one is the mistake — and Spring makes mixing them trivial because they share the same transaction and connection.",
+      "keyPoints": [
+        "ORM fits CRUD on an object graph, not reporting or bulk work",
+        "deleteAll() loads everything into memory; one DELETE statement does not",
+        "Vendor SQL features are not worth fighting the abstraction for",
+        "Mixing Hibernate and JdbcTemplate in one codebase is normal and correct",
+        "They share the transaction, so mixing is safe"
+      ],
+      "followUps": [
+        {
+          "q": "If you mix them, what is the one thing to be careful about?",
+          "a": "Native SQL bypasses the persistence context. A native update leaves managed entities holding stale values, and the second-level cache confidently wrong. Either flush and clear the context around it, or keep native SQL to paths that do not also load entities."
+        }
+      ],
+      "redFlags": [
+        "\"ORMs are always bad\" or \"never write SQL\" — both are positions, not reasoning",
+        "Not knowing what deleteAll() does"
+      ],
+      "related": [
+        "database"
+      ]
+    }
+  ]
+}

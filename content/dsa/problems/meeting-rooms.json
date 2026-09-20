@@ -1,0 +1,121 @@
+{
+  "id": "meeting-rooms",
+  "title": "Meeting Rooms",
+  "patternId": "intervals",
+  "difficulty": "beginner",
+  "tags": [
+    "intervals",
+    "sorting",
+    "array"
+  ],
+  "statement": "Given an array of meeting time intervals where intervals[i] = [start, end], determine whether a person could attend all of them. Two meetings conflict if they overlap; a meeting that starts exactly when another ends does not conflict, since the intervals are half-open.",
+  "realWorld": "The double-booking check a calendar service runs before it commits a reservation, and the same check a scheduler runs before granting a maintenance window on a host that already has one. In both cases the answer is a yes or a no, and it has to be computed on every write.",
+  "examples": [
+    {
+      "input": "intervals = [[0,30],[5,10],[15,20]]",
+      "output": "false",
+      "explanation": "The 0-30 meeting swallows both of the others. Note that the input is not sorted: the conflict is between the first and second entries only after ordering makes them neighbours."
+    },
+    {
+      "input": "intervals = [[7,10],[2,4]]",
+      "output": "true",
+      "explanation": "Sorted, this is [2,4] then [7,10]. The second starts after the first ends, so both can be attended."
+    },
+    {
+      "input": "intervals = [[1,5],[5,9]]",
+      "output": "true",
+      "explanation": "Back to back is not a clash. This is the example that decides whether your comparison is < or <=, and it is the one people get wrong."
+    }
+  ],
+  "constraints": [
+    "0 <= intervals.length <= 10^4",
+    "intervals[i].length == 2 and 0 <= start < end <= 10^6",
+    "An empty schedule trivially returns true"
+  ],
+  "bruteForce": {
+    "idea": "Check every pair of meetings for overlap. Two intervals overlap when each starts before the other ends.",
+    "code": [
+      "for (int i = 0; i < intervals.length; i++) {",
+      "    for (int j = i + 1; j < intervals.length; j++) {",
+      "        if (intervals[i][0] < intervals[j][1] && intervals[j][0] < intervals[i][1]) {",
+      "            return false;",
+      "        }",
+      "    }",
+      "}",
+      "return true;"
+    ],
+    "complexity": {
+      "time": "O(n^2)",
+      "space": "O(1)"
+    },
+    "whySlow": "n(n-1)/2 comparisons, and nearly all of them are between meetings that are nowhere near each other in time — asking whether the 9am standup clashes with the 5pm retro is work whose answer was never in doubt. Nothing about the data forces this; it is the array's arbitrary order that leaves you no way to tell a near-miss from a far-miss without checking both."
+  },
+  "patternIdentification": "Interval problems almost always begin with a sort, and the only real decision is which end to sort by. Sorting by start makes each meeting's only possible conflict the one immediately before it: everything earlier started earlier, and once you have confirmed each of them ended before its successor began, the end times are increasing too, so no earlier meeting can reach forward past your neighbour. That is the whole purchase the sort makes — it turns 'compare with all the others' into 'compare with your neighbour'. Notice exactly what the neighbour check relies on, because it is what breaks in meeting-rooms-ii: here you may forget a meeting the instant you have confirmed it ended in time, since one conflict is enough to answer the question. Ask instead 'how many rooms do I need?' and you must know how many earlier meetings are *still running* when each new one starts — a set that grows and shrinks as you sweep, which the previous element alone cannot tell you. That is why the counting version reaches for a min-heap of end times: same sort, but the state you carry stops being one number.",
+  "optimized": {
+    "idea": "Sort by start time, then walk the array once comparing each meeting's start with the previous meeting's end. The first time a meeting starts strictly before its predecessor ends, the schedule is impossible.",
+    "code": [
+      "public static boolean canAttendMeetings(int[][] intervals) {",
+      "    Arrays.sort(intervals, (a, b) -> Integer.compare(a[0], b[0]));",
+      "    for (int i = 1; i < intervals.length; i++) {",
+      "        if (intervals[i][0] < intervals[i - 1][1]) return false;   // starts before the previous one ends",
+      "    }",
+      "    return true;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n log n), dominated by the sort",
+      "space": "O(log n) for the sort"
+    }
+  },
+  "visualization": {
+    "engine": "mergeIntervals",
+    "title": "Sort by start, then look only at your neighbour. Any moment the animation extends a block instead of starting a new one is a moment this problem answers false.",
+    "input": {
+      "intervals": [
+        [
+          0,
+          30
+        ],
+        [
+          5,
+          10
+        ],
+        [
+          15,
+          20
+        ]
+      ]
+    },
+    "code": [
+      "// unsorted, 'do any two overlap?' is a question about every pair",
+      "Arrays.sort(intervals, (a, b) -> Integer.compare(a[0], b[0]));   // sort by start",
+      "for (int i = 1; i < intervals.length; i++) {",
+      "    if (intervals[i][0] >= intervals[i - 1][1]) continue;        // starts after the previous ends — no clash",
+      "",
+      "    return false;                                                // overlap: one room cannot hold both",
+      "}",
+      "return true;"
+    ]
+  },
+  "commonMistakes": [
+    "Using <= instead of < in the overlap test — a meeting that begins exactly when the previous one ends is back to back, not a clash, so [[1,5],[5,9]] wrongly returns false. Decide whether the intervals are half-open before writing the comparison, not after a test fails.",
+    "Comparing against a fixed end (the first interval's, or an `end` variable that is never updated) instead of the immediately preceding interval's end — [[0,5],[6,8],[7,9]] then returns true because 7 is compared with 5 rather than with 8.",
+    "Writing the comparator as `(a, b) -> a[0] - b[0]`. For starts far apart in the int range the subtraction overflows, the comparator stops being transitive, and Arrays.sort throws 'Comparison method violates its general contract!' on large inputs while every small test passes. Integer.compare never overflows."
+  ],
+  "similar": [
+    "meeting-rooms-ii",
+    "merge-intervals",
+    "insert-interval",
+    "minimum-arrows-burst-balloons",
+    "non-overlapping-intervals"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 252,
+      "slug": "meeting-rooms",
+      "title": "Meeting Rooms",
+      "url": "https://leetcode.com/problems/meeting-rooms/",
+      "premium": true
+    }
+  }
+}

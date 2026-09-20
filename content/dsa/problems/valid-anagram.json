@@ -1,0 +1,144 @@
+{
+  "id": "valid-anagram",
+  "title": "Valid Anagram",
+  "patternId": "hashing",
+  "difficulty": "beginner",
+  "tags": [
+    "hashing",
+    "string",
+    "counting"
+  ],
+  "statement": "Given two strings s and t, return true if t is an anagram of s — that is, if the two contain exactly the same characters with exactly the same multiplicities, in any order.",
+  "realWorld": "Multiset equality is the check behind deduplicating records whose field order is not guaranteed, and behind verifying that a shuffled batch delivered to a worker contains precisely the items that were dispatched: same items, same counts, order irrelevant. The same routine underlies anagram-based search indexes and the 'did any character drop during transcoding?' assertion in text pipelines.",
+  "examples": [
+    {
+      "input": "s = \"anagram\", t = \"nagaram\"",
+      "output": "true",
+      "explanation": "Both have a:3, n:1, g:1, r:1, m:1."
+    },
+    {
+      "input": "s = \"rat\", t = \"car\"",
+      "output": "false",
+      "explanation": "Same length, but t has a 'c' that s does not and lacks the 't'."
+    },
+    {
+      "input": "s = \"aacc\", t = \"ccac\"",
+      "output": "false",
+      "explanation": "Identical character *sets* — both use only 'a' and 'c' — but the counts differ (a:2,c:2 against a:1,c:3). This is what makes the problem about multisets rather than sets."
+    }
+  ],
+  "constraints": [
+    "1 <= s.length, t.length <= 5 * 10^4",
+    "s and t consist of lowercase English letters",
+    "A follow-up variant allows arbitrary Unicode, which changes the choice of container"
+  ],
+  "bruteForce": {
+    "idea": "Sort both strings into character arrays and compare them element by element.",
+    "code": [
+      "if (s.length() != t.length()) return false;",
+      "char[] a = s.toCharArray();",
+      "char[] b = t.toCharArray();",
+      "Arrays.sort(a);",
+      "Arrays.sort(b);",
+      "return Arrays.equals(a, b);"
+    ],
+    "complexity": {
+      "time": "O(n log n)",
+      "space": "O(n)"
+    },
+    "whySlow": "Sorting establishes a total order over every character — which 'a' precedes which other 'a', where the 'g' sits relative to the 'm' — and the question asks for none of that. It asks only how many of each character there are. All the comparisons that arrange equal or irrelevant characters among themselves are work thrown away the moment the equality check finishes, plus two n-character arrays allocated to hold an ordering nobody reads. Each character's identity alone settles the question; its position never mattered."
+  },
+  "patternIdentification": "The question is 'how many of each?', not 'in what order?'. Whenever the answer is invariant under permutation of the input, sorting is over-solving — build a frequency map instead and compare counts. The follow-up test that confirms the reflex: if shuffling the input cannot change the answer, no algorithm that produces an ordering is doing necessary work. When the alphabet is small and known in advance, the map collapses further into a fixed-size count array, which is the same idea with the hash function replaced by arithmetic.",
+  "optimized": {
+    "idea": "Count the characters of s in a map, then walk t decrementing. If t ever needs a character the map has run out of, the multisets differ. Equal lengths plus 'no deficit in t' forces 'no surplus in t' as well, so no second sweep over the map is needed — the length check is what makes the single direction sufficient, and without it the method would accept any sub-multiset.",
+    "code": [
+      "public static boolean isAnagram(String s, String t) {",
+      "    if (s.length() != t.length()) return false;   // turns 'no deficit' into 'exact match'",
+      "    Map<Character, Integer> counts = new HashMap<>();",
+      "    for (char c : s.toCharArray()) counts.merge(c, 1, Integer::sum);",
+      "    for (char c : t.toCharArray()) {",
+      "        Integer remaining = counts.get(c);",
+      "        if (remaining == null || remaining == 0) return false;",
+      "        counts.put(c, remaining - 1);",
+      "    }",
+      "    return true;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(k), where k is the number of distinct characters"
+    }
+  },
+  "visualization": {
+    "engine": "hashingOps",
+    "input": {
+      "capacity": 8,
+      "operations": [
+        {
+          "op": "put",
+          "key": "a",
+          "value": 3
+        },
+        {
+          "op": "put",
+          "key": "n",
+          "value": 1
+        },
+        {
+          "op": "put",
+          "key": "g",
+          "value": 1
+        },
+        {
+          "op": "put",
+          "key": "r",
+          "value": 1
+        },
+        {
+          "op": "put",
+          "key": "m",
+          "value": 1
+        },
+        {
+          "op": "get",
+          "key": "n"
+        },
+        {
+          "op": "get",
+          "key": "a"
+        },
+        {
+          "op": "get",
+          "key": "x"
+        }
+      ]
+    },
+    "code": [
+      "Map<Character, Integer> counts = new HashMap<>();",
+      "for (char c : s.toCharArray())",
+      "    counts.merge(c, 1, Integer::sum);",
+      "Integer remaining = counts.get(c);",
+      "if (remaining == null || remaining == 0) return false;"
+    ]
+  },
+  "commonMistakes": [
+    "Comparing character sets rather than multisets — collecting the distinct characters of each string and comparing those sets returns true for s = \"aacc\", t = \"ccac\", because both use exactly {a, c}. The counts are what differ.",
+    "Omitting the length check and only verifying that every character of t is available in s — s = \"aab\", t = \"ab\" then returns true, since nothing in t is ever missing. Any t that is a sub-multiset of s slips through.",
+    "Hard-coding `new int[26]` with `c - 'a'` when the input is not guaranteed lowercase ASCII — an uppercase 'A' indexes at -32 and throws ArrayIndexOutOfBoundsException, and a non-BMP character arrives as two surrogate chars that the array silently folds together."
+  ],
+  "similar": [
+    "group-anagrams",
+    "first-unique-character",
+    "top-k-frequent",
+    "contains-duplicate"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 242,
+      "slug": "valid-anagram",
+      "title": "Valid Anagram",
+      "url": "https://leetcode.com/problems/valid-anagram/",
+      "premium": false
+    }
+  }
+}

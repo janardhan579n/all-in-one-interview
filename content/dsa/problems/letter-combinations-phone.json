@@ -1,0 +1,138 @@
+{
+  "id": "letter-combinations-phone",
+  "title": "Letter Combinations of a Phone Number",
+  "patternId": "backtracking",
+  "difficulty": "intermediate",
+  "tags": [
+    "string",
+    "backtracking",
+    "recursion"
+  ],
+  "statement": "Given a string of digits from 2 to 9, return every letter combination the number could spell on a telephone keypad, where 2 maps to abc, 3 to def, and so on up to 9 mapping to wxyz. The answers may be returned in any order; an empty input produces an empty list.",
+  "realWorld": "Expanding a template whose slots each have their own option list: generating every SKU from colour x size x finish, enumerating every bucket of a multi-factor experiment, or producing the candidate expansions a T9-style search uses to match typed digits against a contact list.",
+  "examples": [
+    {
+      "input": "digits = \"23\"",
+      "output": "[\"ad\",\"ae\",\"af\",\"bd\",\"be\",\"bf\",\"cd\",\"ce\",\"cf\"]",
+      "explanation": "Three letters for 2 times three for 3 gives nine combinations — one per leaf of a two-level tree."
+    },
+    {
+      "input": "digits = \"7\"",
+      "output": "[\"p\",\"q\",\"r\",\"s\"]",
+      "explanation": "7 and 9 carry four letters rather than three, so the branching factor varies from level to level. Hard-coding three letters per digit passes '23' and fails here."
+    },
+    {
+      "input": "digits = \"\"",
+      "output": "[]",
+      "explanation": "No digits means no combinations. The answer is an empty list, not a list containing the empty string — which is what an unguarded recursion produces."
+    }
+  ],
+  "constraints": [
+    "0 <= digits.length <= 4",
+    "digits[i] is one of '2' through '9'",
+    "1 and 0 carry no letters and never appear",
+    "The output size is the product of the per-digit letter counts, up to 4^4 = 256"
+  ],
+  "bruteForce": {
+    "idea": "Generate every string of the right length over the whole alphabet, then keep only those whose i-th character belongs to the i-th digit's letter set.",
+    "code": [
+      "public static List<String> letterCombinations(String digits) {",
+      "    List<String> result = new ArrayList<>();",
+      "    if (digits.isEmpty()) return result;",
+      "    int n = digits.length();",
+      "    long total = (long) Math.pow(26, n);",
+      "    for (long code = 0; code < total; code++) {",
+      "        StringBuilder candidate = new StringBuilder();",
+      "        long value = code;",
+      "        for (int i = 0; i < n; i++) {",
+      "            candidate.append((char) ('a' + value % 26));",
+      "            value /= 26;",
+      "        }",
+      "        String text = candidate.toString();",
+      "        boolean ok = true;",
+      "        for (int i = 0; i < n && ok; i++) {",
+      "            ok = LETTERS[digits.charAt(i) - '0'].indexOf(text.charAt(i)) >= 0;",
+      "        }",
+      "        if (ok) result.add(text);   // the check happens only after the whole string is built",
+      "    }",
+      "    return result;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n * 26^n)",
+      "space": "O(n)"
+    },
+    "whySlow": "26^n candidates — 456,976 for a four-digit number — of which at most 4^n = 256 survive, so more than 99.9% of the work is building strings that are rejected. And every rejected string is built to its full length before the first character is ever checked, even though a candidate starting with 'z' was doomed the moment its first letter was chosen for the digit 2."
+  },
+  "patternIdentification": "A fixed number of positions, each with its own small set of legal choices, and every combination of those choices is wanted. That is a search tree with one level per position, and it is the plainest form of backtracking there is — choose a letter for this position, recurse to the next position, un-choose. There is nothing to prune here, because every leaf is a valid answer; that makes the problem the right place to fix the skeleton in your head before meeting problems where the pruning is the whole game. The signal to reach for recursion rather than loops is that the answer is a cartesian product whose width is only known at run time: you would need one nested loop per digit, and you cannot write a variable number of nested loops by hand. Recursion supplies exactly that — the call stack is the missing loop nest, and its depth is the number of positions.",
+  "optimized": {
+    "idea": "Walk the digits left to right carrying a single mutable buffer. At each position append one of that digit's letters, recurse to the next position, then delete the character just appended. Because one buffer is shared by the whole search, the result must store a snapshot (path.toString()) rather than the buffer itself.",
+    "code": [
+      "private static final String[] LETTERS = {",
+      "    \"\", \"\", \"abc\", \"def\", \"ghi\", \"jkl\", \"mno\", \"pqrs\", \"tuv\", \"wxyz\"",
+      "};",
+      "",
+      "public static List<String> letterCombinations(String digits) {",
+      "    List<String> result = new ArrayList<>();",
+      "    if (digits.isEmpty()) return result;   // guard: otherwise the base case records \"\"",
+      "    backtrack(digits, 0, new StringBuilder(), result);",
+      "    return result;",
+      "}",
+      "",
+      "private static void backtrack(String digits, int index, StringBuilder path, List<String> result) {",
+      "    if (index == digits.length()) {",
+      "        result.add(path.toString());   // a snapshot: the buffer keeps changing",
+      "        return;",
+      "    }",
+      "    for (char letter : LETTERS[digits.charAt(index) - '0'].toCharArray()) {",
+      "        path.append(letter);                        // choose",
+      "        backtrack(digits, index + 1, path, result); // recurse",
+      "        path.deleteCharAt(path.length() - 1);       // un-choose",
+      "    }",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n * 4^n)",
+      "space": "O(n) recursion depth, plus the output"
+    }
+  },
+  "visualization": {
+    "engine": "backtrackingSubsets",
+    "input": {
+      "array": [
+        2,
+        3
+      ]
+    },
+    "code": [
+      "void backtrack(int index, StringBuilder path) {",
+      "    if (index == digits.length()) { result.add(path.toString()); return; }",
+      "    for (char letter : LETTERS[digits.charAt(index) - '0'].toCharArray()) {",
+      "        path.append(letter);",
+      "        backtrack(index + 1, path);",
+      "        path.deleteCharAt(path.length() - 1);",
+      "    }",
+      "}"
+    ]
+  },
+  "commonMistakes": [
+    "Recursing on an empty digits string. The base case fires immediately and records the empty string, so the caller gets a list of size 1 where the answer is an empty list — a difference that only shows up on the one input everybody forgets to test.",
+    "Forgetting path.deleteCharAt after the recursive call. The buffer keeps every letter ever appended and the output comes back as 'ad', 'adae', 'adaeaf', ... — each result carrying the whole history of the search instead of one branch.",
+    "Indexing LETTERS with digits.charAt(index) rather than digits.charAt(index) - '0'. The character '2' has the numeric value 50, so the very first lookup throws ArrayIndexOutOfBoundsException on every non-empty input."
+  ],
+  "similar": [
+    "subsets",
+    "permutations",
+    "combination-sum",
+    "palindrome-partitioning"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 17,
+      "slug": "letter-combinations-of-a-phone-number",
+      "title": "Letter Combinations of a Phone Number",
+      "url": "https://leetcode.com/problems/letter-combinations-of-a-phone-number/",
+      "premium": false
+    }
+  }
+}

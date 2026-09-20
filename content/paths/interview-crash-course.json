@@ -1,0 +1,72 @@
+{
+  "id": "interview-crash-course",
+  "title": "Interview Crash Course",
+  "audience": "You know the fundamentals and have an interview in two weeks.",
+  "description": "Pattern recognition first, then one representative problem per pattern, then two system designs. Optimised for breadth of recognition rather than depth of any one topic.",
+  "steps": [
+    {
+      "ref": "big-o",
+      "kind": "lesson"
+    },
+    {
+      "ref": "hashing",
+      "kind": "lesson"
+    },
+    {
+      "ref": "two-pointers",
+      "kind": "lesson"
+    },
+    {
+      "ref": "sliding-window",
+      "kind": "lesson"
+    },
+    {
+      "ref": "binary-search",
+      "kind": "lesson"
+    },
+    {
+      "ref": "longest-substring-no-repeat",
+      "kind": "problem"
+    },
+    {
+      "ref": "three-sum",
+      "kind": "problem"
+    },
+    {
+      "ref": "koko-eating-bananas",
+      "kind": "problem"
+    },
+    {
+      "ref": "bfs",
+      "kind": "lesson"
+    },
+    {
+      "ref": "dfs",
+      "kind": "lesson"
+    },
+    {
+      "ref": "course-schedule",
+      "kind": "problem"
+    },
+    {
+      "ref": "dynamic-programming-basics",
+      "kind": "lesson"
+    },
+    {
+      "ref": "coin-change",
+      "kind": "problem"
+    },
+    {
+      "ref": "backtracking",
+      "kind": "lesson"
+    },
+    {
+      "ref": "url-shortener",
+      "kind": "case-study"
+    },
+    {
+      "ref": "rate-limiter",
+      "kind": "case-study"
+    }
+  ]
+}

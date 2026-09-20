@@ -1,0 +1,125 @@
+{
+  "id": "longest-repeating-char-replacement",
+  "title": "Longest Repeating Character Replacement",
+  "patternId": "sliding-window",
+  "difficulty": "intermediate",
+  "tags": [
+    "sliding-window",
+    "string",
+    "counting"
+  ],
+  "statement": "Given a string s of uppercase English letters and an integer k, you may change at most k characters to any other uppercase letter. Return the length of the longest substring that can be made to consist of a single repeated character.",
+  "realWorld": "Error-budget windows. Given a per-minute stream of health checks, 'what is the longest stretch I can call healthy if I am allowed to excuse at most k blips?' is this problem with two symbols. The same counting shows up in sequence alignment, where you look for the longest region matching a consensus base with at most k mismatches.",
+  "examples": [
+    {
+      "input": "s = \"ABAB\", k = 2",
+      "output": "4",
+      "explanation": "Change both A's to B (or both B's to A). The whole string qualifies: length 4, most common count 2, so 4 - 2 = 2 replacements, exactly the budget."
+    },
+    {
+      "input": "s = \"AABABBA\", k = 1",
+      "output": "4",
+      "explanation": "\"AABA\" at indices 0..3 has three A's and one B, so one replacement makes it \"AAAA\". \"BABB\" at 2..5 works equally well. Length 5 is impossible: every 5-character window here needs at least two changes, which is why the greedy window grows to 5 and is then forced to shrink."
+    },
+    {
+      "input": "s = \"ABAB\", k = 0",
+      "output": "1",
+      "explanation": "With no budget, every valid window is already uniform. The answer is 1, not 0 — a single character is a valid substring, and this is where a `best` initialised badly shows up."
+    }
+  ],
+  "constraints": [
+    "1 <= s.length <= 10^5",
+    "s consists of uppercase English letters only",
+    "0 <= k <= s.length"
+  ],
+  "bruteForce": {
+    "idea": "For every start index, extend to every end index, count the characters in that substring, and check whether length minus the most common count is within k.",
+    "code": [
+      "int best = 0;",
+      "for (int i = 0; i < s.length(); i++) {",
+      "    for (int j = i; j < s.length(); j++) {",
+      "        int[] count = new int[26];",
+      "        for (int t = i; t <= j; t++) count[s.charAt(t) - 'A']++;",
+      "        int maxFreq = 0;",
+      "        for (int c = 0; c < 26; c++) maxFreq = Math.max(maxFreq, count[c]);",
+      "        if (j - i + 1 - maxFreq <= k) best = Math.max(best, j - i + 1);",
+      "    }",
+      "}",
+      "return best;"
+    ],
+    "complexity": {
+      "time": "O(n^3)",
+      "space": "O(1)"
+    },
+    "whySlow": "The inner recount rebuilds a frequency table that differs from the previous one by a single character. Extending the window from j to j+1 changes exactly one count by exactly one, and the code instead re-reads every character from i to j to learn that. Across the whole run the same character is counted O(n) times. And the outer restart is the same waste one level up: when a window at start i fails, moving to start i+1 discards a table that only needed one decrement."
+  },
+  "patternIdentification": "Two signals together: the answer is a *contiguous* stretch, and validity is a property you can maintain incrementally — 'window length minus the count of the most common character' is the number of replacements this window needs, and it changes by a bounded amount when either edge moves. That is the sliding-window template: **valid window, grow greedily, shrink on violation**. Push `right` forward unconditionally, updating the counters; whenever the window becomes invalid, advance `left` until it is valid again; record the best length at every step.\n\nThe transferable part is the phrase 'validity is a monotone function of the window'. Here, if a window needs more than k replacements, every window containing it needs at least as many — so shrinking from the left is guaranteed to reach validity and never has to back up. `max-consecutive-ones-iii` is the same template with 'zeros in the window <= k' as the validity test, and `min-window-substring` inverts it (shrink while *valid* to minimise rather than maximise). Once you can state the validity predicate in one sentence, the code writes itself.",
+  "optimized": {
+    "idea": "Keep a 26-slot count array for the current window and a running `maxCount` of the highest frequency seen. A window [left, right] is valid exactly when (right - left + 1) - maxCount <= k, because you keep the most common character and replace everything else. Grow `right` by one each iteration; while the window is invalid, drop characters from the left. Record right - left + 1 as a candidate answer at every position.\n\n`maxCount` is deliberately never decreased when a character leaves. That looks like a bug and is not: `maxCount` records the best frequency ever achieved, so it can only be stale in the upward direction, which makes the validity test slightly permissive — and a window is only recorded as the new best when it is at least as long as the one that set `maxCount`, which was genuinely valid. The answer therefore never exceeds the truth. Recomputing the max over all 26 slots on every step is also correct and costs a constant factor; use that version if the subtlety would slow you down in an interview.",
+    "code": [
+      "public static int characterReplacement(String s, int k) {",
+      "    int[] count = new int[26];",
+      "    int left = 0, maxCount = 0, best = 0;",
+      "    for (int right = 0; right < s.length(); right++) {",
+      "        maxCount = Math.max(maxCount, ++count[s.charAt(right) - 'A']);",
+      "        while (right - left + 1 - maxCount > k) {   // replacements needed = length - most common count",
+      "            count[s.charAt(left) - 'A']--;",
+      "            left++;",
+      "        }",
+      "        best = Math.max(best, right - left + 1);",
+      "    }",
+      "    return best;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(1) — 26 counters regardless of input size"
+    }
+  },
+  "visualization": {
+    "engine": "slidingWindowShrink",
+    "input": {
+      "array": [
+        1,
+        1,
+        2,
+        1,
+        3,
+        1
+      ],
+      "target": 5
+    },
+    "code": [
+      "int left = 0, maxCount = 0, best = 0;",
+      "for (int right = 0; right < s.length(); right++) {",
+      "    maxCount = Math.max(maxCount, ++count[s.charAt(right) - 'A']);",
+      "    while (right - left + 1 - maxCount > k) {",
+      "        count[s.charAt(left) - 'A']--;",
+      "        left++;",
+      "    }",
+      "    best = Math.max(best, right - left + 1);",
+      "}",
+      "return best;"
+    ]
+  },
+  "commonMistakes": [
+    "Testing validity as `k >= count of characters that are not the most common one` but recomputing the most common character over the *whole string* rather than the window. \"AABBBB\" with k = 1 then always compares against B's global count of 4 and reports 6 instead of 5 — the symptom is an answer that is too large and grows with the string.",
+    "Using `if` instead of `while` to shrink but still reading `best = Math.max(best, right - left + 1)` from a window that may still be invalid. The non-shrinking form of this solution is correct only if you return `s.length() - left` at the end; mixing the two returns a length no valid window ever had, and it passes \"ABAB\", k = 2 before failing on longer strings.",
+    "Initialising `best = 0` and then returning it from an early `return` path for k = 0, or off-by-one on `right - left + 1`. With s = \"A\" and k = 0 the answer is 1; a solution that reports 0 has forgotten that a one-character substring is already uniform."
+  ],
+  "similar": [
+    "max-consecutive-ones-iii",
+    "longest-substring-no-repeat",
+    "min-window-substring",
+    "permutation-in-string"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 424,
+      "slug": "longest-repeating-character-replacement",
+      "title": "Longest Repeating Character Replacement",
+      "url": "https://leetcode.com/problems/longest-repeating-character-replacement/",
+      "premium": false
+    }
+  }
+}

@@ -1,0 +1,135 @@
+{
+  "id": "kth-smallest-in-bst",
+  "title": "Kth Smallest Element in a BST",
+  "patternId": "trees",
+  "difficulty": "intermediate",
+  "tags": [
+    "tree",
+    "bst",
+    "traversal",
+    "stack"
+  ],
+  "statement": "Given the root of a binary search tree and an integer k, return the kth smallest value in the tree, counting from 1.",
+  "realWorld": "Order-statistic queries over an index: the tenth cheapest listing, the median response time in a latency table, pagination by rank rather than by offset. Databases that answer these cheaply store a subtree count inside each index node; without those counts the engine has to scan, which is exactly the difference between the two solutions below.",
+  "examples": [
+    {
+      "input": "root = [3,1,4,null,2], k = 1",
+      "output": "1",
+      "explanation": "Level-order notation: values level by level, left to right, null for a missing child. The tree is 3 with children 1 and 4, and 1 has a right child 2. The smallest value is the leftmost node, so the walk descends 3 to 1, finds no left child, and answers immediately without ever looking at 2, 3 or 4 again."
+    },
+    {
+      "input": "root = [5,3,6,2,4,null,null,1], k = 3",
+      "output": "3",
+      "explanation": "The tree is 5 with children 3 and 6; 3 has children 2 and 4; 2 has a left child 1. Sorted order is 1,2,3,4,5,6, so the answer is 3. The walk emits 1, then 2, then 3 and stops — nodes 4, 5 and 6 are never visited, which is the entire point."
+    },
+    {
+      "input": "root = [5,3,6,2,4,null,null,1], k = 6",
+      "output": "6",
+      "explanation": "k equal to the node count. The walk runs to completion, so there is no shortcut for the largest element beyond following right pointers — the early exit helps small k and costs nothing when k is large."
+    }
+  ],
+  "constraints": [
+    "1 <= k <= number of nodes <= 10^4",
+    "0 <= node.val <= 10^4",
+    "All values are distinct"
+  ],
+  "bruteForce": {
+    "idea": "Inorder-walk the whole tree into a list, which comes out sorted, then return the element at index k - 1.",
+    "code": [
+      "public static int kthSmallest(TreeNode root, int k) {",
+      "    List<Integer> sorted = new ArrayList<>();",
+      "    inorder(root, sorted);",
+      "    return sorted.get(k - 1);",
+      "}",
+      "",
+      "private static void inorder(TreeNode node, List<Integer> out) {",
+      "    if (node == null) return;",
+      "    inorder(node.left, out);",
+      "    out.add(node.val);",
+      "    inorder(node.right, out);",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(n)"
+    },
+    "whySlow": "The question asks for a prefix and this collects the whole sequence. For k = 1 on a million-node index it visits every one of the million nodes and allocates a million-element list in order to hand back the first entry, then throws the other 999,999 away. The wasted work is everything after the kth element — and it is avoidable for free, because inorder already produces the values in the exact order the answer needs. Nothing has to be sorted, filtered or searched afterwards; the traversal simply has to be told to stop."
+  },
+  "patternIdentification": "Inorder on a BST is sorted order — that one fact converts every rank-flavoured question (kth smallest, the median, a node's predecessor, all values between a and b) into a linear scan of a sorted sequence. And a question about a prefix of a sorted sequence never needs the whole sequence: generate lazily and stop. The transferable move is turning 'collect everything, then index into it' into 'count as you go and exit', which is the same instinct that replaces sorting with a heap when you only want the top k. The iterative traversal is worth reaching for here not for speed but because stopping is trivial when you own the stack.",
+  "optimized": {
+    "idea": "Inorder with an explicit stack, decrementing k on each value emitted and returning the moment it hits zero. The nodes still on the stack are the ancestors whose right subtrees were never entered — and never will be. The standard follow-up is 'what if the tree is modified often and this query is frequent?' — then O(h + k) per query is too slow for large k, and the answer is to augment every node with the number of nodes in its left subtree. A query becomes a descent: if leftCount + 1 equals k you are standing on the answer, if k is smaller go left, otherwise subtract leftCount + 1 and go right — O(h). Inserts and deletes then pay O(h) to adjust the counts along the path they already walk, which is exactly the trade an order-statistic index makes.",
+    "code": [
+      "public static int kthSmallest(TreeNode root, int k) {",
+      "    Deque<TreeNode> stack = new ArrayDeque<>();",
+      "    TreeNode node = root;",
+      "    while (node != null || !stack.isEmpty()) {",
+      "        while (node != null) {       // descend left, remembering the way back",
+      "            stack.push(node);",
+      "            node = node.left;",
+      "        }",
+      "        node = stack.pop();",
+      "        if (--k == 0) return node.val;   // kth value in sorted order — stop, do not finish the walk",
+      "        node = node.right;",
+      "    }",
+      "    throw new IllegalArgumentException(\"k is larger than the number of nodes\");",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(h + k) — the descent to the smallest value, then k steps",
+      "space": "O(h)"
+    }
+  },
+  "visualization": {
+    "engine": "treeTraversal",
+    "input": {
+      "tree": {
+        "value": 5,
+        "left": {
+          "value": 3,
+          "left": {
+            "value": 2,
+            "left": {
+              "value": 1
+            }
+          },
+          "right": {
+            "value": 4
+          }
+        },
+        "right": {
+          "value": 6
+        }
+      },
+      "order": "inorder"
+    },
+    "code": [
+      "void inorder(TreeNode node) {",
+      "    if (node == null) return;",
+      "    inorder(node.left);",
+      "    if (--k == 0) answer = node.val;",
+      "    inorder(node.right);",
+      "}"
+    ]
+  },
+  "commonMistakes": [
+    "Getting the 1-indexing wrong — checking `if (k == 0) return node.val;` before the decrement, or treating k as 0-based. Every answer comes back as the neighbour of the right one, which on sorted output looks like a traversal bug and is really an indexing bug.",
+    "Using preorder or postorder because 'it is a depth-first walk either way'. Preorder on [5,3,6,2,4,null,null,1] gives 5,3,2,1,4,6, so the third element is 2 instead of 3; only inorder is sorted, and the wrong orders still return plausible values from the tree.",
+    "Memoising the counter in a field but never checking it inside the recursion. A recursive inorder that records the answer when the counter hits zero still walks the whole tree unless every frame tests the counter and returns immediately — the symptom is a correct answer with no measurable speed-up for k = 1."
+  ],
+  "similar": [
+    "binary-tree-inorder-traversal",
+    "validate-bst",
+    "lowest-common-ancestor-bst",
+    "kth-largest-element",
+    "top-k-frequent"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 230,
+      "slug": "kth-smallest-element-in-a-bst",
+      "title": "Kth Smallest Element in a BST",
+      "url": "https://leetcode.com/problems/kth-smallest-element-in-a-bst/",
+      "premium": false
+    }
+  }
+}

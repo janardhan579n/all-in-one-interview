@@ -1,0 +1,120 @@
+{
+  "id": "java-dsa-beginner",
+  "title": "Java + DSA for Complete Beginners",
+  "audience": "You have never written code, or you write code but have never studied algorithms.",
+  "description": "Starts from 'what is an algorithm' and ends with you recognising patterns in unseen problems. Roughly 8-10 hours of lessons plus practice.",
+  "steps": [
+    {
+      "ref": "what-is-an-algorithm",
+      "kind": "lesson"
+    },
+    {
+      "ref": "data-and-variables",
+      "kind": "lesson"
+    },
+    {
+      "ref": "loops-and-functions",
+      "kind": "lesson"
+    },
+    {
+      "ref": "big-o",
+      "kind": "lesson"
+    },
+    {
+      "ref": "arrays",
+      "kind": "lesson"
+    },
+    {
+      "ref": "hashing",
+      "kind": "lesson"
+    },
+    {
+      "ref": "two-sum",
+      "kind": "problem"
+    },
+    {
+      "ref": "two-pointers",
+      "kind": "lesson"
+    },
+    {
+      "ref": "sliding-window",
+      "kind": "lesson"
+    },
+    {
+      "ref": "max-sum-subarray-k",
+      "kind": "problem"
+    },
+    {
+      "ref": "prefix-sum",
+      "kind": "lesson"
+    },
+    {
+      "ref": "binary-search",
+      "kind": "lesson"
+    },
+    {
+      "ref": "binary-search-basic",
+      "kind": "problem"
+    },
+    {
+      "ref": "stack",
+      "kind": "lesson"
+    },
+    {
+      "ref": "queue",
+      "kind": "lesson"
+    },
+    {
+      "ref": "valid-parentheses",
+      "kind": "problem"
+    },
+    {
+      "ref": "linked-list",
+      "kind": "lesson"
+    },
+    {
+      "ref": "fast-slow-pointer",
+      "kind": "lesson"
+    },
+    {
+      "ref": "recursion",
+      "kind": "lesson"
+    },
+    {
+      "ref": "trees",
+      "kind": "lesson"
+    },
+    {
+      "ref": "max-depth-binary-tree",
+      "kind": "problem"
+    },
+    {
+      "ref": "graphs",
+      "kind": "lesson"
+    },
+    {
+      "ref": "bfs",
+      "kind": "lesson"
+    },
+    {
+      "ref": "dfs",
+      "kind": "lesson"
+    },
+    {
+      "ref": "number-of-islands",
+      "kind": "problem"
+    },
+    {
+      "ref": "backtracking",
+      "kind": "lesson"
+    },
+    {
+      "ref": "dynamic-programming-basics",
+      "kind": "lesson"
+    },
+    {
+      "ref": "climbing-stairs",
+      "kind": "problem"
+    }
+  ]
+}

@@ -1,0 +1,411 @@
+{
+  "id": "bfs",
+  "kind": "pattern",
+  "title": "Breadth-First Search",
+  "group": "Graphs",
+  "level": 3,
+  "difficulty": "intermediate",
+  "estimatedMinutes": 35,
+  "summary": "Explore in expanding rings using a queue — the first time you reach a node is guaranteed to be by the fewest possible steps.",
+  "prerequisites": [
+    "queue",
+    "graphs"
+  ],
+  "tags": [
+    "bfs",
+    "graph",
+    "tree",
+    "shortest-path",
+    "level-3"
+  ],
+  "analogy": {
+    "beginner": "Drop a stone in a pond. The ripple reaches everything one metre away before anything two metres away — it cannot skip ahead. BFS explores a network the same way: all your friends, then all their friends, then theirs. The moment the ripple touches the person you're looking for, you know the shortest chain, because nothing closer was missed.",
+    "interview": "Level-order traversal using a FIFO queue. The queue invariant guarantees nodes are dequeued in non-decreasing distance from the source, so the first discovery of any node is along a shortest path in an unweighted graph. O(V + E) time, O(V) space for the visited set and frontier."
+  },
+  "intuition": "The whole algorithm is: take the oldest thing in the queue, look at its neighbours, add the unseen ones to the back.\n\nBecause the queue is FIFO, everything at distance 1 is enqueued before anything at distance 2, and therefore processed first. Nothing at distance 2 can sneak in early. That ordering is not a nice side effect — it *is* the shortest-path guarantee, and it is why BFS answers 'fewest moves' questions and DFS does not.\n\nThe level-by-level refinement worth memorising: capture `queue.size()` before the inner loop. That number is exactly how many nodes sit at the current distance, so the inner loop processes precisely one ring and you can increment a distance counter after it. Three extra lines, and 'how many steps?' and 'group the output by level' both fall out.\n\nBFS is also the default for **grids**, which are graphs in disguise: each cell is a node, and its neighbours are the up-to-four adjacent cells. Rotting oranges, shortest path through a maze, flood fill, number of islands — all BFS or DFS on an implicit graph you never build.",
+  "problemFirst": {
+    "motivatingProblem": "In a maze grid where 0 is open and 1 is a wall, find the fewest steps from the top-left to the bottom-right.",
+    "bruteForce": {
+      "idea": "Recursively try every path from the start and keep the shortest that reaches the exit.",
+      "code": [
+        "int best = Integer.MAX_VALUE;",
+        "",
+        "void explore(int r, int c, int steps, boolean[][] onPath) {",
+        "    if (outOfBounds(r, c) || grid[r][c] == 1 || onPath[r][c]) return;",
+        "    if (r == targetRow && c == targetCol) { best = Math.min(best, steps); return; }",
+        "    onPath[r][c] = true;",
+        "    for (int[] d : DIRS) explore(r + d[0], c + d[1], steps + 1, onPath);",
+        "    onPath[r][c] = false;   // backtrack: this cell may be on another path",
+        "}"
+      ],
+      "complexity": {
+        "time": "Exponential — O(4^(rows·cols)) in the worst case",
+        "space": "O(rows·cols) recursion depth"
+      },
+      "whySlow": "It enumerates every path, not every cell. An open 10×10 grid has an astronomical number of distinct routes, and the algorithm walks essentially all of them before it can be sure it found the shortest."
+    },
+    "observation": "We do not need every path. We need the shortest. And if we expand outwards in rings — all cells 1 step away, then all cells 2 steps away — the first time we step onto the exit, that distance is minimal by construction. No other route could have got there sooner.",
+    "leap": "Use a queue and a visited set. Each cell is enqueued at most once, so the cost is O(cells) rather than O(paths) — 100 operations instead of astronomically many.",
+    "optimizedSketch": [
+      "Queue<int[]> q = new ArrayDeque<>();",
+      "q.offer(new int[]{0, 0});",
+      "visited[0][0] = true;",
+      "int steps = 0;",
+      "while (!q.isEmpty()) {",
+      "    int size = q.size();          // exactly one ring",
+      "    for (int i = 0; i < size; i++) { /* expand neighbours */ }",
+      "    steps++;",
+      "}"
+    ]
+  },
+  "howItWorks": [
+    "**Initialise** — put the source in the queue and mark it visited immediately.",
+    "**Loop** while the queue is non-empty: dequeue a node, process it, then enqueue every unvisited neighbour and mark each visited *as you enqueue it*.",
+    "**Mark on enqueue, not on dequeue.** Otherwise the same node is queued by several neighbours before it is ever processed, and the queue blows up.",
+    "**Level tracking** — `int size = queue.size();` before the inner loop, then `distance++` after it. That is the difference between 'can I reach it' and 'in how many steps'.",
+    "**Multi-source BFS** — seed the queue with several starting nodes at distance 0. Rotting oranges, nearest-exit and 'distance to nearest X' problems all use this, and it costs nothing extra.",
+    "**Reconstructing the path** — keep a `parent` map as you discover nodes, then walk back from the target.",
+    "**Weighted edges** — BFS no longer applies; swap the queue for a priority queue and you have Dijkstra. If weights are only 0 and 1, a deque (0-1 BFS) works."
+  ],
+  "patternRecognition": {
+    "signals": [
+      "'Shortest path', 'minimum number of steps/moves/transformations' in an **unweighted** graph",
+      "'Level by level', 'layer', 'nearest', 'closest'",
+      "A grid where you move between adjacent cells",
+      "Spreading or infection processes — rot, fire, water, virus (multi-source BFS)",
+      "'Degrees of separation'"
+    ],
+    "antiSignals": [
+      "Edges have differing weights → Dijkstra",
+      "You need *all* paths or a specific path satisfying constraints → DFS/backtracking",
+      "The graph is enormous and deep and you only need to know reachability → DFS uses less memory",
+      "Optimal substructure over overlapping subproblems → dynamic programming"
+    ],
+    "decisionTreeId": "graph-algorithm"
+  },
+  "visualizations": [
+    {
+      "id": "graph-bfs",
+      "title": "BFS over a graph — the frontier expands one ring at a time",
+      "engine": "graphBfs",
+      "input": {
+        "nodes": [
+          "A",
+          "B",
+          "C",
+          "D",
+          "E",
+          "F"
+        ],
+        "edges": [
+          [
+            "A",
+            "B"
+          ],
+          [
+            "A",
+            "C"
+          ],
+          [
+            "B",
+            "D"
+          ],
+          [
+            "C",
+            "E"
+          ],
+          [
+            "D",
+            "F"
+          ],
+          [
+            "E",
+            "F"
+          ]
+        ],
+        "start": "A",
+        "target": "F"
+      },
+      "code": [
+        "Queue<String> q = new ArrayDeque<>();",
+        "Set<String> visited = new HashSet<>();",
+        "q.offer(start); visited.add(start);",
+        "int distance = 0;",
+        "while (!q.isEmpty()) {",
+        "    int size = q.size();",
+        "    for (int i = 0; i < size; i++) {",
+        "        String node = q.poll();",
+        "        if (node.equals(target)) return distance;",
+        "        for (String next : neighbours(node)) {",
+        "            if (visited.add(next)) q.offer(next);",
+        "        }",
+        "    }",
+        "    distance++;",
+        "}",
+        "return -1;"
+      ]
+    },
+    {
+      "id": "grid-bfs",
+      "title": "BFS on a grid — shortest path through a maze",
+      "engine": "gridBfs",
+      "input": {
+        "grid": [
+          [
+            0,
+            0,
+            1,
+            0,
+            0
+          ],
+          [
+            1,
+            0,
+            1,
+            0,
+            1
+          ],
+          [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            1,
+            1,
+            1,
+            0
+          ],
+          [
+            0,
+            0,
+            0,
+            1,
+            0
+          ]
+        ],
+        "start": [
+          0,
+          0
+        ],
+        "target": [
+          4,
+          4
+        ]
+      },
+      "code": [
+        "int[][] DIRS = {{1,0},{-1,0},{0,1},{0,-1}};",
+        "while (!q.isEmpty()) {",
+        "    int size = q.size();",
+        "    for (int i = 0; i < size; i++) {",
+        "        int[] cell = q.poll();",
+        "        if (cell[0] == tr && cell[1] == tc) return steps;",
+        "        for (int[] d : DIRS) {",
+        "            int r = cell[0] + d[0], c = cell[1] + d[1];",
+        "            if (inBounds(r, c) && grid[r][c] == 0 && !seen[r][c]) {",
+        "                seen[r][c] = true;",
+        "                q.offer(new int[]{r, c});",
+        "            }",
+        "        }",
+        "    }",
+        "    steps++;",
+        "}"
+      ]
+    }
+  ],
+  "implementations": [
+    {
+      "label": "Simple",
+      "language": "java",
+      "explanation": "The template, with level tracking. `visited.add(next)` returns false if it was already present, so it doubles as the check and the mark in one call.",
+      "code": [
+        "/** Fewest edges from start to target, or -1. O(V + E) time, O(V) space. */",
+        "public static int shortestPath(Map<String, List<String>> graph,",
+        "                               String start, String target) {",
+        "    Queue<String> queue = new ArrayDeque<>();",
+        "    Set<String> visited = new HashSet<>();",
+        "",
+        "    queue.offer(start);",
+        "    visited.add(start);          // mark at ENQUEUE time",
+        "    int distance = 0;",
+        "",
+        "    while (!queue.isEmpty()) {",
+        "        int levelSize = queue.size();     // freeze: exactly one ring",
+        "",
+        "        for (int i = 0; i < levelSize; i++) {",
+        "            String node = queue.poll();",
+        "            if (node.equals(target)) return distance;",
+        "",
+        "            for (String next : graph.getOrDefault(node, List.of())) {",
+        "                if (visited.add(next)) {  // add() == false means already seen",
+        "                    queue.offer(next);",
+        "                }",
+        "            }",
+        "        }",
+        "        distance++;                       // one full ring done",
+        "    }",
+        "    return -1;   // unreachable",
+        "}"
+      ]
+    },
+    {
+      "label": "Optimized",
+      "language": "java",
+      "explanation": "Multi-source BFS on a grid — the rotting-oranges shape. Seeding the queue with every source at once computes the distance to the *nearest* source for every cell in a single O(cells) pass, which would otherwise need one BFS per source.",
+      "code": [
+        "/**",
+        " * Minutes until every fresh orange rots, or -1 if some never do.",
+        " * Multi-source BFS: all initially rotten cells start at distance 0.",
+        " */",
+        "public static int orangesRotting(int[][] grid) {",
+        "    int rows = grid.length, cols = grid[0].length;",
+        "    Queue<int[]> queue = new ArrayDeque<>();",
+        "    int fresh = 0;",
+        "",
+        "    for (int r = 0; r < rows; r++) {",
+        "        for (int c = 0; c < cols; c++) {",
+        "            if (grid[r][c] == 2) queue.offer(new int[]{r, c});  // every source",
+        "            else if (grid[r][c] == 1) fresh++;",
+        "        }",
+        "    }",
+        "    if (fresh == 0) return 0;",
+        "",
+        "    final int[][] DIRS = {{1,0},{-1,0},{0,1},{0,-1}};",
+        "    int minutes = 0;",
+        "",
+        "    while (!queue.isEmpty() && fresh > 0) {",
+        "        int levelSize = queue.size();",
+        "        for (int i = 0; i < levelSize; i++) {",
+        "            int[] cell = queue.poll();",
+        "            for (int[] d : DIRS) {",
+        "                int r = cell[0] + d[0], c = cell[1] + d[1];",
+        "                if (r < 0 || r >= rows || c < 0 || c >= cols) continue;",
+        "                if (grid[r][c] != 1) continue;      // wall or already rotten",
+        "                grid[r][c] = 2;                     // the grid IS the visited set",
+        "                fresh--;",
+        "                queue.offer(new int[]{r, c});",
+        "            }",
+        "        }",
+        "        minutes++;",
+        "    }",
+        "    return fresh == 0 ? minutes : -1;",
+        "}"
+      ]
+    }
+  ],
+  "complexity": {
+    "time": "O(V + E) — O(rows × cols) on a grid",
+    "space": "O(V) for visited plus O(w) for the queue, where w is the widest level",
+    "why": "Each vertex is enqueued at most once because it is marked visited at enqueue time, and each edge is examined once from each endpoint — hence V + E. The space is the part people underestimate: on a wide graph the frontier can hold a large fraction of all vertices at once, so BFS can use considerably more memory than DFS, whose stack only holds one root-to-leaf path. On a balanced binary tree the widest level is about n/2, so BFS is O(n) space against DFS's O(log n)."
+  },
+  "commonMistakes": [
+    {
+      "mistake": "Marking visited when dequeuing instead of enqueuing",
+      "fix": "A node with five neighbours gets queued five times before being processed. Mark it the moment you add it."
+    },
+    {
+      "mistake": "Not capturing `queue.size()` before the level loop",
+      "fix": "The size changes as you enqueue children, so levels merge and the distance count is wrong."
+    },
+    {
+      "mistake": "Using BFS for shortest path on a weighted graph",
+      "fix": "BFS minimises the number of edges, not their total weight. Use Dijkstra — BFS with a priority queue."
+    },
+    {
+      "mistake": "Bounds-checking after indexing",
+      "fix": "In grid problems, check the row and column ranges *before* reading `grid[r][c]`."
+    },
+    {
+      "mistake": "Forgetting that the source might equal the target",
+      "fix": "Check before the loop, or the answer comes back as 1 instead of 0."
+    },
+    {
+      "mistake": "Running out of memory on a huge graph",
+      "fix": "The frontier is the cost. If you only need reachability on a deep, wide graph, DFS is lighter; if you need shortest paths, consider bidirectional BFS, which roughly square-roots the explored set."
+    }
+  ],
+  "realWorldUses": [
+    "'People you may know' and degrees of separation on social networks — typically bidirectional BFS from both endpoints.",
+    "Web crawlers process URLs in BFS order to stay near the seed pages.",
+    "Network routing and broadcast; garbage collectors trace reachable objects.",
+    "Pathfinding in games (BFS for uniform-cost grids; A* when movement costs differ).",
+    "Kubernetes and build tools compute dependency levels to decide what can run in parallel."
+  ],
+  "interviewNotes": [
+    "'Shortest' plus 'unweighted' is BFS, essentially always. Say it immediately and then discuss the details.",
+    "Mention multi-source BFS when several starting points exist — many candidates run n separate searches instead.",
+    "Be ready for 'BFS or DFS here, and why?'. The honest answer is about the guarantee (shortest path) and the memory profile (frontier width vs stack depth)."
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "mcq",
+      "question": "Why does BFS find the shortest path in an unweighted graph but DFS does not?",
+      "options": [
+        "BFS is faster",
+        "FIFO ordering means all nodes at distance d are processed before any at distance d+1, so first discovery is by a minimal number of edges",
+        "DFS cannot visit every node",
+        "BFS uses less memory"
+      ],
+      "answerIndex": 1,
+      "explanation": "The queue enforces non-decreasing distance. DFS plunges down one branch and may reach a node by a long route before ever trying the short one."
+    },
+    {
+      "id": "q2",
+      "type": "mcq",
+      "question": "Why mark a node visited when enqueuing rather than when dequeuing?",
+      "options": [
+        "It is only a style preference",
+        "Otherwise a node reachable from several neighbours is enqueued multiple times, inflating the queue and the work done",
+        "Dequeuing is slower",
+        "To make the code shorter"
+      ],
+      "answerIndex": 1,
+      "explanation": "Between being enqueued and being processed, a node can be discovered again by other neighbours. Marking at enqueue time guarantees each node is queued at most once."
+    },
+    {
+      "id": "q3",
+      "type": "identify-pattern",
+      "question": "'Every minute, rotten oranges rot their four neighbours. How many minutes until none are fresh?' Which approach?",
+      "options": [
+        "DFS from each rotten orange",
+        "Multi-source BFS seeded with every rotten cell at distance 0",
+        "Dijkstra",
+        "Dynamic programming"
+      ],
+      "answerIndex": 1,
+      "explanation": "Rot spreads one ring per minute from all sources simultaneously — precisely multi-source BFS. Levels correspond to minutes, and one pass covers all sources."
+    },
+    {
+      "id": "q4",
+      "type": "complexity",
+      "question": "What is the space complexity of BFS on a balanced binary tree with n nodes?",
+      "options": [
+        "O(1)",
+        "O(log n)",
+        "O(n) — the widest level holds about n/2 nodes",
+        "O(n²)"
+      ],
+      "answerIndex": 2,
+      "explanation": "The bottom level of a balanced binary tree contains roughly half the nodes, and BFS holds a whole level at once. DFS on the same tree is O(log n), since the stack only holds one path."
+    }
+  ],
+  "practiceProblems": [
+    "binary-tree-level-order",
+    "rotting-oranges",
+    "open-the-lock",
+    "shortest-path-binary-matrix",
+    "walls-and-gates",
+    "word-ladder",
+    "number-of-islands"
+  ],
+  "related": [
+    "dfs",
+    "queue",
+    "graphs",
+    "trees"
+  ]
+}

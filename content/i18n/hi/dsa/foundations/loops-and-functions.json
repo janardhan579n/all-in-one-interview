@@ -1,0 +1,10 @@
+{
+  "id": "loops-and-functions",
+  "title": "Loops and Functions (लूप्स और फ़ंक्शन्स)",
+  "summary": "Loop तब तक काम दोहराता है जब तक कोई condition सही रहती है; function काम के एक हिस्से को नाम दे देता है ताकि आप उसे दोबारा इस्तेमाल कर सकें और उसके बारे में अलग से सोच सकें।",
+  "analogy": {
+    "beginner": "Loop यानी 'sauce गाढ़ी होने तक चलाते रहिए'। Function एक recipe card है: आप 'sauce बनाइए' एक बार लिख देते हैं, और उसके बाद कोई भी recipe बीस lines दोहराने के बजाय बस 'sauce बनाइए' कह सकती है। Card सामग्री अंदर लेता है (parameters) और sauce वापस थमा देता है (return value)।",
+    "interview": "Loop एक control-flow construct है जिसमें initialisation, guard, body और update होते हैं, और जिसकी correctness loop invariant के ज़रिए सिद्ध की जाती है। Function एक नामित, parameterised abstraction है जिसका एक contract होता है: उसके inputs पर preconditions, उसके result पर एक postcondition, और आदर्श रूप से कोई छिपे हुए side effects नहीं।"
+  },
+  "intuition": "इस course का लगभग हर algorithm एक loop है और साथ में थोड़ी-सी याद रखी हुई state। इसलिए जो कौशल मायने रखता है वह `for` टाइप करना नहीं है — वह यह है कि आप किसी भी पल बता सकें कि **अब तक क्या सच है**।\n\nउस वाक्य को *loop invariant* कहते हैं। maximum ढूँढने वाले loop के लिए वह था: *'`best` में उन elements में से सबसे बड़ी value रखी है जिन्हें मैं अब तक देख चुका हूँ।'* अगर invariant loop से पहले सच है, हर pass के बाद सच बना रहता है, और loop ख़त्म हो जाता है, तो invariant और exit condition मिलकर आपको जवाब दे देते हैं। यही पूरी proof technique है, और इसी तरह आप बिना debugger के off-by-one error ढूँढ लेते हैं।\n\nFunctions एक अलग वजह से मायने रखते हैं: वे आपको भूलने देते हैं। एक बार `max(a, b)` लिखा और test हो गया, तो आप यह सोचना बंद कर देते हैं कि वह कैसे काम करता है और उसके साथ सोचना शुरू कर देते हैं। software की हर परत इसी सौदे पर बनी है।"
+}

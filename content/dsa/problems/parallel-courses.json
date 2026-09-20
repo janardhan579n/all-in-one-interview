@@ -1,0 +1,192 @@
+{
+  "id": "parallel-courses",
+  "title": "Parallel Courses",
+  "patternId": "topological-sort",
+  "difficulty": "intermediate",
+  "tags": [
+    "topological-sort",
+    "graph",
+    "bfs",
+    "scheduling"
+  ],
+  "statement": "You are given n courses labelled 1 to n and a list of relations, where relations[i] = [prev, next] means prev must be taken in an earlier semester than next. In any one semester you may take as many courses as you like, provided every prerequisite of each was taken in a strictly earlier semester. Return the minimum number of semesters needed to take all n courses, or -1 if that is impossible.",
+  "realWorld": "A build system or CI pipeline with unlimited parallel workers: the tasks form a dependency graph, and the number of semesters is the number of sequential rounds the build needs - its critical-path length. Schedulers compute exactly this number to answer \"how fast could this job graph possibly finish if machines were free?\".",
+  "examples": [
+    {
+      "input": "n = 3, relations = [[1,3],[2,3]]  (edge list [prev, next], courses 1-indexed)",
+      "output": "2",
+      "explanation": "Semester 1 takes 1 and 2 together, since neither owes anything. Semester 2 takes 3. Taking several courses at once costs nothing, so width never matters."
+    },
+    {
+      "input": "n = 5, relations = [[1,2],[2,4],[3,4],[4,5]]",
+      "output": "4",
+      "explanation": "Semester 1: {1, 3}. Semester 2: {2}. Semester 3: {4}, which had to wait for 2 even though 3 was ready two semesters ago. Semester 4: {5}. The answer is the longest dependency chain (1 -> 2 -> 4 -> 5), not the course count divided by anything."
+    },
+    {
+      "input": "n = 3, relations = [[1,2],[2,3],[3,1]]",
+      "output": "-1",
+      "explanation": "Each course waits on another in a cycle, so no course is ever available and none of the three can be taken at all."
+    }
+  ],
+  "constraints": [
+    "1 <= n <= 5000",
+    "1 <= relations.length <= 5000",
+    "relations[i].length == 2 and 1 <= relations[i][0], relations[i][1] <= n",
+    "relations[i][0] != relations[i][1], and all pairs are distinct"
+  ],
+  "bruteForce": {
+    "idea": "Simulate semester by semester. Each round, scan every course not yet taken and check whether all of its prerequisites are already taken; take all such courses at once. Stop when a round takes nothing.",
+    "code": [
+      "public static int minimumSemesters(int n, int[][] relations) {",
+      "    boolean[] taken = new boolean[n + 1];",
+      "    int done = 0, semesters = 0;",
+      "    while (done < n) {",
+      "        List<Integer> thisSemester = new ArrayList<>();",
+      "        for (int course = 1; course <= n; course++) {",
+      "            if (taken[course]) continue;",
+      "            boolean ready = true;",
+      "            for (int[] r : relations) {                    // rescan EVERY relation, per course",
+      "                if (r[1] == course && !taken[r[0]]) { ready = false; break; }",
+      "            }",
+      "            if (ready) thisSemester.add(course);",
+      "        }",
+      "        if (thisSemester.isEmpty()) return -1;             // nothing became available: a cycle",
+      "        for (int course : thisSemester) taken[course] = true;",
+      "        done += thisSemester.size();",
+      "        semesters++;",
+      "    }",
+      "    return semesters;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n^2 * E) in the worst case",
+      "space": "O(n)"
+    },
+    "whySlow": "Every round re-asks, for every outstanding course, \"are all my prerequisites taken yet?\" and answers it by scanning the whole relation list again. A course blocked on a single prerequisite is re-examined from scratch in every semester until that one prerequisite lands, and each of those examinations re-reads thousands of relations belonging to other courses. The only thing that changed since the previous round is the handful of courses just taken, and recomputing readiness from nothing discards precisely that information."
+  },
+  "patternIdentification": "A course becomes available at the exact moment its last prerequisite is taken, so stop polling for readiness and let the finished course push the news to its dependents, decrementing a counter. That is Kahn algorithm, and the important thing about its queue is that it always holds exactly the set of courses available right now. When the question is \"how many rounds\" rather than \"in what order\", drain the queue one whole layer at a time: freeze its size, take that many courses, and the layer count is the length of the longest dependency chain. Any question about parallel rounds over a DAG - build stages, pipeline depth, minimum wall-clock time - is this same level-by-level BFS over indegrees.",
+  "optimized": {
+    "idea": "Kahn algorithm, counting layers instead of emitting an order. Build the dependents lists and the indegree array, seed the queue with every course of indegree 0, then repeat: record the current queue size, increment the semester counter, and poll exactly that many courses, pushing each dependent whose indegree drops to 0. Those newly unlocked courses land behind the frozen boundary, so they belong to the next semester and not this one. Finally, if fewer than n courses were taken, some course still has an unmet prerequisite and is therefore on a cycle, which is the -1 case. This is the third question the same machinery answers, and the three are worth reading together: course-schedule asks only whether an order exists (did the processed count reach n), course-schedule-ii asks for one such order (the sequence in which courses leave the queue), and this problem asks how many parallel rounds that order needs (how many times you drain the queue). One indegree array, three different things to record while draining it.",
+    "code": [
+      "public static int minimumSemesters(int n, int[][] relations) {",
+      "    List<List<Integer>> dependents = new ArrayList<>();",
+      "    for (int i = 0; i <= n; i++) dependents.add(new ArrayList<>());",
+      "    int[] indegree = new int[n + 1];",
+      "    for (int[] r : relations) {",
+      "        dependents.get(r[0]).add(r[1]);",
+      "        indegree[r[1]]++;",
+      "    }",
+      "    Deque<Integer> ready = new ArrayDeque<>();",
+      "    for (int course = 1; course <= n; course++) {",
+      "        if (indegree[course] == 0) ready.offer(course);",
+      "    }",
+      "    int taken = 0, semesters = 0;",
+      "    while (!ready.isEmpty()) {",
+      "        int layer = ready.size();   // freeze it: exactly THIS semester, nothing unlocked below",
+      "        semesters++;",
+      "        for (int i = 0; i < layer; i++) {",
+      "            int course = ready.poll();",
+      "            taken++;",
+      "            for (int next : dependents.get(course)) {",
+      "                if (--indegree[next] == 0) ready.offer(next);",
+      "            }",
+      "        }",
+      "    }",
+      "    return taken == n ? semesters : -1;   // a course left with indegree > 0 sits on a cycle",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n + E)",
+      "space": "O(n + E)"
+    }
+  },
+  "visualization": {
+    "engine": "topologicalSort",
+    "title": "Example 2: courses 1 and 3 are available immediately, so they share semester 1; course 4 waits for 2 even though 3 has been done since the first round. Each full drain of the queue is one semester.",
+    "input": {
+      "graph": {
+        "nodes": [
+          {
+            "id": "1",
+            "x": 80,
+            "y": 60
+          },
+          {
+            "id": "3",
+            "x": 80,
+            "y": 170
+          },
+          {
+            "id": "2",
+            "x": 240,
+            "y": 60
+          },
+          {
+            "id": "4",
+            "x": 400,
+            "y": 115
+          },
+          {
+            "id": "5",
+            "x": 540,
+            "y": 115
+          }
+        ],
+        "edges": [
+          {
+            "from": "1",
+            "to": "2"
+          },
+          {
+            "from": "2",
+            "to": "4"
+          },
+          {
+            "from": "3",
+            "to": "4"
+          },
+          {
+            "from": "4",
+            "to": "5"
+          }
+        ]
+      }
+    },
+    "code": [
+      "int[] indegree = new int[n + 1];   Deque<Integer> ready = new ArrayDeque<>();",
+      "for (int[] r : relations) { dependents.get(r[0]).add(r[1]); indegree[r[1]]++; }",
+      "for (int c = 1; c <= n; c++) if (indegree[c] == 0) ready.offer(c);   // semester 1",
+      "while (!ready.isEmpty()) {",
+      "    int layer = ready.size();      // FREEZE: this is one semester",
+      "    semesters++;",
+      "    for (int i = 0; i < layer; i++) {",
+      "        int course = ready.poll();  taken++;",
+      "        for (int next : dependents.get(course))",
+      "            if (--indegree[next] == 0) ready.offer(next);   // unlocked - NEXT semester",
+      "    }",
+      "}",
+      "return taken == n ? semesters : -1;   // unfinished courses mean a cycle"
+    ]
+  },
+  "commonMistakes": [
+    "Polling one course at a time and counting semesters per course rather than per layer - n = 3 with [[1,3],[2,3]] returns 3 instead of 2, and because the wrong answer equals the course count it looks right on every chain-shaped test.",
+    "Calling ready.size() inside the inner loop instead of freezing it first - courses unlocked during a semester get taken in that same semester, so the chain [[1,2],[2,3]] collapses to 1 semester when the true answer is 3.",
+    "Returning semesters without checking taken == n - the cycle [[1,2],[2,3],[3,1]] leaves the queue empty on the first look, the loop never runs, and the method reports 0 semesters instead of -1."
+  ],
+  "similar": [
+    "course-schedule",
+    "course-schedule-ii",
+    "alien-dictionary",
+    "sequence-reconstruction",
+    "min-height-trees"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 1136,
+      "slug": "parallel-courses",
+      "title": "Parallel Courses",
+      "url": "https://leetcode.com/problems/parallel-courses/",
+      "premium": true
+    }
+  }
+}

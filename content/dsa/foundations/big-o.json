@@ -1,0 +1,207 @@
+{
+  "id": "big-o",
+  "kind": "foundation",
+  "title": "Big-O — How We Measure Cost",
+  "group": "Foundations",
+  "level": 1,
+  "difficulty": "beginner",
+  "estimatedMinutes": 30,
+  "summary": "Big-O describes how an algorithm's work grows as the input grows — the shape of the curve, not the number of seconds.",
+  "prerequisites": ["loops-and-functions"],
+  "tags": ["complexity", "big-o", "analysis", "level-1"],
+  "interactive": "complexity-chart",
+  "analogy": {
+    "beginner": "Two people offer to deliver your parcels. One charges a flat ₹500 no matter how many parcels — expensive for one parcel, a bargain for a thousand. The other charges ₹5 per parcel, and then insists on comparing every parcel against every other parcel before leaving. For 10 parcels he's cheaper. For 10,000 he never leaves the warehouse. Big-O ignores the rupee amounts and tells you only which one collapses as the pile grows.",
+    "interview": "Big-O is an asymptotic upper bound on a cost function: f(n) = O(g(n)) if there exist constants c and n₀ such that f(n) ≤ c·g(n) for all n ≥ n₀. It deliberately discards constant factors and lower-order terms, which is what makes it portable across machines."
+  },
+  "intuition": "You cannot benchmark your way to a good algorithm. Your laptop, the JVM's warm-up, and the size of your test data all change the wall-clock number. What does not change is the **shape**: does doubling the input double the work, square it, or barely move it?\n\nThat shape is what Big-O captures, and it is the only thing that survives the trip from your laptop to production.\n\nWhy we drop constants: an algorithm that does 3n + 7 operations and one that does n operations both draw a straight line. On a machine three times faster, the first becomes n + 2.3. The constants belong to the hardware; the shape belongs to the algorithm.\n\nWhy we keep only the biggest term: in n² + 500n, at n = 1,000,000 the n² term is 2,000 times larger than the 500n term. The big term eventually swallows everything else, and 'eventually' arrives sooner than people expect.",
+  "problemFirst": {
+    "motivatingProblem": "Two colleagues each write a function to find duplicate order IDs. Both pass the tests on 100 rows. In production one takes 40 milliseconds and the other takes 11 minutes. How could you have known before deploying?",
+    "bruteForce": {
+      "idea": "The first version compares every ID against every other ID. For 100 rows that's about 5,000 comparisons — instant. For 100,000 rows it is 5 billion.",
+      "code": [
+        "// O(n^2) — compare every pair",
+        "for (int i = 0; i < ids.length; i++) {",
+        "    for (int j = i + 1; j < ids.length; j++) {",
+        "        if (ids[i] == ids[j]) {",
+        "            return true;",
+        "        }",
+        "    }",
+        "}",
+        "return false;"
+      ],
+      "complexity": { "time": "O(n²)", "space": "O(1)" },
+      "whySlow": "The number of pairs in n items is n(n-1)/2. Multiply the input by 1,000 and you multiply the work by 1,000,000. The test suite never noticed because 100 rows hides a factor of a million."
+    },
+    "observation": "The inner loop exists only to answer one question: 'have I seen this value before?' We are recomputing an answer that we could have remembered.",
+    "leap": "Trade memory for time. A `HashSet` answers 'have I seen this?' in O(1), which collapses the whole inner loop and turns n² into n.",
+    "optimizedSketch": [
+      "// O(n) time, O(n) space",
+      "Set<Integer> seen = new HashSet<>();",
+      "for (int id : ids) {",
+      "    if (!seen.add(id)) {",
+      "        return true;   // add() returns false if it was already present",
+      "    }",
+      "}",
+      "return false;"
+    ]
+  },
+  "howItWorks": [
+    "Count the operations as a function of the input size n — usually by counting loop passes.",
+    "Sequential blocks **add**: O(n) followed by O(n) is O(2n) = O(n).",
+    "Nested loops **multiply**: O(n) inside O(n) is O(n²).",
+    "Drop constant factors: O(3n) → O(n). Drop lower-order terms: O(n² + n) → O(n²).",
+    "Halving the search space each step gives O(log n) — 1,000,000 items take about 20 steps.",
+    "Do the same analysis for **memory**: extra space your algorithm allocates, not counting the input itself."
+  ],
+  "patternRecognition": {
+    "signals": [
+      "'Can you do better than O(n²)?' — the interviewer is asking you to remove a nested loop",
+      "n ≤ 10⁵ in the constraints means O(n log n) is expected and O(n²) will time out",
+      "n ≤ 20 with subsets/permutations wanted means exponential is intended"
+    ],
+    "antiSignals": ["Comparing two algorithms with the same Big-O — then constants and cache behaviour actually do matter, and you must benchmark"],
+    "decisionTreeId": "complexity-budget"
+  },
+  "visualizations": [
+    {
+      "id": "growth",
+      "title": "The same n, five different curves",
+      "engine": "growthTable",
+      "input": { "sizes": [10, 100, 1000, 10000, 100000, 1000000], "shapes": ["O(1)", "O(log n)", "O(n)", "O(n log n)", "O(n^2)"] },
+      "code": [
+        "// operations performed, by input size",
+        "O(1)        1         1          1          1",
+        "O(log n)    3         7         10         20",
+        "O(n)       10       100      1,000  1,000,000",
+        "O(n log n) 33       664      9,966 19,931,569",
+        "O(n^2)    100    10,000  1,000,000  10^12"
+      ]
+    },
+    {
+      "id": "pairs",
+      "title": "Why nested loops explode: counting the pairs",
+      "engine": "nestedLoopPairs",
+      "input": { "n": 6 },
+      "code": [
+        "for (int i = 0; i < n; i++) {",
+        "    for (int j = i + 1; j < n; j++) {",
+        "        compare(a[i], a[j]);",
+        "    }",
+        "}"
+      ]
+    }
+  ],
+  "implementations": [
+    {
+      "label": "Simple",
+      "language": "java",
+      "explanation": "Read the complexity straight off the loop structure. One loop over n → O(n). Two nested loops over n → O(n²). A loop that halves n → O(log n).",
+      "code": [
+        "// O(1)  — work does not depend on n",
+        "int first(int[] a) { return a[0]; }",
+        "",
+        "// O(n)  — one pass",
+        "int sum(int[] a) {",
+        "    int total = 0;",
+        "    for (int x : a) total += x;",
+        "    return total;",
+        "}",
+        "",
+        "// O(n^2) — a pass inside a pass",
+        "boolean anyPairSumsToZero(int[] a) {",
+        "    for (int i = 0; i < a.length; i++)",
+        "        for (int j = i + 1; j < a.length; j++)",
+        "            if (a[i] + a[j] == 0) return true;",
+        "    return false;",
+        "}",
+        "",
+        "// O(log n) — the range halves every step",
+        "int countHalvings(int n) {",
+        "    int steps = 0;",
+        "    while (n > 1) { n /= 2; steps++; }",
+        "    return steps;",
+        "}"
+      ]
+    },
+    {
+      "label": "Optimized",
+      "language": "java",
+      "explanation": "The amortised case worth understanding: `ArrayList.add` is O(1) *amortised*, not O(1) worst case. Occasionally it copies the whole array to grow it — but because it doubles, those copies are rare enough that the average over n additions is constant. Interviewers ask about this a lot.",
+      "code": [
+        "List<Integer> list = new ArrayList<>();",
+        "for (int i = 0; i < n; i++) {",
+        "    list.add(i);   // usually O(1); occasionally O(n) to grow the backing array",
+        "}",
+        "// Total cost of n adds: n + (1 + 2 + 4 + ... + n) < n + 2n = O(n)",
+        "// => O(1) amortised per add.",
+        "",
+        "// Contrast: growing by ONE slot each time would cost",
+        "// 1 + 2 + 3 + ... + n = O(n^2) in total."
+      ]
+    }
+  ],
+  "complexity": {
+    "time": "n/a — this lesson is the measuring tool",
+    "space": "n/a",
+    "why": "Use this table as a budget. Assuming roughly 10⁸ simple operations per second: n = 10 allows anything, even O(n!); n = 1,000 allows O(n²); n = 10⁵ needs O(n log n); n = 10⁷ needs O(n) or O(log n). Interview constraints are a hint about the intended complexity — read them first, before designing."
+  },
+  "commonMistakes": [
+    { "mistake": "Writing O(2n) or O(n + 5)", "fix": "Constants and lower-order terms are dropped by definition. It is O(n)." },
+    { "mistake": "Assuming two nested loops always mean O(n²)", "fix": "`for i in n { for j in 5 }` is O(5n) = O(n). What matters is how many times the inner body runs in total." },
+    { "mistake": "Forgetting the cost of library calls", "fix": "`list.contains(x)` is O(n); `substring` copies in O(k); sorting inside a loop is O(n² log n). A single innocuous method call can dominate everything." },
+    { "mistake": "Ignoring space", "fix": "An O(n) algorithm that allocates an O(n) map has different operational behaviour from an O(n) in-place one. Interviewers ask for both." },
+    { "mistake": "Confusing worst case with average case", "fix": "HashMap lookup is O(1) average, O(n) worst case if every key collides. Quicksort is O(n log n) average, O(n²) worst case." }
+  ],
+  "realWorldUses": [
+    "Capacity planning: an O(n²) report that is fine for today's 5,000 customers becomes an outage at 50,000.",
+    "Database indexes exist to turn an O(n) table scan into an O(log n) B-tree descent.",
+    "Rate limiter and cache designs are chosen for their O(1) per-request cost — see the System Design track."
+  ],
+  "interviewNotes": [
+    "State the complexity of your solution unprompted, and say *why* — 'O(n log n), dominated by the sort'.",
+    "If asked to improve O(n²), the three standard moves are: sort first, use a hash map, or use two pointers / a sliding window.",
+    "Always give space complexity too. Most candidates forget, and it is free marks."
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "complexity",
+      "question": "What is the time complexity?\n\nfor (int i = 0; i < n; i++)\n    for (int j = 0; j < n; j++)\n        sum += grid[i][j];",
+      "options": ["O(n)", "O(n log n)", "O(n²)", "O(2ⁿ)"],
+      "answerIndex": 2,
+      "explanation": "The inner body runs n times for each of n outer passes = n² total operations."
+    },
+    {
+      "id": "q2",
+      "type": "complexity",
+      "question": "What is the time complexity?\n\nfor (int i = 1; i < n; i = i * 2)\n    System.out.println(i);",
+      "options": ["O(n)", "O(log n)", "O(n²)", "O(1)"],
+      "answerIndex": 1,
+      "explanation": "i doubles each pass: 1, 2, 4, 8… It reaches n after about log₂(n) steps. For n = 1,000,000 that is roughly 20 passes."
+    },
+    {
+      "id": "q3",
+      "type": "mcq",
+      "question": "A problem has n ≤ 100,000 and a 1-second limit. Which complexity is the intended solution?",
+      "options": ["O(n²)", "O(n log n)", "O(2ⁿ)", "O(n³)"],
+      "answerIndex": 1,
+      "explanation": "n² would be 10¹⁰ operations — far beyond a second. n log n is about 1.7 million, comfortably fast. Constraints are a hint about the intended approach."
+    },
+    {
+      "id": "q4",
+      "type": "mcq",
+      "question": "Why is `ArrayList.add` described as O(1) amortised rather than O(1)?",
+      "options": [
+        "Because it is actually O(n) and the docs are wrong",
+        "Because occasionally it copies the whole backing array, but doubling makes those copies rare enough to average out to constant",
+        "Because the JVM garbage collector interferes",
+        "Because adding at the front is O(n)"
+      ],
+      "answerIndex": 1,
+      "explanation": "The total cost of n adds is bounded by 2n, so the average per add is constant — even though individual adds can cost O(n)."
+    }
+  ],
+  "practiceProblems": ["two-sum", "contains-duplicate"],
+  "related": ["hashing", "arrays", "binary-search"]
+}

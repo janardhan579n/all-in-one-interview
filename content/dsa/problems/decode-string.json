@@ -1,0 +1,147 @@
+{
+  "id": "decode-string",
+  "title": "Decode String",
+  "patternId": "stack",
+  "difficulty": "intermediate",
+  "tags": [
+    "stack",
+    "string",
+    "recursion"
+  ],
+  "statement": "Given an encoded string, return its decoded form. The encoding rule is k[encoded_string], meaning the bracketed text is repeated exactly k times. k is a positive integer, brackets may nest, the input is always well formed, and digits appear only as repeat counts — never inside the decoded text.",
+  "realWorld": "Run-length and macro expansion in template engines and config formats work exactly this way, and so does any nested-directive preprocessor. The same shape appears when expanding glob braces in a shell ({a,b}{1,2}) or unrolling a nested loop body in a code generator: an inner construct must be finished before the outer one can use it.",
+  "examples": [
+    {
+      "input": "s = \"3[a]2[bc]\"",
+      "output": "\"aaabcbc\"",
+      "explanation": "Two independent blocks at the top level, expanded left to right."
+    },
+    {
+      "input": "s = \"3[a2[c]]\"",
+      "output": "\"accaccacc\"",
+      "explanation": "Nested. The inner 2[c] must become \"cc\" before the outer block knows what it is repeating: \"a\" + \"cc\" = \"acc\", then tripled."
+    },
+    {
+      "input": "s = \"2[abc]3[cd]ef\"",
+      "output": "\"abcabccdcdcdef\"",
+      "explanation": "Plain text outside any bracket is simply carried along, and the trailing \"ef\" belongs to no block at all."
+    }
+  ],
+  "constraints": [
+    "1 <= s.length <= 30",
+    "s contains only lowercase letters, digits and the brackets [ ]",
+    "1 <= k <= 300 and the decoded string fits comfortably in memory",
+    "The input is always a valid encoding"
+  ],
+  "bruteForce": {
+    "idea": "Repeatedly find an innermost block — a '[' with no other '[' before its matching ']' — expand it in place, and restart the scan on the rewritten string. Stop when no brackets remain.",
+    "code": [
+      "String work = s;",
+      "while (work.indexOf('[') >= 0) {",
+      "    int open = -1;",
+      "    for (int i = 0; i < work.length(); i++) {",
+      "        if (work.charAt(i) == '[') open = i;",
+      "        else if (work.charAt(i) == ']' && open >= 0) {",
+      "            int start = open;",
+      "            while (start > 0 && Character.isDigit(work.charAt(start - 1))) start--;",
+      "            int times = Integer.parseInt(work.substring(start, open));",
+      "            String body = work.substring(open + 1, i);",
+      "            work = work.substring(0, start) + body.repeat(times) + work.substring(i + 1);",
+      "            break;",
+      "        }",
+      "    }",
+      "}",
+      "return work;"
+    ],
+    "complexity": {
+      "time": "O(d * m) where d is the nesting depth and m the length of the decoded output",
+      "space": "O(m)"
+    },
+    "whySlow": "Each expansion rebuilds the whole string with substring concatenation and then the scan starts over at index 0. Every character of the already-decoded prefix is re-read and re-copied once per remaining bracket level, even though nothing about it can ever change again — it is finished text being carried through the machine over and over. On \"3[3[3[3[a]]]]\" the growing output is copied top to bottom four times, and the scan re-confirms 'these are plain letters' on the same characters on every pass."
+  },
+  "patternIdentification": "Nesting is the signal. A new '[' means the block you were building has to be suspended — you are not finished with it, but you cannot continue until something else completes — and the matching ']' means resume it with the inner result in hand. Suspending and resuming work in strictly last-opened-first-closed order is a stack of *unfinished contexts*, not a stack of values. Push what you will need in order to resume (here: the text so far, and the repeat count), clear the workspace, and on the close pop the context back and fold the finished piece into it.",
+  "optimized": {
+    "idea": "Two stacks and one working buffer. Walk the string once. A digit extends the pending count (count = count * 10 + digit, so 12[a] means twelve). A '[' suspends: push the pending count onto the counts stack and the text-so-far onto the strings stack, then reset both to empty so the inner block builds in a clean workspace. A ']' resumes: pop the outer text and the count, append the just-finished buffer to the outer text that many times, and make that the new buffer. A letter just appends. Trace \"3[a2[c]]\": '3' sets count=3; '[' pushes (3, \"\") and clears, buffer=\"\"; 'a' gives buffer=\"a\"; '2' sets count=2; '[' pushes (2, \"a\") and clears, buffer=\"\"; 'c' gives buffer=\"c\"; the first ']' pops (2, \"a\") and folds \"c\" twice into \"a\", buffer=\"acc\"; the second ']' pops (3, \"\") and folds \"acc\" three times, buffer=\"accaccacc\". The buffer at the end is the answer.",
+    "code": [
+      "public static String decodeString(String s) {",
+      "    Deque<Integer> counts = new ArrayDeque<>();",
+      "    Deque<StringBuilder> parts = new ArrayDeque<>();",
+      "    StringBuilder current = new StringBuilder();",
+      "    int count = 0;",
+      "    for (char c : s.toCharArray()) {",
+      "        if (Character.isDigit(c)) {",
+      "            count = count * 10 + (c - '0');   // counts can be multi-digit: 12[a] is twelve, not one then two",
+      "        } else if (c == '[') {",
+      "            counts.push(count);",
+      "            parts.push(current);",
+      "            count = 0;",
+      "            current = new StringBuilder();",
+      "        } else if (c == ']') {",
+      "            StringBuilder outer = parts.pop();",
+      "            int times = counts.pop();",
+      "            for (int i = 0; i < times; i++) outer.append(current);",
+      "            current = outer;",
+      "        } else {",
+      "            current.append(c);",
+      "        }",
+      "    }",
+      "    return current.toString();",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(m) where m is the length of the decoded output",
+      "space": "O(m)"
+    }
+  },
+  "visualization": {
+    "engine": "stackOps",
+    "input": {
+      "operations": [
+        {
+          "op": "push",
+          "value": 3
+        },
+        {
+          "op": "push",
+          "value": 2
+        },
+        {
+          "op": "peek"
+        },
+        {
+          "op": "pop"
+        },
+        {
+          "op": "pop"
+        }
+      ]
+    },
+    "code": [
+      "Deque<Integer> counts = new ArrayDeque<>();",
+      "if (c == '[') { counts.push(count); parts.push(current); }",
+      "int times = counts.peek();",
+      "counts.pop();   // ']' always closes the innermost open bracket first",
+      "for (int i = 0; i < times; i++) outer.append(current);"
+    ]
+  },
+  "commonMistakes": [
+    "Reading a digit as `count = c - '0'` instead of `count = count * 10 + (c - '0')` — \"12[a]\" decodes to \"aa\" rather than twelve a's, and because every single-digit test still passes the bug reaches production.",
+    "Not resetting `current` to a fresh builder after pushing it on '[' — the outer text leaks into the inner block and gets repeated with it, so \"xy2[a]\" comes back as \"xyxyaxya\" instead of \"xyaa\". The symptom is text before a bracket appearing duplicated.",
+    "Handling ']' by repeating the buffer in place and dropping the popped prefix (`current = current.repeat(times)`) — the block before the current one is discarded entirely, so \"2[abc]3[cd]ef\" returns \"cdcdcdef\" with the \"abcabc\" silently missing."
+  ],
+  "similar": [
+    "valid-parentheses",
+    "evaluate-rpn",
+    "min-stack",
+    "asteroid-collision"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 394,
+      "slug": "decode-string",
+      "title": "Decode String",
+      "url": "https://leetcode.com/problems/decode-string/",
+      "premium": false
+    }
+  }
+}

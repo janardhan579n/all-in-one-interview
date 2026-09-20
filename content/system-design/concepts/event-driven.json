@@ -1,0 +1,275 @@
+{
+  "id": "event-driven",
+  "title": "Event-Driven Architecture",
+  "group": "Architecture",
+  "level": 2,
+  "estimatedMinutes": 30,
+  "summary": "A command tells one known service to do something; an event announces that something already happened and does not care who is listening. Inverting that direction means a producer no longer knows its consumers — which is the whole payoff, and the source of every cost.",
+  "analogy": "The difference between phoning a colleague to ask them to do something and pinning a notice on the office board. The phone call reaches one person and you hear whether it worked. The notice reaches everyone who happens to read the board, and a new team can start acting on it without you knowing they exist — but you also never find out that nobody read it, and someone who walks past the board an hour late is working from stale information while insisting they are up to date.",
+  "explanation": {
+    "beginner": "Normally a service calls another one and waits: 'create this invoice' — a command, aimed at one service that you know exists, and you find out immediately whether it worked. An event is the opposite. The order service writes 'OrderPlaced' to a broker and moves on. It does not know that an email service, an analytics service and a search indexer are all reading that message, and it does not wait for them. Adding a fourth listener needs no change to the order service at all. The price is that the order is placed before anything else has caught up, so for a moment the rest of the system has not heard about it yet.",
+    "interview": "The distinction is intent and coupling: a command names a recipient and expects an outcome; an event is a past-tense fact with no recipient, so the producer's dependency on consumers is inverted. Transport is pub/sub (fan-out: every subscriber gets a copy) versus a work queue (competing consumers: exactly one worker takes the job) — see message-queue for the delivery, ordering and retry mechanics. Payload is a choice: event notification keeps the event thin and consumers call back for detail, adding load and latency but keeping the schema small; event-carried state transfer ships the data so consumers never call back, at the cost of the schema becoming a contract with everyone. Event sourcing stores the sequence of changes as the source of truth and derives current state by replay. Ordering is guaranteed per partition, never globally. Failure modes: visible eventual consistency, no stack trace across systems, and no single place showing the whole flow."
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "producer",
+        "label": "Order service",
+        "type": "server",
+        "x": 110,
+        "y": 290,
+        "note": "Publishes OrderPlaced and returns. It has no compile-time or runtime knowledge of who consumes it, and no code changes when a consumer is added."
+      },
+      {
+        "id": "broker",
+        "label": "Broker topic (partitioned)",
+        "type": "queue",
+        "x": 400,
+        "y": 290,
+        "note": "Durably holds the event and fans it out to every subscriber group. Ordering holds within a partition — events for one order key stay in order; across the whole topic they do not.",
+        "why": {
+          "without": [
+            "The order service calls email, analytics and the search indexer directly and waits for each",
+            "Checkout latency is the sum of all three, and any one of them being down fails the order",
+            "Adding a fourth downstream means editing, testing and redeploying the order service — the team that owns checkout becomes the bottleneck for everyone else's features"
+          ],
+          "with": [
+            "The order service publishes once and returns; downstream work happens after the response",
+            "A slow or dead consumer builds lag instead of failing the order",
+            "A new consumer subscribes to the existing topic with zero changes to the producer"
+          ],
+          "conclusion": "The producer stops depending on its consumers — which is the real payoff, paid for with eventual consistency the user can see and a flow no single log shows end to end."
+        }
+      },
+      {
+        "id": "email",
+        "label": "Email worker",
+        "type": "worker",
+        "x": 700,
+        "y": 100,
+        "note": "Its own consumer group, its own offset. Being down for an hour means an hour of lag, not an hour of failed checkouts — but also an hour of customers wondering where their confirmation is."
+      },
+      {
+        "id": "analytics",
+        "label": "Analytics worker",
+        "type": "worker",
+        "x": 700,
+        "y": 290,
+        "note": "Added months after the order service shipped, without a single line changing in it. This is the payoff, concretely."
+      },
+      {
+        "id": "indexer",
+        "label": "Search indexer",
+        "type": "worker",
+        "x": 700,
+        "y": 480,
+        "note": "Writes a read model. It is seconds behind, which is why a user who just placed an order can search and not find it — the classic visible eventual consistency."
+      }
+    ],
+    "edges": [
+      {
+        "from": "producer",
+        "to": "broker",
+        "label": "publish OrderPlaced"
+      },
+      {
+        "from": "broker",
+        "to": "email",
+        "label": "copy",
+        "dashed": true
+      },
+      {
+        "from": "broker",
+        "to": "analytics",
+        "label": "copy",
+        "dashed": true
+      },
+      {
+        "from": "broker",
+        "to": "indexer",
+        "label": "copy",
+        "dashed": true
+      }
+    ]
+  },
+  "why": {
+    "without": [
+      "Checkout calls email, analytics and the indexer synchronously: user-visible latency is the sum of all of them, and p99 is the worst of all of them",
+      "Any downstream being unavailable fails the order — a broken analytics service costs you revenue",
+      "Every new downstream consumer is a change to the producer, so one team's roadmap gates everyone else's",
+      "Retry logic for each downstream lives in the producer, where a stuck retry holds a request thread"
+    ],
+    "with": [
+      "The producer publishes once and returns; the user waits only for the order to be recorded",
+      "A dead consumer accumulates lag and catches up, instead of failing the user's request",
+      "New consumers attach to the existing stream with no producer change at all",
+      "Load spikes are absorbed by the broker rather than by every downstream at once"
+    ],
+    "conclusion": "You trade an immediate, traceable answer for decoupling and absorption — and you take on eventual consistency users can see, plus debugging that spans systems with no stack trace to follow."
+  },
+  "whenToUse": [
+    "One thing happening has several independent consequences, and you expect more over time",
+    "The consequences do not need to finish before the user gets a response",
+    "Producer and consumer teams deploy on different schedules and should not block each other",
+    "Traffic is spiky and downstream work can be absorbed and drained rather than dropped",
+    "You need an audit trail of what happened, not just what the state is now"
+  ],
+  "whenNotToUse": [
+    "The caller needs the result to continue — 'was the card charged?' is a command with an answer, and wrapping it in an event just means inventing a correlation id and a timeout to fake a reply",
+    "A simple two-service flow where a direct call is honest: you would be adding a broker, consumer groups, dead-letter handling and lag monitoring to decouple two things that are not coupled painfully",
+    "A user-facing read must reflect a write immediately — if the list has to show the new item on the next page load, deriving that list asynchronously guarantees complaints",
+    "Strict global ordering is required across all entities, not just per key: brokers give you ordering inside a partition, and one partition means no parallelism",
+    "The team has no distributed tracing and no consumer-lag alerting — without observability an event-driven system fails silently, and 'it just never arrived' becomes a weekly occurrence"
+  ],
+  "tradeoffs": [
+    {
+      "option": "Request/response (commands, synchronous)",
+      "pros": [
+        "You get the outcome immediately and can act on the failure right there",
+        "One stack trace covers the whole flow; debugging is ordinary debugging",
+        "No intermediate state — the write is visible to the next read"
+      ],
+      "cons": [
+        "Latency is the sum of the chain, and availability is the product of it",
+        "The caller must know every callee, so adding a consequence means changing the caller",
+        "A slow downstream applies backpressure straight into user-facing request threads"
+      ]
+    },
+    {
+      "option": "Pub/sub fan-out",
+      "pros": [
+        "Every subscriber gets its own copy at its own pace",
+        "New consumers cost the producer nothing",
+        "A slow consumer's lag is isolated to that consumer"
+      ],
+      "cons": [
+        "The producer has no idea whether anyone acted on the event, or whether anyone is listening at all",
+        "Each consumer needs its own retry, dead-letter and lag monitoring",
+        "Removing a field from an event breaks consumers you may not know about"
+      ]
+    },
+    {
+      "option": "Work queue (competing consumers)",
+      "pros": [
+        "Exactly one worker takes each job, so scaling out is adding workers",
+        "Natural load levelling and straightforward retry semantics"
+      ],
+      "cons": [
+        "Only one consumer gets the message, so it is the wrong tool when several parties care",
+        "Ordering across workers is lost unless you partition by key — see message-queue for the mechanics"
+      ]
+    },
+    {
+      "option": "Event notification (thin event, consumer calls back)",
+      "pros": [
+        "Tiny, stable payload — mostly an id and an event type, so schema churn is low",
+        "The consumer always reads current data, avoiding decisions based on a stale snapshot"
+      ],
+      "cons": [
+        "Every consumer calls back, so a fan-out of N events becomes N callbacks and the coupling you removed reappears as read load",
+        "Adds a round trip of latency per consumer, and the callback can fail independently of the event"
+      ]
+    },
+    {
+      "option": "Event-carried state transfer (fat event)",
+      "pros": [
+        "Consumers need no callback, so the producer's read path is not hit at all",
+        "Consumers keep working while the producer is down",
+        "The event is a self-contained record of what was true at that moment"
+      ],
+      "cons": [
+        "The payload becomes a public contract with every current and future consumer — changing it is a coordinated migration",
+        "Duplicated state across services drifts, and consumers act on a snapshot that may already be out of date",
+        "Larger messages mean more broker storage and bandwidth"
+      ]
+    },
+    {
+      "option": "Event sourcing (the event log is the source of truth)",
+      "pros": [
+        "Complete audit trail for free — you can answer how the state got here, not just what it is",
+        "New read models are built by replaying history rather than backfilling",
+        "Temporal queries: what did this look like last Tuesday?"
+      ],
+      "cons": [
+        "Schema evolution is permanent work — you must still be able to read events written years ago",
+        "Rebuild time grows with total event count, so long-lived aggregates need snapshots or replay takes hours",
+        "Current state requires a projection, so every simple query is now indirect",
+        "Deleting a person's data from an append-only log is genuinely hard"
+      ]
+    }
+  ],
+  "keyNumbers": [
+    {
+      "label": "Synchronous chain of 3 calls at 20 ms each",
+      "value": "~60 ms of user-visible latency, versus ~20 ms if two are events"
+    },
+    {
+      "label": "Publish to a broker, same datacentre",
+      "value": "~1–10 ms, depending on how many replicas must acknowledge"
+    },
+    {
+      "label": "End-to-end propagation to a healthy consumer",
+      "value": "tens of milliseconds — seconds to minutes once a consumer falls behind"
+    },
+    {
+      "label": "Ordering guarantee",
+      "value": "per partition only; global ordering means one partition, and one partition means one consumer"
+    },
+    {
+      "label": "Cost of adding a consumer",
+      "value": "zero producer changes — the concrete payoff of the inversion"
+    },
+    {
+      "label": "Event-sourcing replay",
+      "value": "proportional to total events; snapshots bound it to events-since-snapshot"
+    }
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "mcq",
+      "question": "What actually distinguishes an event from a command?",
+      "options": [
+        "Events are asynchronous and commands are synchronous",
+        "Events go through a broker and commands go over HTTP",
+        "A command names one recipient and expects something to happen; an event states a past fact with no recipient, so the producer does not know or care who consumes it",
+        "Events carry more data than commands"
+      ],
+      "answerIndex": 2,
+      "explanation": "Transport and timing are consequences, not the definition — you can send a command over a queue and it is still a command. The real difference is the direction of the dependency: 'ChargeCard' names payments and expects an outcome, while 'OrderPlaced' is a fact and the producer's list of consumers is empty by design. That inversion is what lets you add a consumer without touching the producer."
+    },
+    {
+      "id": "q2",
+      "type": "architecture",
+      "question": "A user saves a profile change, gets a success message, and the profile list still shows the old value for several seconds. The write went to the profile service; the list is a read model built by a consumer of ProfileUpdated. What is happening and what is the usual fix?",
+      "options": [
+        "The event was lost; add a dead-letter queue",
+        "Ordering broke; use a single partition for the whole topic",
+        "Visible eventual consistency — the read model lags the write. Usual fixes: read your own writes from the authoritative service or a session-pinned cache, or have the UI show the value it just submitted until the event lands",
+        "The consumer is not idempotent; add a deduplication key"
+      ],
+      "answerIndex": 2,
+      "explanation": "Nothing is broken — the system is behaving exactly as designed, and that is the point. The asynchronous read model is by definition behind the write, so the gap is a product decision, not a bug to debug. Options are to serve that one user's read from the source of truth, keep the submitted value in the client until the projection catches up, or accept and communicate the delay. Adding a dead-letter queue or a single partition addresses problems that are not occurring here."
+    },
+    {
+      "id": "q3",
+      "type": "architecture",
+      "question": "A team wants to move from thin events (id plus type, consumers call back for detail) to fat events carrying the full entity. What do they gain and what do they take on?",
+      "options": [
+        "They gain stronger ordering guarantees and take on more broker storage",
+        "They gain exactly-once delivery and take on higher latency",
+        "They remove the callback load and latency on the producer and keep consumers working while it is down — but the payload becomes a versioned contract with every consumer, and consumers now act on a snapshot that can already be stale",
+        "They gain the ability to replay history and take on a longer rebuild time"
+      ],
+      "answerIndex": 2,
+      "explanation": "The callback in event notification quietly rebuilds the coupling you removed: N events become N reads against the producer, each adding latency and a new failure path. Shipping the state removes that, at the price of a schema that is now a contract you cannot change unilaterally, plus consumers holding copies that drift. Replay and rebuild time belong to event sourcing, which is a separate decision about whether the log is the source of truth."
+    }
+  ],
+  "related": [
+    "message-queue",
+    "microservices",
+    "observability",
+    "saga",
+    "api"
+  ]
+}

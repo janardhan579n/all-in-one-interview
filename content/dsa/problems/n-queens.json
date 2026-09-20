@@ -1,0 +1,133 @@
+{
+  "id": "n-queens",
+  "title": "N-Queens",
+  "patternId": "backtracking",
+  "difficulty": "advanced",
+  "tags": [
+    "backtracking",
+    "recursion",
+    "constraint-satisfaction",
+    "pruning"
+  ],
+  "statement": "Place n queens on an n x n chessboard so that no two attack each other (no shared row, column or diagonal). Return all distinct solutions.",
+  "realWorld": "The canonical constraint-satisfaction problem. The same search-and-prune structure underlies exam timetabling, shift rostering, frequency assignment and register allocation in compilers.",
+  "examples": [
+    {
+      "input": "n = 4",
+      "output": "2 solutions",
+      "explanation": "[[\".Q..\",\"...Q\",\"Q...\",\"..Q.\"],[\"..Q.\",\"Q...\",\"...Q\",\".Q..\"]]"
+    },
+    {
+      "input": "n = 1",
+      "output": "1 solution",
+      "explanation": "A single queen on a 1x1 board."
+    }
+  ],
+  "constraints": [
+    "1 <= n <= 9"
+  ],
+  "bruteForce": {
+    "idea": "Generate every way to place n queens on n^2 squares and test each arrangement for validity.",
+    "code": [
+      "for (each combination of n squares out of n*n) {",
+      "    if (noTwoQueensAttack(combination)) record(combination);",
+      "}"
+    ],
+    "complexity": {
+      "time": "C(n^2, n) — about 4.4 billion for n = 8",
+      "space": "O(n)"
+    },
+    "whySlow": "It validates only complete boards. Placing two queens in the same row is detectable immediately, but this approach still completes every board containing that mistake before rejecting it."
+  },
+  "patternIdentification": "Constraint satisfaction with early failure detection. Since exactly one queen goes in each row, the search is a decision per row, and conflicts can be detected the moment a queen is placed — that is pruning, and it is where all the speed comes from.",
+  "optimized": {
+    "idea": "Place one queen per row. Track occupied columns and both diagonal families in boolean arrays so conflict checking is O(1). Cells on a '\\' diagonal share (row - col); cells on a '/' diagonal share (row + col). Skip any conflicting column, which prunes its entire subtree.",
+    "code": [
+      "public class NQueens {",
+      "    private int n;",
+      "    private int[] queenCol;",
+      "    private boolean[] colUsed, diagUsed, antiUsed;",
+      "    private List<List<String>> solutions;",
+      "",
+      "    public List<List<String>> solveNQueens(int n) {",
+      "        this.n = n;",
+      "        queenCol  = new int[n];",
+      "        colUsed   = new boolean[n];",
+      "        diagUsed  = new boolean[2 * n - 1];   // row - col + (n-1)",
+      "        antiUsed  = new boolean[2 * n - 1];   // row + col",
+      "        solutions = new ArrayList<>();",
+      "        place(0);",
+      "        return solutions;",
+      "    }",
+      "",
+      "    private void place(int row) {",
+      "        if (row == n) { solutions.add(render()); return; }",
+      "",
+      "        for (int col = 0; col < n; col++) {",
+      "            int diag = row - col + (n - 1);",
+      "            int anti = row + col;",
+      "            if (colUsed[col] || diagUsed[diag] || antiUsed[anti]) continue;  // PRUNE",
+      "",
+      "            colUsed[col] = diagUsed[diag] = antiUsed[anti] = true;",
+      "            queenCol[row] = col;",
+      "",
+      "            place(row + 1);",
+      "",
+      "            colUsed[col] = diagUsed[diag] = antiUsed[anti] = false;  // unchoose",
+      "        }",
+      "    }",
+      "",
+      "    private List<String> render() {",
+      "        List<String> board = new ArrayList<>(n);",
+      "        for (int row = 0; row < n; row++) {",
+      "            char[] line = new char[n];",
+      "            Arrays.fill(line, '.');",
+      "            line[queenCol[row]] = 'Q';",
+      "            board.add(new String(line));",
+      "        }",
+      "        return board;",
+      "    }",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n!) upper bound, but pruning explores far fewer nodes — roughly 2,000 for n = 8 versus 4.4 billion for naive enumeration",
+      "space": "O(n)"
+    }
+  },
+  "visualization": {
+    "engine": "backtrackingNQueens",
+    "input": {
+      "n": 5
+    },
+    "code": [
+      "void place(int row) {",
+      "    if (row == n) { record(); return; }",
+      "    for (int col = 0; col < n; col++) {",
+      "        if (!isSafe(row, col)) continue;   // prune the whole subtree",
+      "        board[row] = col;",
+      "        place(row + 1);",
+      "        board[row] = -1;",
+      "    }",
+      "}"
+    ]
+  },
+  "commonMistakes": [
+    "Scanning the board to check safety, which is O(n) per check instead of O(1) with the three boolean arrays.",
+    "Getting the diagonal index wrong; row - col ranges from -(n-1) to n-1, so it must be shifted by n-1 to index an array.",
+    "Forgetting to clear all three marks on the way out.",
+    "Validating only at row == n, which turns a pruned search back into brute-force enumeration."
+  ],
+  "similar": [
+    "subsets",
+    "permutations"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 51,
+      "slug": "n-queens",
+      "title": "N-Queens",
+      "url": "https://leetcode.com/problems/n-queens/",
+      "premium": false
+    }
+  }
+}

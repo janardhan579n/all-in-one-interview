@@ -1,0 +1,166 @@
+{
+  "id": "implement-trie",
+  "title": "Implement Trie (Prefix Tree)",
+  "patternId": "trie",
+  "difficulty": "beginner",
+  "tags": [
+    "trie",
+    "string",
+    "design",
+    "prefix"
+  ],
+  "statement": "Design a trie with three operations: `insert(String word)` stores a word; `search(String word)` returns true if that exact word was inserted; `startsWith(String prefix)` returns true if any inserted word begins with the given prefix.",
+  "realWorld": "This class is the index behind a search box's typeahead, an IDE's completion popup, and the prefix-scan API of a key-value store. The interesting part is not `search` — a HashSet does that better — but `startsWith`, which is the operation a hash-based index cannot provide at all.",
+  "examples": [
+    {
+      "input": "insert(\"apple\"); search(\"apple\")",
+      "output": "true",
+      "explanation": "The path a→p→p→l→e exists and its final node is marked terminal."
+    },
+    {
+      "input": "insert(\"apple\"); search(\"app\")",
+      "output": "false",
+      "explanation": "The path a→p→p exists — it is on the way to \"apple\" — but no word ends there, so the terminal flag is false. This single case is what the flag exists for."
+    },
+    {
+      "input": "insert(\"apple\"); startsWith(\"app\")",
+      "output": "true",
+      "explanation": "`startsWith` asks only whether the path exists. It never looks at the terminal flag, which is the one line separating it from `search`."
+    },
+    {
+      "input": "insert(\"apple\"); insert(\"app\"); search(\"app\")",
+      "output": "true",
+      "explanation": "Inserting \"app\" creates no new nodes — the path already exists — and only sets the flag on the node at 'p'. That flag is the entire content of the second insert."
+    }
+  ],
+  "constraints": [
+    "1 <= word.length, prefix.length <= 2000",
+    "word and prefix consist only of lowercase English letters",
+    "At most 3 * 10^4 calls in total across insert, search and startsWith"
+  ],
+  "bruteForce": {
+    "idea": "Keep the words in a list. `search` scans for an exact match, `startsWith` scans calling `String.startsWith` on each word.",
+    "code": [
+      "private final List<String> words = new ArrayList<>();",
+      "",
+      "public void insert(String word) { words.add(word); }",
+      "",
+      "public boolean search(String word) { return words.contains(word); }",
+      "",
+      "public boolean startsWith(String prefix) {",
+      "    for (String word : words) {          // every stored word, every query",
+      "        if (word.startsWith(prefix)) return true;",
+      "    }",
+      "    return false;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n · L) per query, i.e. O(total characters stored)",
+      "space": "O(total characters stored)"
+    },
+    "whySlow": "Both queries re-read the entire collection, and `startsWith` compares up to L characters per word on top of that. The cost therefore grows with the dictionary, which is backwards for an autocomplete: adding a rare word should not slow down completion of a common one. With 30,000 calls against a growing list this is tens of millions of character comparisons, nearly all of them re-deciding facts an earlier query already established."
+  },
+  "patternIdentification": "The moment a problem asks for `startsWith` you are being asked to store strings in a way that preserves the relationship between similar keys — and a trie is the structure that does. The tell is that the brute force loops over every word calling `startsWith`: it re-derives, for every query, that `dog` is irrelevant to a prefix beginning with `a`. Making characters into edges means a prefix is a *position* rather than a filter, so the query becomes a walk of length L instead of a scan of size n.",
+  "optimized": {
+    "idea": "Make each character an edge in a tree. `insert` walks from the root, reusing an existing child when the character is already on the path and creating one otherwise — that reuse is the prefix sharing. Mark the final node terminal. `search` and `startsWith` perform the identical walk and differ by one line: `search` additionally requires the node it lands on to be terminal, `startsWith` does not care. All three are O(L) in the length of the argument, with the number of stored words appearing nowhere.",
+    "code": [
+      "import java.util.HashMap;",
+      "import java.util.Map;",
+      "",
+      "public class Trie {",
+      "",
+      "    /** A node carries no character of its own — the path to it spells the string. */",
+      "    private static final class TrieNode {",
+      "        final Map<Character, TrieNode> children = new HashMap<>();",
+      "        boolean isWord = false;   // 'a word ends here', not merely 'you passed through'",
+      "    }",
+      "",
+      "    private final TrieNode root = new TrieNode();",
+      "",
+      "    /** O(L). Creates at most L nodes; shares every character already on the path. */",
+      "    public void insert(String word) {",
+      "        TrieNode node = root;",
+      "        for (char c : word.toCharArray()) {",
+      "            node = node.children.computeIfAbsent(c, unused -> new TrieNode());",
+      "        }",
+      "        node.isWord = true;",
+      "    }",
+      "",
+      "    /** O(L). The path must exist AND end at a terminal node. */",
+      "    public boolean search(String word) {",
+      "        TrieNode node = walk(word);",
+      "        return node != null && node.isWord;",
+      "    }",
+      "",
+      "    /** O(L). The path must exist; the flag is irrelevant. */",
+      "    public boolean startsWith(String prefix) {",
+      "        return walk(prefix) != null;",
+      "    }",
+      "",
+      "    private TrieNode walk(String s) {",
+      "        TrieNode node = root;",
+      "        for (char c : s.toCharArray()) {",
+      "            node = node.children.get(c);",
+      "            if (node == null) return null;   // a miss costs one step, not a scan",
+      "        }",
+      "        return node;",
+      "    }",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(L) for each of insert, search and startsWith — independent of the number of stored words",
+      "space": "O(total characters across all distinct prefixes) — one node per character per distinct prefix, so shared prefixes are stored once"
+    }
+  },
+  "visualization": {
+    "engine": "trieOps",
+    "title": "Insert cat, car, card, dog — then search \"car\" and enumerate the prefix \"ca\"",
+    "input": {
+      "words": [
+        "cat",
+        "car",
+        "card",
+        "dog"
+      ],
+      "search": "car",
+      "prefix": "ca"
+    },
+    "code": [
+      "TrieNode root = new TrieNode();                               // the root holds no character",
+      "TrieNode node = root;                                         // --- insert(word) ---",
+      "for (char c : word.toCharArray())                             // an existing child is reused",
+      "    node = node.children.computeIfAbsent(c, x -> new TrieNode());  // a missing one is created",
+      "node.isWord = true;                                           // terminal: a word, not a prefix",
+      "",
+      "node = root;                                                  // --- search(word) ---",
+      "for (char c : word.toCharArray()) { node = node.children.get(c); if (node == null) break; }",
+      "boolean found = node != null && node.isWord;                  // present AND marked terminal",
+      "",
+      "node = root;                                                  // --- startsWith(prefix) ---",
+      "for (char c : prefix.toCharArray()) node = node.children.get(c);   // then collect everything below"
+    ]
+  },
+  "commonMistakes": [
+    "Leaving out the terminal flag. After inserting only \"apple\", `search(\"app\")` then returns true because the path exists. The flag is the whole difference between a stored word and a waypoint.",
+    "Checking `isWord` inside `startsWith`. That makes `startsWith(\"app\")` false for a trie containing only \"apple\" — and passes any test that queries whole words, so it survives to production.",
+    "Storing the character inside the node it labels. Harmless but muddled: the character belongs on the edge, which in code means it is the key in the parent's child map. The root labels nothing.",
+    "Forgetting the null check inside the walk. `node.children.get(c)` returns null on a miss, and the next iteration dereferences it — a NullPointerException instead of a clean `false`.",
+    "Using `TrieNode[26]` without confirming the alphabet. It is the right choice for the stated lowercase-only constraint and faster than a HashMap, but it throws or silently collides the moment digits, uppercase or Unicode appear.",
+    "Building a trie when only `search` is ever called. A `HashSet<String>` is faster, far smaller and one line; the trie earns its memory only because of `startsWith`."
+  ],
+  "similar": [
+    "longest-common-prefix",
+    "word-search-ii",
+    "group-anagrams",
+    "contains-duplicate"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 208,
+      "slug": "implement-trie-prefix-tree",
+      "title": "Implement Trie (Prefix Tree)",
+      "url": "https://leetcode.com/problems/implement-trie-prefix-tree/",
+      "premium": false
+    }
+  }
+}

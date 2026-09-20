@@ -1,0 +1,345 @@
+{
+  "id": "sliding-window",
+  "kind": "pattern",
+  "title": "Sliding Window",
+  "group": "Arrays & Strings",
+  "level": 2,
+  "difficulty": "beginner",
+  "estimatedMinutes": 35,
+  "summary": "Keep a moving range over a sequence and update its answer incrementally instead of recomputing it — turning O(n·k) or O(n²) into O(n).",
+  "prerequisites": [
+    "arrays",
+    "hashing"
+  ],
+  "tags": [
+    "array",
+    "string",
+    "subarray",
+    "substring",
+    "two-pointers",
+    "level-2"
+  ],
+  "analogy": {
+    "beginner": "You're on a train looking out of the window at a long row of houses. To see the next stretch you don't get off, walk back to the start and count all the houses again — the train moves forward, one house leaves the left edge of the window and one appears on the right. Two small changes, not a fresh count.",
+    "interview": "Maintain a contiguous range [left, right] together with an incrementally maintained aggregate. Advancing the right edge adds one element to the aggregate; advancing the left edge removes one. Because each index enters and leaves the window at most once, the total work is O(n) despite the nested-looking structure."
+  },
+  "intuition": "Recomputing from scratch is the sin this pattern removes.\n\nIf you need the sum of every window of size 3 in `[2, 1, 5, 1, 3, 2]`, the naive approach adds three numbers, six times. But look at two consecutive windows:\n\n```\n[2, 1, 5] 1  3  2      sum = 8\n 2 [1, 5, 1] 3  2      sum = 7\n```\n\nThey share `1` and `5`. The only real change is: 2 left, 1 arrived. So `newSum = oldSum - 2 + 1`. One subtraction and one addition, regardless of how large the window is.\n\nThat is the entire pattern. Everything else — variable-size windows, windows with a frequency map inside them, windows with a monotonic deque inside them — is the same idea with a richer thing being maintained.\n\nThe complexity argument is worth stating precisely, because it looks like a nested loop but is not: `right` advances exactly n times over the whole run, and `left` advances at most n times over the whole run. Two counters that each move forward n times in total is 2n operations — O(n).",
+  "problemFirst": {
+    "motivatingProblem": "Given `[2, 1, 5, 1, 3, 2]` and k = 3, find the largest sum of any 3 consecutive elements.",
+    "bruteForce": {
+      "idea": "For each possible starting index, add up the k elements that follow it, and keep the best total.",
+      "code": [
+        "int best = Integer.MIN_VALUE;",
+        "for (int start = 0; start + k <= nums.length; start++) {",
+        "    int sum = 0;",
+        "    for (int i = start; i < start + k; i++) {",
+        "        sum += nums[i];          // re-adding elements we already added",
+        "    }",
+        "    best = Math.max(best, sum);",
+        "}",
+        "return best;"
+      ],
+      "complexity": {
+        "time": "O(n·k)",
+        "space": "O(1)"
+      },
+      "whySlow": "Every window is summed from scratch. With n = 1,000,000 and k = 1,000 that is a billion additions — and k-1 of every k of them repeat work the previous window already did."
+    },
+    "observation": "Consecutive windows overlap in k-1 elements. Sliding from [2,1,5] to [1,5,1] removes exactly one element (2) and adds exactly one (1). Everything else is shared.",
+    "leap": "Maintain the sum instead of recomputing it: `sum += nums[right]; sum -= nums[left];`. The inner loop disappears and the cost stops depending on k entirely.",
+    "optimizedSketch": [
+      "int sum = 0, best = Integer.MIN_VALUE;",
+      "for (int right = 0; right < nums.length; right++) {",
+      "    sum += nums[right];                       // element enters on the right",
+      "    if (right >= k - 1) {",
+      "        best = Math.max(best, sum);",
+      "        sum -= nums[right - k + 1];           // element leaves on the left",
+      "    }",
+      "}"
+    ]
+  },
+  "howItWorks": [
+    "**Fixed-size window** — the window is always exactly k wide. Advance `right`; once the window is full, record the answer and drop the leftmost element. One loop.",
+    "**Variable-size window** — the window grows until it becomes invalid, then shrinks from the left until it is valid again. Shape: `for (right…) { add(right); while (invalid) { remove(left); left++; } record(); }`.",
+    "**What lives inside the window** — a running sum, a `HashMap` of character frequencies, a count of distinct values, a monotonic deque for max/min. Choose it so that add and remove are both O(1).",
+    "**The invariant** — write down in one sentence what must be true of [left, right] at the end of every pass. That sentence tells you what the `while` condition should be.",
+    "**Longest vs shortest** — for *longest valid*, shrink only while invalid and record after shrinking. For *shortest valid*, shrink while still valid and record before each shrink."
+  ],
+  "patternRecognition": {
+    "signals": [
+      "**contiguous** subarray or substring — the elements must be adjacent",
+      "longest / shortest / maximum / minimum over such a range",
+      "'of size k' → fixed window; 'at most K distinct', 'sum ≥ target', 'no repeating characters' → variable window",
+      "The brute force is 'try every start index and scan forward'",
+      "Input is an array or string and the answer is a range or a number derived from one"
+    ],
+    "antiSignals": [
+      "The elements need not be adjacent → that is a subsequence, so think DP",
+      "You may reorder the input → sort first, then two pointers",
+      "The array contains negative numbers and the condition is 'sum ≥ target' → shrinking no longer safely reduces the sum, so the window is not monotonic; use prefix sums with a map instead",
+      "You need a value at an arbitrary position rather than over a range"
+    ],
+    "decisionTreeId": "sliding-window"
+  },
+  "visualizations": [
+    {
+      "id": "fixed-window",
+      "title": "Fixed window, k = 3 — watch the sum update, not recompute",
+      "engine": "slidingWindowFixed",
+      "input": {
+        "array": [
+          2,
+          1,
+          5,
+          1,
+          3,
+          2
+        ],
+        "k": 3
+      },
+      "code": [
+        "int sum = 0, best = Integer.MIN_VALUE;",
+        "for (int right = 0; right < nums.length; right++) {",
+        "    sum += nums[right];",
+        "    if (right >= k - 1) {",
+        "        best = Math.max(best, sum);",
+        "        sum -= nums[right - k + 1];",
+        "    }",
+        "}",
+        "return best;"
+      ]
+    },
+    {
+      "id": "variable-window",
+      "title": "Variable window — longest substring without repeating characters",
+      "engine": "slidingWindowVariable",
+      "input": {
+        "text": "abcabcbb"
+      },
+      "code": [
+        "Map<Character, Integer> lastSeen = new HashMap<>();",
+        "int left = 0, best = 0;",
+        "for (int right = 0; right < s.length(); right++) {",
+        "    char c = s.charAt(right);",
+        "    if (lastSeen.containsKey(c) && lastSeen.get(c) >= left) {",
+        "        left = lastSeen.get(c) + 1;   // jump past the duplicate",
+        "    }",
+        "    lastSeen.put(c, right);",
+        "    best = Math.max(best, right - left + 1);",
+        "}",
+        "return best;"
+      ]
+    },
+    {
+      "id": "min-window-sum",
+      "title": "Shortest window with sum ≥ target — shrink while still valid",
+      "engine": "slidingWindowShrink",
+      "input": {
+        "array": [
+          2,
+          3,
+          1,
+          2,
+          4,
+          3
+        ],
+        "target": 7
+      },
+      "code": [
+        "int left = 0, sum = 0, best = Integer.MAX_VALUE;",
+        "for (int right = 0; right < nums.length; right++) {",
+        "    sum += nums[right];",
+        "    while (sum >= target) {",
+        "        best = Math.min(best, right - left + 1);",
+        "        sum -= nums[left++];",
+        "    }",
+        "}",
+        "return best == Integer.MAX_VALUE ? 0 : best;"
+      ]
+    }
+  ],
+  "implementations": [
+    {
+      "label": "Simple",
+      "language": "java",
+      "explanation": "The fixed-size template. Two things to notice: the window is only 'real' once `right >= k - 1`, and the element that leaves is at `right - k + 1`. Getting that index right is most of the battle.",
+      "code": [
+        "/** Largest sum of any k consecutive elements. O(n) time, O(1) space. */",
+        "public static int maxSumOfSizeK(int[] nums, int k) {",
+        "    if (nums == null || nums.length < k || k <= 0) {",
+        "        throw new IllegalArgumentException(\"need at least k elements\");",
+        "    }",
+        "    int windowSum = 0;",
+        "    int best = Integer.MIN_VALUE;",
+        "",
+        "    for (int right = 0; right < nums.length; right++) {",
+        "        windowSum += nums[right];              // grow on the right",
+        "",
+        "        if (right >= k - 1) {                  // window is exactly k wide",
+        "            best = Math.max(best, windowSum);",
+        "            windowSum -= nums[right - k + 1];  // shrink on the left",
+        "        }",
+        "    }",
+        "    return best;",
+        "}"
+      ]
+    },
+    {
+      "label": "Optimized",
+      "language": "java",
+      "explanation": "The variable-size template, which covers far more problems. The `while` loop is the heart: it restores the invariant. Even though there is a loop inside a loop, `left` only ever moves forward, so the total work is O(n) — say this out loud in an interview, because the code *looks* quadratic.",
+      "code": [
+        "/**",
+        " * Longest substring containing at most `maxDistinct` distinct characters.",
+        " * O(n) time — each index is added once and removed once.",
+        " * O(min(n, alphabet)) space for the frequency map.",
+        " */",
+        "public static int longestWithAtMostKDistinct(String s, int maxDistinct) {",
+        "    Map<Character, Integer> freq = new HashMap<>();",
+        "    int left = 0;",
+        "    int best = 0;",
+        "",
+        "    for (int right = 0; right < s.length(); right++) {",
+        "        freq.merge(s.charAt(right), 1, Integer::sum);      // element enters",
+        "",
+        "        while (freq.size() > maxDistinct) {                // invariant broken",
+        "            char leaving = s.charAt(left);",
+        "            if (freq.merge(leaving, -1, Integer::sum) == 0) {",
+        "                freq.remove(leaving);                      // count hit zero",
+        "            }",
+        "            left++;                                        // element leaves",
+        "        }",
+        "",
+        "        best = Math.max(best, right - left + 1);           // window is valid here",
+        "    }",
+        "    return best;",
+        "}"
+      ]
+    }
+  ],
+  "complexity": {
+    "time": "O(n)",
+    "space": "O(1) for a numeric aggregate; O(k) or O(alphabet size) when the window holds a frequency map",
+    "why": "The nested `while` does not make it quadratic. `right` advances exactly n times across the entire execution, and `left` advances at most n times across the entire execution, because neither ever moves backwards. So the total number of pointer movements is bounded by 2n — this is an amortised argument, and stating it is what demonstrates you understand the pattern rather than having memorised the shape. Space is whatever the window must remember: a single `int` for sums, a map bounded by the window width or the alphabet for distinct-character problems."
+  },
+  "commonMistakes": [
+    {
+      "mistake": "Using `if` instead of `while` to shrink",
+      "fix": "One element leaving may not be enough to restore validity. Shrink until the invariant holds again."
+    },
+    {
+      "mistake": "Recording the answer at the wrong moment",
+      "fix": "For *longest*, record after the shrink loop, when the window is valid. For *shortest*, record inside the shrink loop, while it is still valid."
+    },
+    {
+      "mistake": "Wrong left index in the fixed-size version",
+      "fix": "The element leaving a k-wide window ending at `right` is `nums[right - k + 1]`. Test with k = 1 and k = n."
+    },
+    {
+      "mistake": "Leaving zero-count keys in the frequency map",
+      "fix": "`freq.size()` is your distinct-character count, so a key with count 0 silently corrupts it. Remove the key when it hits zero."
+    },
+    {
+      "mistake": "Applying a sliding window to an array with negatives for a 'sum ≥ target' problem",
+      "fix": "Growing the window no longer monotonically increases the sum, so shrinking is not safe. Use prefix sums plus a HashMap."
+    },
+    {
+      "mistake": "Forgetting the empty or too-short input",
+      "fix": "n < k must be handled explicitly, and 'no valid window' needs a defined return value."
+    }
+  ],
+  "realWorldUses": [
+    "Rate limiting: 'at most 100 requests in any 60-second window' is literally a sliding window — see the Rate Limiter case study in System Design.",
+    "Monitoring and alerting: moving averages, p99 latency over the last 5 minutes.",
+    "Network protocols: TCP's sliding window controls how much unacknowledged data may be in flight.",
+    "Streaming analytics (Flink, Kafka Streams) is built on windowed aggregation of exactly this kind.",
+    "Bioinformatics: scanning DNA for a k-length motif."
+  ],
+  "interviewNotes": [
+    "Say the word 'contiguous' back to the interviewer — it is the signal that separates this from a subsequence/DP problem.",
+    "State the amortised O(n) argument explicitly; the nested while loop makes weaker candidates claim O(n²).",
+    "Write the invariant as a comment before you write the loop. It makes the shrink condition obvious and shows structured thinking.",
+    "Standard follow-ups: 'what if the array has negatives?', 'what if you must return the window itself, not its length?', 'can you do it with O(1) space?'"
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "identify-pattern",
+      "question": "'Find the longest substring containing at most K distinct characters.' Which pattern?",
+      "options": [
+        "Binary Search",
+        "Sliding Window",
+        "Dynamic Programming",
+        "Depth-First Search"
+      ],
+      "answerIndex": 1,
+      "explanation": "Three signals fire at once: substring (contiguous), longest (optimum over ranges), and a constraint that a window can be grown and shrunk against. Variable-size sliding window with a frequency map inside it."
+    },
+    {
+      "id": "q2",
+      "type": "complexity",
+      "question": "The variable-size template has a `while` loop inside a `for` loop. What is its time complexity?",
+      "options": [
+        "O(n²) because of the nesting",
+        "O(n log n)",
+        "O(n), because left and right each advance at most n times in total",
+        "O(k·n)"
+      ],
+      "answerIndex": 2,
+      "explanation": "Complexity counts total operations, not loop nesting depth. Both pointers only move forward and neither exceeds n, so the total movement is bounded by 2n."
+    },
+    {
+      "id": "q3",
+      "type": "mcq",
+      "question": "For a fixed window of size k ending at index `right`, which element leaves the window?",
+      "options": [
+        "nums[right - k]",
+        "nums[right - k + 1]",
+        "nums[left - 1]",
+        "nums[right + 1]"
+      ],
+      "answerIndex": 1,
+      "explanation": "The window covers [right-k+1 … right]. After recording the answer, the element at its left edge, `right-k+1`, is the one that departs."
+    },
+    {
+      "id": "q4",
+      "type": "mcq",
+      "question": "Why does the sliding window break for 'shortest subarray with sum ≥ target' when the array contains negative numbers?",
+      "options": [
+        "Negative numbers cannot be stored in an int",
+        "Growing the window no longer monotonically increases the sum, so shrinking on invalidity is unsound",
+        "The window becomes too large",
+        "It does not break"
+      ],
+      "answerIndex": 1,
+      "explanation": "The pattern relies on 'bigger window ⇒ bigger sum'. With negatives, extending can *decrease* the sum, so a window you discarded might have become valid later. Prefix sums with a HashMap handle that case."
+    },
+    {
+      "id": "q5",
+      "type": "mcq",
+      "question": "For a *longest valid window* problem, when should you record the answer?",
+      "options": [
+        "Before adding the new right element",
+        "Inside the shrink loop",
+        "After the shrink loop, when the window is valid again",
+        "Only at the very end"
+      ],
+      "answerIndex": 2,
+      "explanation": "During shrinking the window is invalid, so measuring it then is meaningless. Once the while loop exits the invariant holds, and that is the largest valid window ending at `right`."
+    }
+  ],
+  "practiceProblems": [
+    "max-sum-subarray-k",
+    "longest-substring-no-repeat",
+    "longest-repeating-char-replacement",
+    "max-consecutive-ones-iii",
+    "permutation-in-string",
+    "min-window-substring",
+    "sliding-window-maximum"
+  ],
+  "related": [
+    "two-pointers",
+    "prefix-sum",
+    "hashing"
+  ]
+}

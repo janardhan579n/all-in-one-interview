@@ -1,0 +1,187 @@
+{
+  "id": "scaling",
+  "title": "Scaling — Vertical and Horizontal",
+  "group": "Performance",
+  "level": 1,
+  "estimatedMinutes": 22,
+  "summary": "Get a bigger machine, or get more machines. The first is easier; the second is the only one that keeps working.",
+  "analogy": "A restaurant getting busier. Vertical scaling is buying a bigger oven — quick, no reorganisation, and it works right up until no bigger oven exists. Horizontal scaling is opening a second kitchen: more work to coordinate, but there is no ceiling, and if one kitchen catches fire you still serve dinner.",
+  "explanation": {
+    "beginner": "When a system gets slow you have two options. Move it to a more powerful computer — more CPU, more memory — which needs no code changes but has a hard limit and usually means a restart. Or run the same program on several computers and split the traffic between them, which has no real limit but only works if the program does not keep important things in its own memory.",
+    "interview": "Vertical scaling raises per-node resources: simple, no distribution semantics, but bounded by the largest instance type and typically requiring downtime. Horizontal scaling adds nodes behind a load balancer: effectively unbounded and fault-tolerant, but requires statelessness and moves the bottleneck to shared dependencies — usually the database, which is why read replicas, caching and eventually sharding follow. Amdahl's law bounds the benefit by the serial fraction."
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "lb",
+        "label": "Load Balancer",
+        "type": "lb",
+        "x": 500,
+        "y": 120
+      },
+      {
+        "id": "a1",
+        "label": "App",
+        "type": "server",
+        "x": 260,
+        "y": 290
+      },
+      {
+        "id": "a2",
+        "label": "App",
+        "type": "server",
+        "x": 500,
+        "y": 290
+      },
+      {
+        "id": "a3",
+        "label": "App",
+        "type": "server",
+        "x": 740,
+        "y": 290,
+        "note": "Adding instances is cheap and fast — as long as they are interchangeable."
+      },
+      {
+        "id": "db",
+        "label": "Database\\n(the new bottleneck)",
+        "type": "db",
+        "x": 500,
+        "y": 470,
+        "note": "Stateless app tiers scale easily; the shared database is where horizontal scaling gets hard.",
+        "why": {
+          "without": [
+            "Adding app servers eventually just multiplies the load on one database"
+          ],
+          "with": [
+            "Read replicas, caching and sharding are the next moves"
+          ],
+          "conclusion": "Scaling moves the bottleneck; it never removes it."
+        }
+      }
+    ],
+    "edges": [
+      {
+        "from": "lb",
+        "to": "a1"
+      },
+      {
+        "from": "lb",
+        "to": "a2"
+      },
+      {
+        "from": "lb",
+        "to": "a3"
+      },
+      {
+        "from": "a1",
+        "to": "db"
+      },
+      {
+        "from": "a2",
+        "to": "db"
+      },
+      {
+        "from": "a3",
+        "to": "db"
+      }
+    ]
+  },
+  "why": {
+    "without": [
+      "Traffic growth translates directly into latency and then errors",
+      "One machine's failure is the whole system's failure"
+    ],
+    "with": [
+      "Capacity tracks demand, and can shrink again when demand falls",
+      "Redundancy comes as a side effect"
+    ],
+    "conclusion": "Scale vertically while it is cheap and simple; design for horizontal from the start so you are not rewriting under pressure."
+  },
+  "whenToUse": [
+    "Vertical: early, when engineering time costs more than hardware",
+    "Horizontal: when you need redundancy, or you are approaching the largest available instance",
+    "Auto-scaling: when load is predictably spiky"
+  ],
+  "whenNotToUse": [
+    "Do not scale before you have measured — the bottleneck is frequently one bad query, and no number of servers fixes an N+1",
+    "Auto-scaling responds in minutes, so it does not save you from a traffic spike measured in seconds; that needs headroom or a queue"
+  ],
+  "tradeoffs": [
+    {
+      "option": "Vertical (scale up)",
+      "pros": [
+        "No code changes",
+        "No distributed-systems problems",
+        "Often the cheapest fix for a small system"
+      ],
+      "cons": [
+        "Hard ceiling",
+        "Usually needs a restart",
+        "Cost grows faster than capacity at the top end",
+        "Still a single point of failure"
+      ]
+    },
+    {
+      "option": "Horizontal (scale out)",
+      "pros": [
+        "No practical ceiling",
+        "Redundancy included",
+        "Commodity hardware, elastic cost"
+      ],
+      "cons": [
+        "Requires stateless services",
+        "Needs a load balancer and service discovery",
+        "Shifts pressure to the database",
+        "Debugging is harder across many nodes"
+      ]
+    }
+  ],
+  "keyNumbers": [
+    {
+      "label": "A well-tuned app server",
+      "value": "1,000–10,000 rps for simple requests"
+    },
+    {
+      "label": "A single Postgres instance",
+      "value": "Thousands of writes/s, tens of thousands of cached reads/s"
+    },
+    {
+      "label": "Auto-scale reaction time",
+      "value": "1–5 minutes — too slow for a sudden spike"
+    }
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "architecture",
+      "question": "You add five more app servers and throughput barely improves. What is the most likely explanation?",
+      "options": [
+        "The load balancer is broken",
+        "The bottleneck moved — most likely the shared database, which all servers still contend for",
+        "You need even more servers",
+        "Horizontal scaling does not work"
+      ],
+      "answerIndex": 1,
+      "explanation": "Scaling the stateless tier only helps until the shared dependency saturates. The next moves are caching, read replicas, query optimisation, and eventually sharding."
+    },
+    {
+      "id": "q2",
+      "type": "mcq",
+      "question": "What must be true of your application before horizontal scaling works?",
+      "options": [
+        "It must use microservices",
+        "Any instance must be able to serve any request — no per-user state in local memory or on local disk",
+        "It must be written in Java",
+        "It must use NoSQL"
+      ],
+      "answerIndex": 1,
+      "explanation": "Statelessness is the prerequisite. Sessions, uploaded files and in-memory caches must move to shared services, or requests become pinned to particular machines."
+    }
+  ],
+  "related": [
+    "load-balancer",
+    "cache",
+    "sharding",
+    "replication"
+  ]
+}

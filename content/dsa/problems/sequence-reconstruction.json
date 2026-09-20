@@ -1,0 +1,200 @@
+{
+  "id": "sequence-reconstruction",
+  "title": "Sequence Reconstruction",
+  "patternId": "topological-sort",
+  "difficulty": "advanced",
+  "tags": [
+    "topological-sort",
+    "graph",
+    "uniqueness"
+  ],
+  "statement": "You are given nums, a permutation of the integers 1 to n, and a list of sequences, each of which is a subsequence of nums. The sequences impose an order on the values they contain: if x appears immediately before y in some sequence, then x must come before y. Return true if nums is the one and only shortest sequence consistent with all of them - that is, if those constraints admit exactly one valid ordering and that ordering is nums.",
+  "realWorld": "Rebuilding a global order from partial observations: several machines each report the order of the events they saw, and you need to know whether those reports pin down one global timeline or leave genuine ambiguity. Distributed tracing, merging version histories and reconstructing a schema migration order all ask this same question, where \"there is more than one consistent answer\" is a real finding and not a failure.",
+  "examples": [
+    {
+      "input": "nums = [1,2,3], sequences = [[1,2],[1,3]]",
+      "output": "false",
+      "explanation": "The constraints only say 1 comes before 2 and 1 comes before 3, so [1,3,2] is just as valid as [1,2,3]. Nothing ever orders 2 against 3."
+    },
+    {
+      "input": "nums = [1,2,3], sequences = [[1,2],[1,3],[2,3]]",
+      "output": "true",
+      "explanation": "Adding 2 before 3 pins the last pair down. Every adjacent pair of nums is now forced, so exactly one ordering survives and it is nums."
+    },
+    {
+      "input": "nums = [4,1,5,2,6,3], sequences = [[5,2,6,3],[4,1,5,2]]",
+      "output": "true",
+      "explanation": "The consecutive pairs give 5 before 2, 2 before 6, 6 before 3, 4 before 1 and 1 before 5, which chain into 4 -> 1 -> 5 -> 2 -> 6 -> 3. At no point are two values simultaneously available, so the ordering is forced even though no single sequence contains all six values."
+    }
+  ],
+  "constraints": [
+    "n == nums.length, and nums is a permutation of 1..n",
+    "1 <= n <= 10^4",
+    "1 <= sequences.length <= 10^4",
+    "1 <= sequences[i].length <= 10^4 and the total length of all sequences is at most 10^5",
+    "Every value in every sequence is between 1 and n"
+  ],
+  "bruteForce": {
+    "idea": "Build the constraint graph, then enumerate topological orders by backtracking - at each step pick any currently available value - and stop as soon as a second complete order appears. Answer true only if exactly one exists and it matches nums.",
+    "code": [
+      "public static boolean sequenceReconstruction(int[] nums, int[][] sequences) {",
+      "    int n = nums.length;",
+      "    List<List<Integer>> next = new ArrayList<>();",
+      "    for (int i = 0; i <= n; i++) next.add(new ArrayList<>());",
+      "    int[] indegree = new int[n + 1];",
+      "    for (int[] seq : sequences) {",
+      "        for (int i = 0; i + 1 < seq.length; i++) {",
+      "            next.get(seq[i]).add(seq[i + 1]);",
+      "            indegree[seq[i + 1]]++;",
+      "        }",
+      "    }",
+      "    List<List<Integer>> orders = new ArrayList<>();",
+      "    enumerate(new ArrayList<>(), indegree, next, orders, n);",
+      "    if (orders.size() != 1) return false;",
+      "    for (int i = 0; i < n; i++) {",
+      "        if (orders.get(0).get(i) != nums[i]) return false;",
+      "    }",
+      "    return true;",
+      "}",
+      "",
+      "private static void enumerate(List<Integer> prefix, int[] indegree,",
+      "                              List<List<Integer>> next, List<List<Integer>> out, int n) {",
+      "    if (out.size() > 1) return;",
+      "    if (prefix.size() == n) { out.add(new ArrayList<>(prefix)); return; }",
+      "    for (int v = 1; v <= n; v++) {",
+      "        if (indegree[v] != 0) continue;",
+      "        indegree[v] = -1;                                  // take it",
+      "        for (int w : next.get(v)) indegree[w]--;",
+      "        prefix.add(v);",
+      "        enumerate(prefix, indegree, next, out, n);",
+      "        prefix.remove(prefix.size() - 1);                  // put it back",
+      "        for (int w : next.get(v)) indegree[w]++;",
+      "        indegree[v] = 0;",
+      "    }",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n! * n) in the worst case - one branch per simultaneously available value",
+      "space": "O(n)"
+    },
+    "whySlow": "The enumeration branches once per value that is available at that step, so with few constraints it walks a tree with n! leaves - and it does all of that to produce orders that are then thrown away after a length comparison. The question was never what the orders are. It was whether a choice ever existed, and a single moment where two values are simultaneously available settles that for good. The search spends factorial work manufacturing evidence of a fact that is visible the first time the available set has two members in it."
+  },
+  "patternIdentification": "Is the topological order unique? That is not a question about orders at all - it is a question about the queue. In Kahn algorithm the ready queue holds exactly the values that could legally come next, so a queue holding two or more values is a genuine fork (swap them and you have a second valid order), and a queue holding exactly one value at every single step means every step was forced. Uniqueness of the topological order is precisely the statement that the ready set never holds more than one node. The general move: when a problem asks whether a constructed answer is unique rather than what the answer is, find the step where the construction makes a choice and assert that it never gets one.",
+  "optimized": {
+    "idea": "Build edges only between consecutive values inside each sequence - [a,b,c] already forces a before c through a before b before c, so adding that edge is work with no information in it. Then run Kahn algorithm once, and at every one of the n steps require ready.size() == 1. A size of 2 or more is a fork, so the order is not unique; a size of 0 before all n values are out means the constraints contain a cycle or leave values unreachable. The single available value must also equal nums at that position, which is what makes this a check of nums rather than of some other unique order. Duplicate edges are harmless: a repeated pair raises the indegree twice and is decremented twice, so the counter stays consistent.",
+    "code": [
+      "public static boolean sequenceReconstruction(int[] nums, int[][] sequences) {",
+      "    int n = nums.length;",
+      "    List<List<Integer>> next = new ArrayList<>();",
+      "    for (int i = 0; i <= n; i++) next.add(new ArrayList<>());",
+      "    int[] indegree = new int[n + 1];",
+      "    for (int[] seq : sequences) {",
+      "        for (int i = 0; i + 1 < seq.length; i++) {   // consecutive pairs only: a->b->c implies a->c",
+      "            next.get(seq[i]).add(seq[i + 1]);",
+      "            indegree[seq[i + 1]]++;",
+      "        }",
+      "    }",
+      "    Deque<Integer> ready = new ArrayDeque<>();",
+      "    for (int v = 1; v <= n; v++) {",
+      "        if (indegree[v] == 0) ready.offer(v);",
+      "    }",
+      "    for (int at = 0; at < n; at++) {",
+      "        if (ready.size() != 1) return false;   // 2+ is a real choice; 0 is a cycle or a gap",
+      "        int v = ready.poll();",
+      "        if (v != nums[at]) return false;",
+      "        for (int w : next.get(v)) {",
+      "            if (--indegree[w] == 0) ready.offer(w);",
+      "        }",
+      "    }",
+      "    return true;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n + S) where S is the total length of all sequences",
+      "space": "O(n + S)"
+    }
+  },
+  "visualization": {
+    "engine": "topologicalSort",
+    "title": "The fork made visible: once 1 leaves the queue, both 2 and 3 are available at the same time. Two values in the ready queue means two valid orders, so the reconstruction is not unique.",
+    "input": {
+      "graph": {
+        "nodes": [
+          {
+            "id": "1",
+            "x": 80,
+            "y": 115
+          },
+          {
+            "id": "2",
+            "x": 250,
+            "y": 55
+          },
+          {
+            "id": "3",
+            "x": 250,
+            "y": 175
+          },
+          {
+            "id": "4",
+            "x": 420,
+            "y": 115
+          }
+        ],
+        "edges": [
+          {
+            "from": "1",
+            "to": "2"
+          },
+          {
+            "from": "1",
+            "to": "3"
+          },
+          {
+            "from": "2",
+            "to": "4"
+          },
+          {
+            "from": "3",
+            "to": "4"
+          }
+        ]
+      }
+    },
+    "code": [
+      "for (int[] seq : sequences)",
+      "    for (int i = 0; i + 1 < seq.length; i++) {   // CONSECUTIVE pairs only",
+      "        next.get(seq[i]).add(seq[i + 1]);  indegree[seq[i + 1]]++;",
+      "    }",
+      "for (int v = 1; v <= n; v++) if (indegree[v] == 0) ready.offer(v);",
+      "for (int at = 0; at < n; at++) {",
+      "    if (ready.size() != 1) return false;     // 2+ = a choice, 0 = a cycle",
+      "    int v = ready.poll();",
+      "    if (v != nums[at]) return false;         // forced, but forced to the wrong value",
+      "    for (int w : next.get(v))",
+      "        if (--indegree[w] == 0) ready.offer(w);",
+      "}",
+      "return true;"
+    ]
+  },
+  "commonMistakes": [
+    "Adding an edge between every pair of values inside a sequence rather than only consecutive ones - one sequence of length 10^4 then creates about 5 * 10^7 edges, so the samples pass instantly and the large input dies on time or memory.",
+    "Checking only that a topological order exists and matches nums, without the ready.size() == 1 test - [[1,2],[1,3]] with nums = [1,2,3] returns true because the deque happens to hand back 2 before 3, even though [1,3,2] is equally valid.",
+    "Treating an empty ready queue as normal completion and returning true - the contradictory sequences [[1,2],[2,1]] give every value a nonzero indegree, the queue starts empty, and the method reports success for constraints that no ordering satisfies."
+  ],
+  "similar": [
+    "course-schedule-ii",
+    "alien-dictionary",
+    "parallel-courses",
+    "course-schedule"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 444,
+      "slug": "sequence-reconstruction",
+      "title": "Sequence Reconstruction",
+      "url": "https://leetcode.com/problems/sequence-reconstruction/",
+      "premium": true
+    }
+  }
+}

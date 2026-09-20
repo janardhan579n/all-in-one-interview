@@ -1,0 +1,117 @@
+{
+  "id": "implement-queue-using-stacks",
+  "title": "Implement Queue using Stacks",
+  "patternId": "queue",
+  "difficulty": "beginner",
+  "tags": [
+    "queue",
+    "stack",
+    "design",
+    "amortised-analysis"
+  ],
+  "statement": "Implement a first-in-first-out queue — push(x), pop(), peek() and empty() — using only two last-in-first-out stacks. You may use push, pop, peek, size and isEmpty on the stacks and nothing else. Each queue operation must run in amortised O(1) time.",
+  "realWorld": "Persistent and purely functional queues are built exactly this way: a cons list supports cheap prepend and cheap head, which is LIFO, so a functional queue is a pair of lists with the front one held reversed. The same structure appears in log-structured buffers where producers append to an active region and consumers drain a sealed one, and in double-buffered event pipelines.",
+  "examples": [
+    {
+      "input": "push(1), push(2), peek(), pop(), empty()",
+      "output": "1, then 1, then false",
+      "explanation": "FIFO: the first element pushed is the first returned, which is the opposite of what either stack does on its own."
+    },
+    {
+      "input": "push(1), push(2), pop(), push(3), pop(), pop()",
+      "output": "1, then 2, then 3",
+      "explanation": "A push arrives while elements are still waiting in the reversed stack. The new element must queue behind them, which is why the transfer may only happen when the out-stack has been fully drained."
+    },
+    {
+      "input": "push(1), pop(), push(2), pop(), push(3), pop()",
+      "output": "1, then 2, then 3",
+      "explanation": "Fully interleaved. Each element is transferred exactly once here, which is the best case for the amortised argument."
+    }
+  ],
+  "constraints": [
+    "1 <= x <= 9",
+    "At most 100 calls to push, pop, peek and empty",
+    "pop() and peek() are only called on a non-empty queue",
+    "Only standard stack operations may be used on the two stacks"
+  ],
+  "bruteForce": {
+    "idea": "Keep everything in one stack. To reach the front element, pour the whole stack into a helper stack (which reverses it), take the element now on top, and pour everything back so the main stack is left in its original order.",
+    "code": [
+      "private final Deque<Integer> main = new ArrayDeque<>();",
+      "",
+      "public void push(int x) { main.push(x); }",
+      "",
+      "public int pop() {",
+      "    Deque<Integer> helper = new ArrayDeque<>();",
+      "    while (!main.isEmpty()) helper.push(main.pop());",
+      "    int front = helper.pop();",
+      "    while (!helper.isEmpty()) main.push(helper.pop());   // pour it all back",
+      "    return front;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n) per pop, O(n^2) for n pops",
+      "space": "O(n)"
+    },
+    "whySlow": "The pour-back is the waste. After the first pour, the helper stack is holding the elements in exactly the order the next several pops will want them — front element on top, then the second, then the third. Undoing that arrangement and rebuilding it on the very next call means every pop pays 2n element moves to produce one element, and the arrangement it destroys is the one it is about to recreate. n pops move 2n elements each for no reason other than insisting that the data live in one particular stack."
+  },
+  "patternIdentification": "Reversing a LIFO structure once turns it into FIFO. The general move is amortisation: when an expensive step leaves the data in a form that the *following* operations can consume directly, do not undo it — keep it and let the cost be shared. The test for whether the argument holds is a per-element accounting: if each element can only participate in the expensive step a bounded number of times over its whole lifetime, the total cost is linear no matter how the calls interleave. That accounting, not the shape of any single call, is what makes 'amortised O(1)' a claim rather than a hope.",
+  "optimized": {
+    "idea": "Two stacks with distinct jobs. `in` receives every push, so it holds the newest elements with the newest on top. `out` holds elements already reversed into queue order, so its top is the queue's front. pop() and peek() serve from `out`; when and only when `out` is empty do they pour the whole of `in` into it, which reverses it. The guard is load-bearing: refilling `out` while it still holds elements would drop the newer ones on top of the older ones and break FIFO outright. The cost: an element is pushed to `in` once, popped from `in` once, pushed to `out` once and popped from `out` once — four constant-time touches over its entire lifetime, however the calls interleave. So n operations cost O(n) in total, which is amortised O(1) each. A single pop can still be O(n); the worst case per call is not constant and claiming it is will be challenged.",
+    "code": [
+      "class MyQueue {",
+      "",
+      "    private final Deque<Integer> in = new ArrayDeque<>();    // newest on top",
+      "    private final Deque<Integer> out = new ArrayDeque<>();   // already reversed: top is the queue front",
+      "",
+      "    public void push(int x) {",
+      "        in.push(x);",
+      "    }",
+      "",
+      "    public int pop() {",
+      "        shift();",
+      "        return out.pop();",
+      "    }",
+      "",
+      "    public int peek() {",
+      "        shift();",
+      "        return out.peek();",
+      "    }",
+      "",
+      "    public boolean empty() {",
+      "        return in.isEmpty() && out.isEmpty();",
+      "    }",
+      "",
+      "    private void shift() {",
+      "        if (out.isEmpty()) {   // ONLY when out is empty: refilling it early would bury the older elements",
+      "            while (!in.isEmpty()) out.push(in.pop());",
+      "        }",
+      "    }",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(1) amortised per operation; a single pop or peek can be O(n)",
+      "space": "O(n)"
+    }
+  },
+  "commonMistakes": [
+    "Pouring `in` into `out` on every pop instead of only when `out` is empty — the ordering itself breaks, because the newer elements land on top of the older ones still waiting. push(1), push(2), pop() returns 1 correctly, then push(3), pop() returns 3 instead of 2.",
+    "Implementing `empty()` as `out.isEmpty()` — right after push(1), with nothing transferred yet, the queue reports itself empty and a `while (!q.empty())` drain loop exits immediately, silently discarding everything still sitting in `in`.",
+    "Doing the reversal eagerly inside push — pour `out` back into `in`, add the element, pour forward again. Every value returned is still correct so the unit tests pass, but each push is O(n) and the amortised argument is gone: 10^5 pushes become 10^10 element moves and the submission times out rather than failing."
+  ],
+  "similar": [
+    "min-stack",
+    "design-circular-queue",
+    "moving-average-stream",
+    "evaluate-rpn"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 232,
+      "slug": "implement-queue-using-stacks",
+      "title": "Implement Queue using Stacks",
+      "url": "https://leetcode.com/problems/implement-queue-using-stacks/",
+      "premium": false
+    }
+  }
+}

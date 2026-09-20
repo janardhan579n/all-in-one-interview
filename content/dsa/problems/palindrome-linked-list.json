@@ -1,0 +1,140 @@
+{
+  "id": "palindrome-linked-list",
+  "title": "Palindrome Linked List",
+  "patternId": "fast-slow-pointer",
+  "difficulty": "intermediate",
+  "tags": [
+    "linked-list",
+    "fast-slow-pointer",
+    "two-pointers",
+    "composition"
+  ],
+  "statement": "Given the head of a singly linked list, return true if the sequence of values reads the same forwards and backwards. Solve it in O(n) time and O(1) extra space.",
+  "realWorld": "Validating a framed message whose payload must be symmetric — some serial and industrial protocols echo a frame back reversed as an integrity check — where the frame arrives as a chain of buffers you cannot index into and must not copy. More generally it is the canonical test of whether you can read a forward-only structure from both ends at once, which is the same question a streaming decoder faces when it must verify a trailer against a header.",
+  "examples": [
+    {
+      "input": "head = [1,2,2,1]",
+      "output": "true",
+      "explanation": "slow stops on the third node, the second half [2,1] reverses to [1,2], and the two walks compare 1 with 1 and then 2 with 2."
+    },
+    {
+      "input": "head = [1,2,3,2,1]",
+      "output": "true",
+      "explanation": "Odd length. slow stops on the middle node 3, so the reversed half is [1,2,3]: the comparisons are 1 vs 1, 2 vs 2, and finally 3 vs 3 — the middle node compared against itself, which is always equal. That is why odd lengths need no special case."
+    },
+    {
+      "input": "head = [1,2]",
+      "output": "false",
+      "explanation": "slow stops on the second node, so the reversed half is [2] and the very first comparison, 1 against 2, fails."
+    }
+  ],
+  "constraints": [
+    "1 <= number of nodes <= 10^5",
+    "0 <= Node.val <= 9",
+    "O(n) time and O(1) extra space"
+  ],
+  "bruteForce": {
+    "idea": "Copy every value into an ArrayList, which gives random access, then compare with two indices converging from the ends.",
+    "code": [
+      "List<Integer> values = new ArrayList<>();",
+      "for (Node p = head; p != null; p = p.next) {",
+      "    values.add(p.val);",
+      "}",
+      "int i = 0;",
+      "int j = values.size() - 1;",
+      "while (i < j) {",
+      "    if (!values.get(i).equals(values.get(j))) return false;",
+      "    i++;",
+      "    j--;",
+      "}",
+      "return true;"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(n)"
+    },
+    "whySlow": "The copy exists for exactly one reason: to be able to read the list backwards. We allocate n boxed Integers — a second copy of the entire payload, each one a separate heap object — to gain random access that is then used only to walk inward from the far end. The list can be walked from the far end for free if half of it is reversed in place, three pointer assignments per node, so the whole array is work done to avoid work that is cheaper than the work of avoiding it. With 10^5 nodes this is the difference between a fixed handful of variables and a hundred thousand allocations the garbage collector then has to clean up."
+  },
+  "patternIdentification": "You need the back half of a singly linked list in reverse order, in O(1) space. That is the same three-step composition as reorder-list: find the middle with fast/slow, reverse the second half in place, then walk the two halves in step. Only the third step differs — reorder-list splices, this compares. Recognising the composition is the real lesson: once 'find the middle' and 'reverse in place' stop being separate tricks and become two primitives you can chain, every 'compare the halves' or 'interleave the halves' problem becomes a matter of deciding what to do at step three.",
+  "optimized": {
+    "idea": "Step 1: fast/slow finds the middle in one pass — for even lengths slow lands on the first node of the second half, for odd lengths on the middle node itself. Step 2: reverse from slow onwards with the standard three-pointer loop, so prev ends up as the head of the reversed tail. Step 3: walk one cursor from the original head and one from that reversed tail, comparing values, and stop when the reversed side runs out — it is never the longer of the two, and on odd lengths the shared middle node simply compares against itself. Worth saying out loud: this mutates the input. If the caller still holds the list, reverse the second half back before returning.",
+    "code": [
+      "public static boolean isPalindrome(Node head) {",
+      "    if (head == null || head.next == null) return true;",
+      "",
+      "    // 1. middle",
+      "    Node slow = head;",
+      "    Node fast = head;",
+      "    while (fast != null && fast.next != null) {",
+      "        slow = slow.next;",
+      "        fast = fast.next.next;",
+      "    }",
+      "",
+      "    // 2. reverse from slow onwards, in place",
+      "    Node prev = null;",
+      "    while (slow != null) {",
+      "        Node next = slow.next;",
+      "        slow.next = prev;",
+      "        prev = slow;",
+      "        slow = next;",
+      "    }",
+      "",
+      "    // 3. the reversed half is never the longer one, so IT decides when to stop",
+      "    Node front = head;",
+      "    Node back = prev;",
+      "    while (back != null) {",
+      "        if (front.val != back.val) return false;",
+      "        front = front.next;",
+      "        back = back.next;",
+      "    }",
+      "    return true;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(1)"
+    }
+  },
+  "visualization": {
+    "engine": "fastSlowPointer",
+    "input": {
+      "values": [
+        1,
+        2,
+        3,
+        2,
+        1
+      ],
+      "mode": "middle"
+    },
+    "code": [
+      "Node slow = head, fast = head;",
+      "while (fast != null && fast.next != null) {",
+      "    slow = slow.next;",
+      "    fast = fast.next.next;",
+      "}",
+      "// step 1 of 3 done: slow marks the middle",
+      "// step 2: reverse from slow; step 3: compare the two halves in step"
+    ]
+  },
+  "commonMistakes": [
+    "Looping on while (front != null) instead of while (back != null). The first half's chain still runs into the middle region, so front outlives back; the next comparison dereferences a null back and throws NullPointerException on even-length input.",
+    "Forgetting that the algorithm destroys the list. The return value is right, but the caller's list is now half-reversed, so a second call on the same head — or a test that prints the list afterwards — fails in a way that looks nothing like a palindrome bug.",
+    "Comparing node references (front != back) rather than values (front.val != back.val). Any list of two or more nodes returns false immediately, while the single-node case still passes because the guard clause returns before the comparison ever runs."
+  ],
+  "similar": [
+    "reorder-list",
+    "reverse-linked-list",
+    "middle-of-linked-list",
+    "valid-palindrome"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 234,
+      "slug": "palindrome-linked-list",
+      "title": "Palindrome Linked List",
+      "url": "https://leetcode.com/problems/palindrome-linked-list/",
+      "premium": false
+    }
+  }
+}

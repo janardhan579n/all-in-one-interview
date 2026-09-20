@@ -1,0 +1,117 @@
+{
+  "id": "longest-substring-no-repeat",
+  "title": "Longest Substring Without Repeating Characters",
+  "patternId": "sliding-window",
+  "difficulty": "intermediate",
+  "tags": [
+    "string",
+    "sliding-window",
+    "hashing"
+  ],
+  "statement": "Given a string, find the length of the longest substring that contains no repeated characters.",
+  "realWorld": "Deduplicating a stream of events within a session window, or finding the longest run of distinct actions a user performed before repeating one.",
+  "examples": [
+    {
+      "input": "s = \"abcabcbb\"",
+      "output": "3",
+      "explanation": "\"abc\" has length 3. Any longer stretch repeats a character."
+    },
+    {
+      "input": "s = \"bbbbb\"",
+      "output": "1",
+      "explanation": "Only \"b\"."
+    },
+    {
+      "input": "s = \"pwwkew\"",
+      "output": "3",
+      "explanation": "\"wke\". Note \"pwke\" is a subsequence, not a substring."
+    }
+  ],
+  "constraints": [
+    "0 <= s.length <= 5 * 10^4",
+    "s consists of English letters, digits, symbols and spaces"
+  ],
+  "bruteForce": {
+    "idea": "Check every substring and test whether it has all-distinct characters.",
+    "code": [
+      "int best = 0;",
+      "for (int i = 0; i < s.length(); i++) {",
+      "    for (int j = i; j < s.length(); j++) {",
+      "        if (allDistinct(s, i, j)) {",
+      "            best = Math.max(best, j - i + 1);",
+      "        }",
+      "    }",
+      "}",
+      "return best;"
+    ],
+    "complexity": {
+      "time": "O(n^3)",
+      "space": "O(min(n, alphabet))"
+    },
+    "whySlow": "There are O(n^2) substrings and checking each for distinctness costs O(n). Even memoising the check to O(1) leaves O(n^2), and it still rescans stretches already known to be valid."
+  },
+  "patternIdentification": "'Substring' (contiguous) + 'longest' + a constraint that can be violated and then repaired by dropping characters from the left = variable-size sliding window.",
+  "optimized": {
+    "idea": "Slide a window that always contains distinct characters. Remember the last index of each character; when the incoming character was already seen inside the window, jump the left edge past that earlier occurrence in one move.",
+    "code": [
+      "public static int lengthOfLongestSubstring(String s) {",
+      "    Map<Character, Integer> lastSeen = new HashMap<>();",
+      "    int left = 0;",
+      "    int best = 0;",
+      "    for (int right = 0; right < s.length(); right++) {",
+      "        char c = s.charAt(right);",
+      "        Integer prev = lastSeen.get(c);",
+      "        if (prev != null && prev >= left) {",
+      "            left = prev + 1;          // jump, do not step",
+      "        }",
+      "        lastSeen.put(c, right);",
+      "        best = Math.max(best, right - left + 1);",
+      "    }",
+      "    return best;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(min(n, alphabet size))"
+    }
+  },
+  "visualization": {
+    "engine": "slidingWindowVariable",
+    "input": {
+      "text": "abcabcbb"
+    },
+    "code": [
+      "Map<Character, Integer> lastSeen = new HashMap<>();",
+      "int left = 0, best = 0;",
+      "for (int right = 0; right < s.length(); right++) {",
+      "    char c = s.charAt(right);",
+      "    if (lastSeen.containsKey(c) && lastSeen.get(c) >= left) {",
+      "        left = lastSeen.get(c) + 1;",
+      "    }",
+      "    lastSeen.put(c, right);",
+      "    best = Math.max(best, right - left + 1);",
+      "}",
+      "return best;"
+    ]
+  },
+  "commonMistakes": [
+    "Forgetting the `prev >= left` check. A character last seen before the window started is not a duplicate inside it, and moving left backwards corrupts the window.",
+    "Confusing substring with subsequence — 'pwke' is not a valid answer for 'pwwkew'.",
+    "Returning the substring's start index instead of its length, or not handling the empty string."
+  ],
+  "similar": [
+    "max-sum-subarray-k",
+    "min-window-substring",
+    "group-anagrams",
+    "sliding-window-maximum"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 3,
+      "slug": "longest-substring-without-repeating-characters",
+      "title": "Longest Substring Without Repeating Characters",
+      "url": "https://leetcode.com/problems/longest-substring-without-repeating-characters/",
+      "premium": false
+    }
+  }
+}

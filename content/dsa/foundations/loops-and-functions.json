@@ -1,0 +1,145 @@
+{
+  "id": "loops-and-functions",
+  "kind": "foundation",
+  "title": "Loops and Functions",
+  "group": "Foundations",
+  "level": 0,
+  "difficulty": "beginner",
+  "estimatedMinutes": 18,
+  "summary": "A loop repeats work while a condition holds; a function names a piece of work so you can reuse it and reason about it in isolation.",
+  "prerequisites": ["data-and-variables"],
+  "tags": ["basics", "loops", "functions", "level-0"],
+  "analogy": {
+    "beginner": "A loop is 'keep stirring until the sauce thickens'. A function is a recipe card: you write 'make the sauce' once, and from then on any recipe can just say 'make the sauce' instead of repeating twenty lines. The card takes ingredients in (parameters) and hands a sauce back (return value).",
+    "interview": "A loop is a control-flow construct with an initialisation, a guard, a body and an update, whose correctness is argued via a loop invariant. A function is a named, parameterised abstraction with a contract: preconditions on its inputs, a postcondition on its result, and ideally no hidden side effects."
+  },
+  "intuition": "Almost every algorithm in this course is a loop plus a small amount of remembered state. So the skill that matters is not typing `for` — it is being able to say, at any moment, **what is true so far**.\n\nThat sentence is called the *loop invariant*. For the maximum-finding loop it was: *'`best` holds the largest value among the elements I have already looked at.'* If the invariant is true before the loop, stays true after each pass, and the loop ends, then the invariant plus the exit condition gives you the answer. That is the whole proof technique, and it is how you debug an off-by-one error without a debugger.\n\nFunctions matter for a different reason: they let you forget. Once `max(a, b)` is written and tested, you stop thinking about how it works and start thinking with it. Every layer of software is built on that trade.",
+  "problemFirst": {
+    "motivatingProblem": "Print the 5-times table up to 50. Then print the 7-times table. Then the 13-times table.",
+    "bruteForce": {
+      "idea": "Write the lines out by hand. Ten `println` calls per table, thirty in total. It works — and then someone asks for the 9-times table up to 900 and you understand why loops exist.",
+      "code": [
+        "System.out.println(\"5 x 1 = 5\");",
+        "System.out.println(\"5 x 2 = 10\");",
+        "System.out.println(\"5 x 3 = 15\");",
+        "// ... 27 more lines, each a chance to make a typo"
+      ],
+      "complexity": { "time": "O(1) to run, O(n) to type", "space": "O(1)" },
+      "whySlow": "The program is fine; the *source code* grows with the problem. Any time your code length grows with your data, you have found a loop that wants to exist. And the copy-paste version has a second cost: a fix has to be applied thirty times."
+    },
+    "observation": "The three tables differ only in one number. The ten lines within a table differ only in one number too.",
+    "leap": "Replace what varies with a variable: the repetition inside a table becomes a loop, and the repetition across tables becomes a function parameter."
+  },
+  "howItWorks": [
+    "**`for` loop** — use when you know the count up front: `for (init; condition; update) { body }`. Runs init once, then checks the condition before every pass.",
+    "**`while` loop** — use when you loop until something becomes true, and the number of passes isn't known: reading input, shrinking a window, walking a linked list.",
+    "**`do…while`** — like `while` but the body always runs at least once. Rare; prefer `while` unless you genuinely need that.",
+    "**Enhanced `for`** — `for (int x : array)` when you need the values but not the indices. Clearer, and it cannot go out of bounds.",
+    "**`break` / `continue`** — leave the loop entirely / skip to the next pass. Use sparingly; a loop with four `break`s is usually two loops pretending to be one.",
+    "**Function** — `returnType name(parameters) { body; return value; }`. Keep it small enough to describe in one sentence without using the word 'and'."
+  ],
+  "patternRecognition": {
+    "signals": ["You are about to copy-paste a line and change one value in it"],
+    "antiSignals": [],
+    "decisionTreeId": null
+  },
+  "visualizations": [
+    {
+      "id": "loop-trace",
+      "title": "Tracing a loop, pass by pass",
+      "engine": "loopTrace",
+      "input": { "kind": "sumTable", "multiplier": 5, "upTo": 5 },
+      "code": [
+        "int multiplier = 5;",
+        "for (int i = 1; i <= 5; i++) {",
+        "    int product = multiplier * i;",
+        "    System.out.println(multiplier + \" x \" + i + \" = \" + product);",
+        "}"
+      ]
+    }
+  ],
+  "implementations": [
+    {
+      "label": "Simple",
+      "language": "java",
+      "explanation": "One loop replaces ten lines. The variable `i` carries the part that changes.",
+      "code": [
+        "int multiplier = 5;",
+        "for (int i = 1; i <= 10; i++) {",
+        "    System.out.println(multiplier + \" x \" + i + \" = \" + (multiplier * i));",
+        "}"
+      ]
+    },
+    {
+      "label": "Optimized",
+      "language": "java",
+      "explanation": "The loop is now named, parameterised and reusable. Notice it returns a value instead of printing: a function that computes is testable, a function that prints is not. Push side effects (printing, writing files, calling the network) to the edges of your program.",
+      "code": [
+        "/** Returns the first `upTo` multiples of `multiplier`, as display lines. */",
+        "public static List<String> timesTable(int multiplier, int upTo) {",
+        "    List<String> lines = new ArrayList<>(upTo);",
+        "    for (int i = 1; i <= upTo; i++) {",
+        "        lines.add(multiplier + \" x \" + i + \" = \" + (multiplier * i));",
+        "    }",
+        "    return lines;",
+        "}",
+        "",
+        "// callers decide what to do with the result",
+        "timesTable(5, 10).forEach(System.out::println);",
+        "timesTable(13, 20).forEach(System.out::println);"
+      ]
+    }
+  ],
+  "complexity": {
+    "time": "O(n) for a single loop over n items; O(n·m) for a loop nested inside another",
+    "space": "O(1) unless the loop accumulates results",
+    "why": "A loop's cost is (number of passes) × (cost of one pass). Nesting multiplies: an inner loop that runs n times inside an outer loop that runs n times is n² passes. That multiplication is the single most important thing to watch for when estimating cost — and the thing patterns like Two Pointers and Sliding Window exist to remove."
+  },
+  "commonMistakes": [
+    { "mistake": "`for (int i = 0; i <= array.length; i++)`", "fix": "`<=` runs one pass too many and throws `ArrayIndexOutOfBoundsException`. Valid indices are 0 … length-1, so the guard is `<`." },
+    { "mistake": "Modifying the loop variable inside the body by accident", "fix": "Keep the update in the loop header. If the step size genuinely varies, use a `while` loop so the change is visible." },
+    { "mistake": "A `while` loop whose condition can never become false", "fix": "Before writing the body, say out loud what makes the condition eventually fail — then make sure the body does that thing on every path." },
+    { "mistake": "A function that does three things", "fix": "If the name needs an 'and', split it. `validateAndSaveAndEmail` is three functions." }
+  ],
+  "realWorldUses": [
+    "Request handling loops, batch jobs, retry loops with backoff — the shape is everywhere in backend work.",
+    "The 'return a value rather than print' rule is what makes business logic unit-testable, which is why it shows up in code review comments daily."
+  ],
+  "interviewNotes": [
+    "When you write a loop on a whiteboard, state its invariant in one sentence. It reads as senior, and it catches your own bugs before the interviewer does.",
+    "Nested loops are the first thing an interviewer looks for when asking 'can you do better than O(n²)?'"
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "predict-output",
+      "question": "How many times does the body run?\n\nfor (int i = 0; i < 5; i++) { ... }",
+      "options": ["4", "5", "6", "Depends on the body"],
+      "answerIndex": 1,
+      "explanation": "i takes the values 0,1,2,3,4 — five passes. The guard is checked before each pass, so the run with i = 5 never happens."
+    },
+    {
+      "id": "q2",
+      "type": "mcq",
+      "question": "A loop over n items contains another loop over the same n items. What is the time complexity?",
+      "options": ["O(n)", "O(2n)", "O(n²)", "O(log n)"],
+      "answerIndex": 2,
+      "explanation": "Nesting multiplies: n passes of the outer loop × n passes of the inner loop = n² operations. Sequential (not nested) loops would add, giving O(n)."
+    },
+    {
+      "id": "q3",
+      "type": "mcq",
+      "question": "What is the loop invariant of the maximum-finding loop from the previous lesson?",
+      "options": [
+        "i is less than the array length",
+        "best holds the largest value among the elements examined so far",
+        "The array is sorted up to index i",
+        "best is always positive"
+      ],
+      "answerIndex": 1,
+      "explanation": "That statement is true before the loop, preserved by each pass, and — combined with the loop having examined every element on exit — proves the result is correct."
+    }
+  ],
+  "practiceProblems": [],
+  "related": ["what-is-an-algorithm", "recursion", "big-o"]
+}

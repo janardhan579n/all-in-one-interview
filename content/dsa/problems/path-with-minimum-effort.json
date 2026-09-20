@@ -1,0 +1,133 @@
+{
+  "id": "path-with-minimum-effort",
+  "title": "Path With Minimum Effort",
+  "patternId": "shortest-paths",
+  "difficulty": "advanced",
+  "tags": [
+    "graph",
+    "grid",
+    "dijkstra",
+    "priority-queue",
+    "binary-search",
+    "minimax"
+  ],
+  "statement": "You are given a rows x cols grid of heights. Starting at the top-left cell and moving up, down, left or right to the bottom-right cell, the effort of a route is the maximum absolute height difference between any two consecutive cells on it. Return the minimum effort of any route.",
+  "realWorld": "Choosing a hiking trail by its steepest section rather than its total climb, routing a network path by its worst-hop latency, or picking a power line route limited by the largest voltage drop on any single segment. Anywhere the bottleneck rather than the sum is what hurts.",
+  "examples": [
+    {
+      "input": "heights = [[1,2,2],[3,8,2],[5,3,5]]",
+      "output": "2",
+      "explanation": "The route 1-2-2-2-5 along the top and right has a largest single step of 2. Going through 8 would force a step of at least 5, even though that route is shorter in cells."
+    },
+    {
+      "input": "heights = [[1,2,3],[3,8,4],[5,3,5]]",
+      "output": "1",
+      "explanation": "1-2-3-4-5 down the top and right edge: every consecutive difference is 1."
+    },
+    {
+      "input": "heights = [[1,2,1,1,1],[1,2,1,2,1],[1,2,1,2,1],[1,2,1,2,1],[1,1,1,2,1]]",
+      "output": "0",
+      "explanation": "A snaking route through the 1s never changes height at all."
+    }
+  ],
+  "constraints": [
+    "rows == heights.length, cols == heights[0].length",
+    "1 <= rows, cols <= 100",
+    "1 <= heights[i][j] <= 10^6",
+    "The start cell may equal the end cell, in which case the answer is 0"
+  ],
+  "bruteForce": {
+    "idea": "Enumerate every simple route from the top-left to the bottom-right, compute each one's largest single step, and keep the smallest of those.",
+    "code": [
+      "int best = Integer.MAX_VALUE;",
+      "",
+      "void walk(int r, int c, int worstSoFar, boolean[][] onPath) {",
+      "    if (r == rows - 1 && c == cols - 1) { best = Math.min(best, worstSoFar); return; }",
+      "    onPath[r][c] = true;",
+      "    for (int[] d : DIRS) {",
+      "        int nr = r + d[0], nc = c + d[1];",
+      "        if (outOfBounds(nr, nc) || onPath[nr][nc]) continue;",
+      "        int step = Math.abs(heights[nr][nc] - heights[r][c]);",
+      "        walk(nr, nc, Math.max(worstSoFar, step), onPath);",
+      "    }",
+      "    onPath[r][c] = false;   // backtrack",
+      "}"
+    ],
+    "complexity": {
+      "time": "Exponential — O(4^(rows*cols)) routes in the worst case",
+      "space": "O(rows * cols) recursion depth"
+    },
+    "whySlow": "It enumerates routes, not cells. A 100 x 100 open grid has an astronomical number of simple routes, and every route that passes through a given cell repeats all the work of getting there."
+  },
+  "patternIdentification": "Treat the grid as a graph: cells are nodes, adjacent cells are edges, and an edge's weight is the absolute height difference. Now the question is a shortest-path question with one substitution — the cost of a route is the **maximum** edge on it rather than the sum. Dijkstra's correctness never depended on the combining operation being addition; it depended on the combined cost never decreasing as you extend a route. Since max(a, w) >= a for any non-negative w, the greedy argument survives unchanged. So: same loop, relaxation written as `max` instead of `+`. This variant is called a minimax or bottleneck shortest path.",
+  "optimized": {
+    "idea": "Dijkstra over the grid with `effort[r][c]` = the smallest possible worst-step of any route reaching that cell. Settle cells in increasing order of effort; relax a neighbour with `max(currentEffort, heightDifference)`. The first time the bottom-right cell is popped, its effort is final, for exactly the same reason as in ordinary Dijkstra.",
+    "code": [
+      "public static int minimumEffortPath(int[][] heights) {",
+      "    int rows = heights.length, cols = heights[0].length;",
+      "    int[][] effort = new int[rows][cols];",
+      "    for (int[] row : effort) Arrays.fill(row, Integer.MAX_VALUE);",
+      "    effort[0][0] = 0;",
+      "",
+      "    final int[][] DIRS = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};",
+      "",
+      "    // {effort, row, col}, ordered by effort.",
+      "    PriorityQueue<int[]> heap = new PriorityQueue<>((a, b) -> Integer.compare(a[0], b[0]));",
+      "    heap.offer(new int[]{0, 0, 0});",
+      "",
+      "    while (!heap.isEmpty()) {",
+      "        int[] top = heap.poll();",
+      "        int worst = top[0], r = top[1], c = top[2];",
+      "",
+      "        if (worst > effort[r][c]) continue;   // stale copy: no decrease-key in Java",
+      "        if (r == rows - 1 && c == cols - 1) return worst;   // settled: final",
+      "",
+      "        for (int[] d : DIRS) {",
+      "            int nr = r + d[0], nc = c + d[1];",
+      "            if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) continue;",
+      "",
+      "            int step = Math.abs(heights[nr][nc] - heights[r][c]);",
+      "            int candidate = Math.max(worst, step);   // MAX, not a sum",
+      "            if (candidate < effort[nr][nc]) {",
+      "                effort[nr][nc] = candidate;",
+      "                heap.offer(new int[]{candidate, nr, nc});",
+      "            }",
+      "        }",
+      "    }",
+      "    return 0;   // 1x1 grid: start is the destination",
+      "}",
+      "",
+      "// Alternative: binary search the answer. For a guess x, ask 'is the",
+      "// destination reachable using only steps <= x?' with a plain BFS or DFS.",
+      "// The predicate is monotonic in x, so binary search over 0..10^6 gives",
+      "// O(rows * cols * log(maxHeight)). Union-find over edges sorted by weight",
+      "// is a third route to the same answer."
+    ],
+    "complexity": {
+      "time": "O(rows * cols * log(rows * cols)) — every cell is settled once and each of its up-to-four edges may push a heap entry costing O(log) each",
+      "space": "O(rows * cols) for the effort grid and the heap"
+    }
+  },
+  "commonMistakes": [
+    "Summing the height differences instead of taking their maximum. That is a different problem — total climb rather than steepest step — and the two have different answers.",
+    "Using BFS and hoping the fewest-cells route is the least-steep one. It usually is not; the second example walks the long way round precisely to avoid one steep step.",
+    "Omitting the stale-entry skip, so a cell is expanded once per heap copy.",
+    "Initialising effort[0][0] to anything other than 0. There is no step taken before leaving the start cell.",
+    "Forgetting the 1x1 grid, where the start is the destination and the answer is 0.",
+    "Bounds-checking after reading heights[nr][nc] rather than before."
+  ],
+  "similar": [
+    "network-delay-time",
+    "cheapest-flights-k-stops",
+    "koko-eating-bananas"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 1631,
+      "slug": "path-with-minimum-effort",
+      "title": "Path With Minimum Effort",
+      "url": "https://leetcode.com/problems/path-with-minimum-effort/",
+      "premium": false
+    }
+  }
+}

@@ -1,0 +1,120 @@
+{
+  "id": "reverse-linked-list",
+  "title": "Reverse Linked List",
+  "patternId": "linked-list",
+  "difficulty": "beginner",
+  "tags": [
+    "linked-list",
+    "pointers",
+    "in-place"
+  ],
+  "statement": "Given the head of a singly linked list, reverse the list and return the head of the reversed list. Do it in place: you may not allocate a second list or a second array of values.",
+  "realWorld": "A network stack holds received fragments as a singly linked chain in arrival order, and some protocols require reassembling them from the last fragment backwards without allocating a second buffer. The same in-place relink is what a memory allocator does when it moves blocks between free lists, and what a parser does when it has built a list of tokens by prepending and now needs them in source order.",
+  "examples": [
+    {
+      "input": "head = [1,2,3,4,5]",
+      "output": "[5,4,3,2,1]",
+      "explanation": "Five nodes, five next-pointers flipped, no data moved."
+    },
+    {
+      "input": "head = [1,2]",
+      "output": "[2,1]",
+      "explanation": "Iteration 1: save next = node(2), set node(1).next = null, prev = node(1), curr = node(2). Iteration 2: save next = null, set node(2).next = node(1), prev = node(2), curr = null. The loop ends and prev — node(2) — is the new head."
+    },
+    {
+      "input": "head = []",
+      "output": "[]",
+      "explanation": "curr is null immediately, the loop body never runs, and prev is still null — which is the correct empty list. No guard clause is needed."
+    }
+  ],
+  "constraints": [
+    "0 <= number of nodes <= 5000",
+    "-5000 <= Node.val <= 5000",
+    "O(1) extra space — the nodes must be relinked, not copied"
+  ],
+  "bruteForce": {
+    "idea": "Walk the list collecting the values into an array, then walk it again writing the values back in reverse order.",
+    "code": [
+      "List<Integer> values = new ArrayList<>();",
+      "for (Node p = head; p != null; p = p.next) {",
+      "    values.add(p.val);",
+      "}",
+      "Node cur = head;",
+      "for (int i = values.size() - 1; i >= 0; i--) {",
+      "    cur.val = values.get(i);",
+      "    cur = cur.next;",
+      "}",
+      "return head;"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(n)"
+    },
+    "whySlow": "The time is already linear; the waste is the copying. Every value is written twice — once into the array and once back into a node — and we allocate a full second copy of the list's payload to accomplish something that needs no data movement at all. The nodes are already in the right place; only n next-pointers had to change direction. If the nodes carried a heavy object instead of an int, this solution would spend almost all of its time moving payloads that never needed to move."
+  },
+  "patternIdentification": "You are asked to rearrange a structure whose only handle on each element is a pointer, and to do it in place. The transferable move is to keep a small fixed set of cursors — the node behind you, the node you are on, and the node ahead — and advance them in lockstep. The rule that generates the whole solution is this: before any assignment that overwrites a pointer, ask 'after this line, what can I no longer reach?'. Anything in that answer must be named in a local variable first. That question produces the three-pointer dance every time, and it is the same question that makes list insertion, deletion and rotation correct.",
+  "optimized": {
+    "idea": "One pass, flipping each node's next to face the node you just left. You need exactly three names at all times: prev (the portion already reversed — it starts as null, because the old head becomes the new tail and a tail points at null), curr (the node being flipped), and next (the rest of the list). The order inside the loop is forced, not stylistic: the instant you execute curr.next = prev, the only pointer to the remainder of the list has been overwritten, so it must be saved in next beforehand. When curr falls off the end, prev is the last node visited, which is the new head.",
+    "code": [
+      "public static Node reverseList(Node head) {",
+      "    Node prev = null;",
+      "    Node curr = head;",
+      "    while (curr != null) {",
+      "        Node next = curr.next;   // save the rest BEFORE the next line destroys the only link to it",
+      "        curr.next = prev;",
+      "        prev = curr;",
+      "        curr = next;",
+      "    }",
+      "    return prev;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(1)"
+    }
+  },
+  "visualization": {
+    "engine": "linkedListReverse",
+    "input": {
+      "values": [
+        4,
+        7,
+        1,
+        9,
+        2
+      ]
+    },
+    "code": [
+      "Node prev = null;",
+      "Node curr = head;",
+      "while (curr != null) {",
+      "    Node next = curr.next;   // remember the rest before we lose it",
+      "    curr.next = prev;        // flip this link",
+      "    prev = curr;             // step both pointers forward",
+      "    curr = next;",
+      "}",
+      "return prev;                 // prev is the new head"
+    ]
+  },
+  "commonMistakes": [
+    "Writing curr.next = prev before saving next. The only pointer to the remainder of the list is gone, so curr = curr.next now walks backwards into prev; the function returns a two-node list, or loops forever between two nodes that point at each other.",
+    "Returning head instead of prev. head still refers to the original first node, which after the reversal is the tail — so the caller gets back a one-element list and [1,2,3,4,5] silently prints as '1'.",
+    "Guarding the loop with while (curr.next != null). On an empty list this throws NullPointerException on the first check, and on a non-empty list it stops one node early: the final node is never flipped and prev ends on the second-to-last node, so the result is missing its head."
+  ],
+  "similar": [
+    "merge-two-sorted-lists",
+    "reorder-list",
+    "palindrome-linked-list",
+    "remove-nth-from-end",
+    "add-two-numbers"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 206,
+      "slug": "reverse-linked-list",
+      "title": "Reverse Linked List",
+      "url": "https://leetcode.com/problems/reverse-linked-list/",
+      "premium": false
+    }
+  }
+}

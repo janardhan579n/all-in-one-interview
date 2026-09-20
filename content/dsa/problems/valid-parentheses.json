@@ -1,0 +1,108 @@
+{
+  "id": "valid-parentheses",
+  "title": "Valid Parentheses",
+  "patternId": "stack",
+  "difficulty": "beginner",
+  "tags": [
+    "string",
+    "stack"
+  ],
+  "statement": "Given a string containing only the characters ()[]{}, determine whether every bracket is closed by the same type in the correct order.",
+  "realWorld": "Every parser, linter and syntax highlighter does this. JSON and XML validation is the same algorithm with richer tokens.",
+  "examples": [
+    {
+      "input": "s = \"()[]{}\"",
+      "output": "true",
+      "explanation": ""
+    },
+    {
+      "input": "s = \"([)]\"",
+      "output": "false",
+      "explanation": "Correct counts, wrong nesting order."
+    },
+    {
+      "input": "s = \"{[]}\"",
+      "output": "true",
+      "explanation": ""
+    }
+  ],
+  "constraints": [
+    "1 <= s.length <= 10^4",
+    "s consists only of the six bracket characters"
+  ],
+  "bruteForce": {
+    "idea": "Repeatedly delete adjacent matching pairs until the string stops changing; it is valid if nothing is left.",
+    "code": [
+      "String prev;",
+      "do {",
+      "    prev = s;",
+      "    s = s.replace(\"()\", \"\").replace(\"[]\", \"\").replace(\"{}\", \"\");",
+      "} while (!s.equals(prev));",
+      "return s.isEmpty();"
+    ],
+    "complexity": {
+      "time": "O(n^2)",
+      "space": "O(n)"
+    },
+    "whySlow": "Each pass rebuilds the entire string and removes at most a few pairs, so up to n/2 passes of O(n) work. Counting brackets instead would be O(n) but is simply wrong — it accepts \")(\"."
+  },
+  "patternIdentification": "A closing bracket can only match the most recent unmatched opener. 'Most recent' is LIFO, which is a stack.",
+  "optimized": {
+    "idea": "Push the expected closing bracket whenever you see an opener. On a closer, pop and compare. Two failure modes: popping an empty stack, and a non-empty stack at the end.",
+    "code": [
+      "public static boolean isValid(String s) {",
+      "    Deque<Character> stack = new ArrayDeque<>();",
+      "    for (char c : s.toCharArray()) {",
+      "        switch (c) {",
+      "            case '(' -> stack.push(')');   // push what we EXPECT next",
+      "            case '[' -> stack.push(']');",
+      "            case '{' -> stack.push('}');",
+      "            default  -> {",
+      "                if (stack.isEmpty() || stack.pop() != c) return false;",
+      "            }",
+      "        }",
+      "    }",
+      "    return stack.isEmpty();   // leftovers mean unclosed openers",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(n) worst case, e.g. \"((((((\""
+    }
+  },
+  "visualization": {
+    "engine": "balancedBrackets",
+    "input": {
+      "text": "{[()]}"
+    },
+    "code": [
+      "Deque<Character> stack = new ArrayDeque<>();",
+      "for (char c : s.toCharArray()) {",
+      "    if (isOpener(c)) {",
+      "        stack.push(expectedCloser(c));   // push what we now EXPECT to see",
+      "    } else {",
+      "        if (stack.isEmpty() || stack.pop() != c) return false;",
+      "    }",
+      "}",
+      "return stack.isEmpty();              // anything still open was never closed"
+    ]
+  },
+  "commonMistakes": [
+    "Forgetting the final isEmpty() check, so \"(((\" is reported valid.",
+    "Popping without checking isEmpty(), throwing on \")))\".",
+    "Counting brackets instead of tracking order, which accepts \")(\".",
+    "Using java.util.Stack; ArrayDeque is the modern, unsynchronised choice."
+  ],
+  "similar": [
+    "daily-temperatures"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 20,
+      "slug": "valid-parentheses",
+      "title": "Valid Parentheses",
+      "url": "https://leetcode.com/problems/valid-parentheses/",
+      "premium": false
+    }
+  }
+}

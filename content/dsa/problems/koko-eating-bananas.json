@@ -1,0 +1,116 @@
+{
+  "id": "koko-eating-bananas",
+  "title": "Koko Eating Bananas",
+  "patternId": "binary-search",
+  "difficulty": "advanced",
+  "tags": [
+    "array",
+    "binary-search",
+    "answer-space"
+  ],
+  "statement": "Koko has piles of bananas and h hours before the guards return. She picks an eating speed k bananas/hour; each hour she eats from one pile, and if that pile has fewer than k left she finishes it and waits. Return the minimum k that lets her finish all the piles within h hours.",
+  "realWorld": "Capacity planning in its purest form: the smallest number of workers, threads or provisioned IOPS that clears a backlog inside an SLA. Autoscalers solve exactly this shape.",
+  "examples": [
+    {
+      "input": "piles = [3,6,7,11], h = 8",
+      "output": "4",
+      "explanation": "At k=4 the hours are 1+2+2+3 = 8. At k=3 it would be 1+2+3+4 = 10 > 8."
+    },
+    {
+      "input": "piles = [30,11,23,4,20], h = 6",
+      "output": "23",
+      "explanation": ""
+    }
+  ],
+  "constraints": [
+    "1 <= piles.length <= 10^4",
+    "piles.length <= h <= 10^9",
+    "1 <= piles[i] <= 10^9"
+  ],
+  "bruteForce": {
+    "idea": "Try every speed from 1 upwards until one finishes in time.",
+    "code": [
+      "for (int speed = 1; speed <= max(piles); speed++) {",
+      "    if (hoursNeeded(piles, speed) <= h) return speed;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(max(piles) * n)",
+      "space": "O(1)"
+    },
+    "whySlow": "max(piles) can be 10^9 and n can be 10^4, so 10^13 operations. But note the structure the loop ignores: once a speed works, every faster speed also works."
+  },
+  "patternIdentification": "'Minimum X such that a condition holds' + a feasibility check that is monotonic in X = binary search on the answer. There is no sorted array here at all — the search space is the range of possible speeds.",
+  "optimized": {
+    "idea": "The predicate canFinish(speed) is false for slow speeds and true from the answer onwards, and never flips back. Binary search the speed range [1, max pile] for that boundary, evaluating the predicate with an O(n) simulation at each probe.",
+    "code": [
+      "public static int minEatingSpeed(int[] piles, int h) {",
+      "    int low = 1;",
+      "    int high = Arrays.stream(piles).max().orElseThrow();",
+      "",
+      "    while (low < high) {",
+      "        int mid = low + (high - low) / 2;",
+      "        if (hoursNeeded(piles, mid) <= h) {",
+      "            high = mid;        // feasible: this speed might be the answer, keep it",
+      "        } else {",
+      "            low = mid + 1;     // too slow: the answer is strictly faster",
+      "        }",
+      "    }",
+      "    return low;                // low == high == smallest feasible speed",
+      "}",
+      "",
+      "private static long hoursNeeded(int[] piles, int speed) {",
+      "    long hours = 0;",
+      "    for (int pile : piles) {",
+      "        hours += (pile + speed - 1) / speed;   // ceiling division, no floating point",
+      "    }",
+      "    return hours;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n log(max pile))",
+      "space": "O(1)"
+    }
+  },
+  "visualization": {
+    "engine": "binarySearchAnswer",
+    "input": {
+      "piles": [
+        30,
+        11,
+        23,
+        4,
+        20
+      ],
+      "hours": 6
+    },
+    "code": [
+      "int low = 1, high = max(piles);",
+      "while (low < high) {",
+      "    int mid = low + (high - low) / 2;",
+      "    if (hoursNeeded(piles, mid) <= h) high = mid;",
+      "    else                              low = mid + 1;",
+      "}",
+      "return low;"
+    ]
+  },
+  "commonMistakes": [
+    "Accumulating hours in an int — 10^4 piles of 10^9 bananas at speed 1 overflows immediately. Use long.",
+    "Using Math.ceil with doubles; floating point loses precision at 10^9. Integer ceiling division is exact.",
+    "Starting low at 0, which causes division by zero.",
+    "Mixing templates: with while (low < high) you must use high = mid, never high = mid - 1, or you can skip the answer."
+  ],
+  "similar": [
+    "binary-search-basic",
+    "search-rotated-array"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 875,
+      "slug": "koko-eating-bananas",
+      "title": "Koko Eating Bananas",
+      "url": "https://leetcode.com/problems/koko-eating-bananas/",
+      "premium": false
+    }
+  }
+}

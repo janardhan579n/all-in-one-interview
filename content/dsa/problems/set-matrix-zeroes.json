@@ -1,0 +1,120 @@
+{
+  "id": "set-matrix-zeroes",
+  "title": "Set Matrix Zeroes",
+  "patternId": "matrix",
+  "difficulty": "intermediate",
+  "tags": [
+    "matrix",
+    "array",
+    "in-place",
+    "simulation"
+  ],
+  "statement": "Given an m × n matrix, if an element is 0 then set its entire row and its entire column to 0. Do it in place. The follow-up asks for O(1) extra space.",
+  "realWorld": "Invalidating a spreadsheet: one broken cell forces its whole row and column of derived figures to be recomputed. The same shape appears when a failed sensor invalidates a whole row and column of a calibration grid, or when a retired feature blanks a row and a column of an experiment matrix.",
+  "examples": [
+    {
+      "input": "matrix = [[1,1,1],[1,0,1],[1,1,1]]",
+      "output": "[[1,0,1],[0,0,0],[1,0,1]]",
+      "explanation": "The single zero at (1,1) blanks row 1 and column 1."
+    },
+    {
+      "input": "matrix = [[0,1,2,0],[3,4,5,2],[1,3,1,5]]",
+      "output": "[[0,0,0,0],[0,4,5,0],[0,3,1,0]]",
+      "explanation": "Zeros at (0,0) and (0,3) blank row 0 and columns 0 and 3. Note that the zeros written into row 0 must not themselves trigger further blanking."
+    },
+    {
+      "input": "matrix = [[1,2],[3,4]]",
+      "output": "[[1,2],[3,4]]",
+      "explanation": "No zeros in the input, so nothing changes."
+    }
+  ],
+  "constraints": [
+    "m == matrix.length, n == matrix[0].length",
+    "1 <= m, n <= 200",
+    "-2^31 <= matrix[r][c] <= 2^31 - 1",
+    "Must be done in place; the follow-up demands O(1) extra space"
+  ],
+  "bruteForce": {
+    "idea": "Two passes with two sets. First pass records which rows and which columns contain a zero; second pass blanks every cell whose row or column was recorded.",
+    "code": [
+      "int rows = matrix.length, cols = matrix[0].length;",
+      "Set<Integer> zeroRows = new HashSet<>();",
+      "Set<Integer> zeroCols = new HashSet<>();",
+      "",
+      "for (int r = 0; r < rows; r++) {",
+      "    for (int c = 0; c < cols; c++) {",
+      "        if (matrix[r][c] == 0) {",
+      "            zeroRows.add(r);",
+      "            zeroCols.add(c);",
+      "        }",
+      "    }",
+      "}",
+      "",
+      "for (int r = 0; r < rows; r++) {",
+      "    for (int c = 0; c < cols; c++) {",
+      "        if (zeroRows.contains(r) || zeroCols.contains(c)) matrix[r][c] = 0;",
+      "    }",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(m·n)",
+      "space": "O(m + n)"
+    },
+    "whySlow": "Again the time is optimal — every cell must be inspected. This version is also correct, and is the right first answer to give. It fails only the follow-up: it allocates storage proportional to the matrix's dimensions. The tempting 'fix' of blanking as you go is much worse than merely using extra space — a zero you write is indistinguishable from a zero that was in the input, so the blanking cascades until the entire matrix is zero."
+  },
+  "patternIdentification": "Two matrix-pattern instincts fire. First, the write must be separated from the read, because the output alphabet ({0}) overlaps the input alphabet — a classic in-place hazard. Second, once you need O(1) space, ask whether the matrix can store its own bookkeeping: the flags are one bit per row and one per column, and the matrix already has a row and a column that can hold exactly that many bits.",
+  "optimized": {
+    "idea": "Use row 0 and column 0 as the flag arrays. `matrix[r][0] == 0` means 'blank row r' and `matrix[0][c] == 0` means 'blank column c'. Cell (0,0) is shared by both flag arrays, so column 0's own fate is tracked in a single separate boolean. Then apply the flags **bottom-up and right-to-left**, so that a flag cell is only overwritten after every cell that depends on it has been read.",
+    "code": [
+      "public static void setZeroes(int[][] matrix) {",
+      "    int rows = matrix.length, cols = matrix[0].length;",
+      "    boolean firstColHasZero = false;   // column 0's flag cannot live in column 0",
+      "",
+      "    // Pass 1 — record the flags in row 0 and column 0.",
+      "    for (int r = 0; r < rows; r++) {",
+      "        if (matrix[r][0] == 0) firstColHasZero = true;",
+      "        for (int c = 1; c < cols; c++) {          // c starts at 1: column 0 is handled above",
+      "            if (matrix[r][c] == 0) {",
+      "                matrix[r][0] = 0;                 // flag row r",
+      "                matrix[0][c] = 0;                 // flag column c",
+      "            }",
+      "        }",
+      "    }",
+      "",
+      "    // Pass 2 — apply the flags from the bottom-right corner backwards, so that a flag",
+      "    // cell is never overwritten before the cells that read it have been processed.",
+      "    for (int r = rows - 1; r >= 0; r--) {",
+      "        for (int c = cols - 1; c >= 1; c--) {",
+      "            if (matrix[r][0] == 0 || matrix[0][c] == 0) matrix[r][c] = 0;",
+      "        }",
+      "        if (firstColHasZero) matrix[r][0] = 0;    // column 0 last, from its own boolean",
+      "    }",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(m·n)",
+      "space": "O(1)"
+    }
+  },
+  "commonMistakes": [
+    "Blanking rows and columns during the first pass. The zeros you write are then read as input zeros and the whole matrix collapses to zero. Always separate the recording pass from the applying pass.",
+    "Forgetting that (0,0) belongs to both flag arrays. Without the separate `firstColHasZero` boolean, a zero anywhere in row 0 and a zero anywhere in column 0 become indistinguishable.",
+    "Applying the flags top-to-bottom and left-to-right. Row 0 and column 0 get overwritten while later cells still need to read them.",
+    "Starting the inner loops at `c = 0` in either pass. Column 0 is flag storage in pass 1 and must be written last in pass 2.",
+    "Using a sentinel value such as -1 or Integer.MIN_VALUE to mark cells instead. The constraints allow any int, so no value is safe as a marker.",
+    "Reading `matrix[0].length` without first checking `matrix.length != 0`."
+  ],
+  "similar": [
+    "spiral-matrix",
+    "rotate-image"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 73,
+      "slug": "set-matrix-zeroes",
+      "title": "Set Matrix Zeroes",
+      "url": "https://leetcode.com/problems/set-matrix-zeroes/",
+      "premium": false
+    }
+  }
+}

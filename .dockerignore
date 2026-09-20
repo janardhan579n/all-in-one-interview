@@ -1,0 +1,12 @@
+# Keep build context small and stop host artefacts leaking into images.
+**/node_modules
+**/dist
+**/target
+frontend/src/content-bundle
+frontend/tsconfig.tsbuildinfo
+data
+*.db
+.git
+.idea
+.vscode
+**/.DS_Store

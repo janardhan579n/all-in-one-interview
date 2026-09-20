@@ -1,0 +1,123 @@
+{
+  "id": "remove-duplicates-sorted",
+  "title": "Remove Duplicates from Sorted Array",
+  "patternId": "two-pointers",
+  "difficulty": "beginner",
+  "tags": [
+    "array",
+    "two-pointers",
+    "in-place"
+  ],
+  "statement": "Given an integer array sorted in non-decreasing order, remove the duplicates in place so that each distinct value appears exactly once, keeping the original relative order. Return k, the number of distinct values; the first k slots of the array must hold them and whatever is left beyond k does not matter.",
+  "realWorld": "Collapsing repeats in a sorted merge output. An LSM-tree compaction or a log deduplicator emits records already ordered by key and must fold repeats into one without allocating a second buffer the size of the segment — the returned k is then the length handed to the writer.",
+  "examples": [
+    {
+      "input": "nums = [1,1,2]",
+      "output": "2, nums = [1,2,_]",
+      "explanation": "Two distinct values. The underscore is a slot whose contents are ignored by the grader."
+    },
+    {
+      "input": "nums = [0,0,1,1,1,2,2,3,3,4]",
+      "output": "5, nums = [0,1,2,3,4,_,_,_,_,_]",
+      "explanation": "Five distinct values, and the write index ends five slots behind the read index — exactly the number of duplicates discarded."
+    },
+    {
+      "input": "nums = [7,7,7]",
+      "output": "1, nums = [7,_,_]",
+      "explanation": "All equal, so nothing is ever written after the first element and k is 1."
+    }
+  ],
+  "constraints": [
+    "1 <= nums.length <= 3 * 10^4",
+    "-100 <= nums[i] <= 100",
+    "nums is sorted in non-decreasing order",
+    "The array must be modified in place with O(1) extra space"
+  ],
+  "bruteForce": {
+    "idea": "Keep a growing region of distinct values at the front; for each element, scan that region to see whether the value is already there, and append it if not.",
+    "code": [
+      "int k = 0;",
+      "for (int i = 0; i < nums.length; i++) {",
+      "    boolean seen = false;",
+      "    for (int j = 0; j < k; j++) {",
+      "        if (nums[j] == nums[i]) { seen = true; break; }",
+      "    }",
+      "    if (!seen) nums[k++] = nums[i];",
+      "}",
+      "return k;"
+    ],
+    "complexity": {
+      "time": "O(n^2)",
+      "space": "O(1)"
+    },
+    "whySlow": "The inner scan asks 'have I kept this value before?' against every distinct value found so far, but the array is sorted — a repeat can only ever be adjacent to its own twin. Every comparison except the last one is against a value the ordering already proved to be strictly smaller, so the scan re-derives, element by element, a fact the input handed over for free. A run of 10,000 equal values compares each of them against the whole kept prefix."
+  },
+  "patternIdentification": "Sortedness turns a global question — 'does this value appear anywhere earlier?' — into a local one: 'is it equal to the last value I kept?'. Whenever the decision about an element is settled by its neighbour and the output is a subsequence of the input, use a read index and a write index: no set, no second array, one pass. The same shape appears the moment a problem says 'in place' and 'keep the order'.",
+  "optimized": {
+    "idea": "The first element is always kept, so the write index starts at 1. Read from index 1 onwards and compare each element against the last value actually kept, nums[write - 1] — not against its raw neighbour, because the neighbour may itself have been discarded. When the value is new, write it at the write index and advance. The write index never passes the read index, so the copy is always safe, and its final value is k.",
+    "code": [
+      "public static int removeDuplicates(int[] nums) {",
+      "    if (nums.length == 0) return 0;",
+      "    int write = 1;                          // nums[0] is always kept",
+      "    for (int read = 1; read < nums.length; read++) {",
+      "        if (nums[read] != nums[write - 1]) {   // compare against the last KEPT value",
+      "            nums[write++] = nums[read];",
+      "        }",
+      "    }",
+      "    return write;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(1)"
+    }
+  },
+  "visualization": {
+    "engine": "twoPointersSameDirection",
+    "input": {
+      "array": [
+        0,
+        0,
+        1,
+        1,
+        1,
+        2,
+        2,
+        3,
+        3,
+        4
+      ]
+    },
+    "code": [
+      "int slow = 0;                       // slow marks the last element kept",
+      "for (int fast = 1; fast < nums.length; fast++) {",
+      "    if (nums[fast] != nums[slow]) {",
+      "        slow++;",
+      "        nums[slow] = nums[fast];    // the only write this algorithm ever performs",
+      "    }",
+      "}",
+      "",
+      "return slow + 1;"
+    ]
+  },
+  "commonMistakes": [
+    "Starting the write index at 0: the very first comparison reads nums[write - 1], which is nums[-1], and throws ArrayIndexOutOfBoundsException. Starting at 1 is not an off-by-one hack, it encodes the fact that the first element is unconditionally kept.",
+    "Returning write + 1 or write - 1 because the counter is mistaken for an index — [1,1,2] reports 3 distinct values and the grader reads a stale third slot, which on this input still happens to hold a 2 and so looks correct.",
+    "Dropping the empty-array guard: on a zero-length array the method returns 1, and the caller that trusts that length immediately reads nums[0] on an array with no elements."
+  ],
+  "similar": [
+    "move-zeroes",
+    "merge-sorted-array",
+    "sort-colors",
+    "contains-duplicate"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 26,
+      "slug": "remove-duplicates-from-sorted-array",
+      "title": "Remove Duplicates from Sorted Array",
+      "url": "https://leetcode.com/problems/remove-duplicates-from-sorted-array/",
+      "premium": false
+    }
+  }
+}

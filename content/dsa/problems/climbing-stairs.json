@@ -1,0 +1,115 @@
+{
+  "id": "climbing-stairs",
+  "title": "Climbing Stairs",
+  "patternId": "dynamic-programming-basics",
+  "difficulty": "beginner",
+  "tags": [
+    "dp",
+    "recursion",
+    "fibonacci"
+  ],
+  "statement": "You are climbing a staircase of n steps. Each time you may climb 1 or 2 steps. In how many distinct ways can you reach the top?",
+  "realWorld": "Counting the ways a sequence of fixed-size operations can fill a budget — packet fragmentation options, tiling a strip, or the number of valid decodings of a message.",
+  "examples": [
+    {
+      "input": "n = 2",
+      "output": "2",
+      "explanation": "1+1 and 2."
+    },
+    {
+      "input": "n = 3",
+      "output": "3",
+      "explanation": "1+1+1, 1+2, 2+1."
+    },
+    {
+      "input": "n = 45",
+      "output": "1836311903",
+      "explanation": "Note this is close to Integer.MAX_VALUE."
+    }
+  ],
+  "constraints": [
+    "1 <= n <= 45"
+  ],
+  "bruteForce": {
+    "idea": "Recursively branch on taking 1 step or 2 steps and add the counts.",
+    "code": [
+      "public static int climbStairs(int n) {",
+      "    if (n <= 1) return 1;",
+      "    return climbStairs(n - 1) + climbStairs(n - 2);",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(2^n)",
+      "space": "O(n) call stack"
+    },
+    "whySlow": "n = 45 makes over 3 billion calls and takes minutes, despite there being only 45 distinct values to compute. The call tree recomputes the same subproblems exponentially many times."
+  },
+  "patternIdentification": "A recurrence whose subproblems overlap heavily. Only the count is wanted, not the enumeration of every path — that combination is the dynamic-programming signal. (Enumerating the paths themselves would be backtracking, and genuinely exponential.)",
+  "optimized": {
+    "idea": "ways(i) = ways(i-1) + ways(i-2), because the last move was either a 1-step or a 2-step. Compute bottom-up; since only the previous two values are ever read, two variables replace the whole table.",
+    "code": [
+      "/** O(n) time, O(1) space. */",
+      "public static int climbStairs(int n) {",
+      "    if (n <= 1) return 1;",
+      "    int twoBack = 1;   // ways to reach step 0",
+      "    int oneBack = 1;   // ways to reach step 1",
+      "    for (int i = 2; i <= n; i++) {",
+      "        int current = oneBack + twoBack;",
+      "        twoBack = oneBack;",
+      "        oneBack = current;",
+      "    }",
+      "    return oneBack;",
+      "}",
+      "",
+      "/** Tabulated version — clearer first, optimise space afterwards. */",
+      "public static int climbStairsTable(int n) {",
+      "    if (n <= 1) return 1;",
+      "    int[] dp = new int[n + 1];",
+      "    dp[0] = 1;",
+      "    dp[1] = 1;",
+      "    for (int i = 2; i <= n; i++) dp[i] = dp[i - 1] + dp[i - 2];",
+      "    return dp[n];",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(1) with rolling variables, O(n) tabulated"
+    }
+  },
+  "visualization": {
+    "engine": "dp1d",
+    "input": {
+      "kind": "climbStairs",
+      "n": 8
+    },
+    "code": [
+      "int[] dp = new int[n + 1];",
+      "dp[0] = 1;",
+      "dp[1] = 1;",
+      "for (int i = 2; i <= n; i++) {",
+      "    dp[i] = dp[i - 1] + dp[i - 2];",
+      "}",
+      "return dp[n];"
+    ]
+  },
+  "commonMistakes": [
+    "Setting dp[0] = 0. There is exactly one way to stand at the bottom having climbed nothing.",
+    "Optimising to two variables before the tabulated version is verified correct.",
+    "Using int for larger n — this is Fibonacci, so it overflows quickly past n = 46.",
+    "Reaching for backtracking to enumerate the paths when only the count is required."
+  ],
+  "similar": [
+    "house-robber",
+    "coin-change",
+    "unique-paths"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 70,
+      "slug": "climbing-stairs",
+      "title": "Climbing Stairs",
+      "url": "https://leetcode.com/problems/climbing-stairs/",
+      "premium": false
+    }
+  }
+}

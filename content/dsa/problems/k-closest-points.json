@@ -1,0 +1,120 @@
+{
+  "id": "k-closest-points",
+  "title": "K Closest Points to Origin",
+  "patternId": "heap",
+  "difficulty": "intermediate",
+  "tags": [
+    "heap",
+    "priority-queue",
+    "top-k",
+    "sorting"
+  ],
+  "statement": "Given an array of points on the plane, where points[i] = [xi, yi], and an integer k, return the k points closest to the origin (0, 0) by Euclidean distance. The answer may be returned in any order, and it is guaranteed to be unique except for the order.",
+  "realWorld": "The 'nearest N' query behind a store locator or a driver-dispatch service: you hold millions of candidate locations and need the five nearest to a rider, not a ranking of all of them. The same bounded-heap selection is how a vector search index keeps the k best candidates while streaming over far more vectors than it could ever sort.",
+  "examples": [
+    {
+      "input": "points = [[1,3],[-2,2]], k = 1",
+      "output": "[[-2,2]]",
+      "explanation": "Squared distances are 1 + 9 = 10 and 4 + 4 = 8. The second point is nearer, and no square root was needed to find that out."
+    },
+    {
+      "input": "points = [[3,3],[5,-1],[-2,4]], k = 2",
+      "output": "[[3,3],[-2,4]]",
+      "explanation": "Squared distances are 18, 26 and 20. The two smallest are 18 and 20. Note that the farthest point, [5,-1], is the one the size-2 heap keeps at its root until it is evicted — the root is always the worst of the survivors, never the best."
+    },
+    {
+      "input": "points = [[0,1],[1,0]], k = 2",
+      "output": "[[0,1],[1,0]]",
+      "explanation": "When k equals the number of points, the whole input is the answer and no eviction ever happens. Ties in distance are allowed; either order is accepted."
+    }
+  ],
+  "constraints": [
+    "1 <= k <= points.length <= 10^4",
+    "-10^4 <= xi, yi <= 10^4",
+    "Squared distances therefore never exceed 2 * 10^8, which fits comfortably in an int"
+  ],
+  "bruteForce": {
+    "idea": "Sort every point by its distance from the origin and take the first k.",
+    "code": [
+      "Arrays.sort(points, (a, b) -> Integer.compare(",
+      "        a[0] * a[0] + a[1] * a[1],",
+      "        b[0] * b[0] + b[1] * b[1]));",
+      "return Arrays.copyOfRange(points, 0, k);"
+    ],
+    "complexity": {
+      "time": "O(n log n)",
+      "space": "O(log n)"
+    },
+    "whySlow": "The sort settles the relative order of every pair of points, but the answer only needs to know which side of the k-th boundary each point falls on. With n = 10^4 and k = 5, the comparisons that decide which of two far-away points is marginally nearer — points neither of which will ever be returned — are pure waste, and they are almost all of the comparisons performed. You paid to rank 10^4 items and then threw 99.95% of the ranking away."
+  },
+  "patternIdentification": "Whenever the question is 'the best k of n' and n is much larger than k, you never need the full order: keep a bounded collection of exactly k items and ask one question of each arriving element — 'does it beat the worst thing I am currently keeping?'. The collection must be ordered *against* the answer, which is the inversion people get backwards: to keep the k closest points you need instant access to the farthest one you are keeping, so it is a MAX-heap on distance. To keep the k largest values (as in kth-largest-element and top-k-frequent) you need instant access to the smallest one you are keeping, so it is a MIN-heap. The root is always the candidate for eviction, never the answer.",
+  "optimized": {
+    "idea": "Carry a max-heap ordered by squared distance, capped at size k. Every new point is compared against the heap's root — the farthest point currently kept. If the newcomer is nearer, evict the root and insert it; otherwise it cannot possibly be in the answer, so discard it immediately. Compare squared distances: the square root is a monotone function, so it changes no ordering and only costs time.",
+    "code": [
+      "public static int[][] kClosest(int[][] points, int k) {",
+      "    // MAX-heap on squared distance: the root is the FARTHEST point kept — the eviction candidate",
+      "    PriorityQueue<int[]> keep = new PriorityQueue<>(",
+      "            (a, b) -> Integer.compare(b[0] * b[0] + b[1] * b[1], a[0] * a[0] + a[1] * a[1]));",
+      "    for (int[] point : points) {",
+      "        int d = point[0] * point[0] + point[1] * point[1];",
+      "        if (keep.size() < k) {",
+      "            keep.offer(point);",
+      "        } else if (d < keep.peek()[0] * keep.peek()[0] + keep.peek()[1] * keep.peek()[1]) {",
+      "            keep.poll();",
+      "            keep.offer(point);",
+      "        }",
+      "    }",
+      "    return keep.toArray(new int[0][]);",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n log k)",
+      "space": "O(k)"
+    }
+  },
+  "visualization": {
+    "engine": "topKHeap",
+    "title": "Squared distances, negated — because 'the k largest of the negated distances' IS 'the k closest points'. Read the root as the farthest point still kept: the one the next candidate has to beat. Flipping the comparator in Java does exactly this without the minus signs.",
+    "input": {
+      "array": [
+        -10,
+        -25,
+        -5,
+        -8,
+        -26
+      ],
+      "k": 2
+    },
+    "code": [
+      "PriorityQueue<int[]> keep = new PriorityQueue<>(farthestFirst);   // size-k heap, root = worst survivor",
+      "for (int[] p : points) {",
+      "    if (keep.size() < k) keep.offer(p);              // not full yet — everything qualifies",
+      "    else if (dist(p) < dist(keep.peek())) {          // nearer than the farthest kept?",
+      "        keep.poll(); keep.offer(p);                  // evict the farthest, keep this one",
+      "    }",
+      "    // else: p is farther than every survivor — it can never be in the answer, drop it",
+      "}",
+      "return keep.toArray(new int[0][]);                   // O(n log k), not O(n log n)"
+    ]
+  },
+  "commonMistakes": [
+    "Building the size-k heap as a MIN-heap on distance — `peek()` is then the *closest* point kept, so every eviction throws away the best answer found so far. With points [[1,3],[-2,2],[2,-2]] and k = 2 it returns [[-2,2],[1,3]] when [1,3] is the farthest of the three.",
+    "Calling `keep.peek()` before the size check — on the very first point the heap is empty, `peek()` returns null, and dereferencing it throws NullPointerException. The size test has to come first, in the same `if`/`else if` chain.",
+    "Assuming the returned collection is sorted by distance. A PriorityQueue's `toArray` and its iterator yield internal heap order, not sorted order; only `poll()` comes out in order. A solution that relies on the first element being the nearest passes a spot check and fails the moment the grader compares position by position."
+  ],
+  "similar": [
+    "kth-largest-element",
+    "top-k-frequent",
+    "last-stone-weight",
+    "find-median-from-stream"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 973,
+      "slug": "k-closest-points-to-origin",
+      "title": "K Closest Points to Origin",
+      "url": "https://leetcode.com/problems/k-closest-points-to-origin/",
+      "premium": false
+    }
+  }
+}

@@ -1,0 +1,142 @@
+{
+  "id": "cheapest-flights-k-stops",
+  "title": "Cheapest Flights Within K Stops",
+  "patternId": "shortest-paths",
+  "difficulty": "advanced",
+  "tags": [
+    "graph",
+    "shortest-path",
+    "bellman-ford",
+    "dijkstra",
+    "dynamic-programming"
+  ],
+  "statement": "There are n cities and flights[i] = [from, to, price] describing one-way flights. Return the cheapest price from src to dst using at most k stops, or -1 if no such route exists.",
+  "realWorld": "Fare search with a layover limit, and the same shape as routing a packet under a hop-count cap or planning a supply chain with a bounded number of transfers. The constraint is what makes it interesting: the cheapest route and the cheapest route within a budget of hops are frequently different routes.",
+  "examples": [
+    {
+      "input": "n = 3, flights = [[0,1,100],[1,2,100],[0,2,500]], src = 0, dst = 2, k = 1",
+      "output": "200",
+      "explanation": "0 -> 1 -> 2 costs 200 and uses one stop, which is allowed."
+    },
+    {
+      "input": "n = 3, flights = [[0,1,100],[1,2,100],[0,2,500]], src = 0, dst = 2, k = 0",
+      "output": "500",
+      "explanation": "With no stops allowed only the direct flight qualifies, even though it is more than twice the price. This is the case that breaks plain Dijkstra."
+    },
+    {
+      "input": "n = 2, flights = [[1,0,50]], src = 0, dst = 1, k = 1",
+      "output": "-1",
+      "explanation": "Flights are one-way; there is no route from 0 to 1."
+    }
+  ],
+  "constraints": [
+    "1 <= n <= 100",
+    "0 <= flights.length <= (n * (n - 1) / 2)",
+    "0 <= src, dst, from, to < n, src != dst",
+    "1 <= price <= 10^4 — all prices are positive",
+    "0 <= k < n"
+  ],
+  "bruteForce": {
+    "idea": "DFS every route from src, tracking cost and stops, pruning when the stop budget runs out, and keep the cheapest that reaches dst.",
+    "code": [
+      "int best = Integer.MAX_VALUE;",
+      "",
+      "void search(int city, int dst, int cost, int stopsLeft) {",
+      "    if (city == dst) { best = Math.min(best, cost); return; }",
+      "    if (stopsLeft < 0) return;",
+      "    for (int[] flight : adj.get(city)) {      // flight = {to, price}",
+      "        search(flight[0], dst, cost + flight[1], stopsLeft - 1);",
+      "    }",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n^k) — every city can branch to every other at each of k+1 levels",
+      "space": "O(k) recursion depth"
+    },
+    "whySlow": "The search tree branches by the out-degree at every level, so the same city is re-expanded once for each distinct route that reaches it — and cost is recomputed from scratch every time. With n = 100 and k near n this is astronomically large, despite there being only 100 cities."
+  },
+  "patternIdentification": "It looks like Dijkstra, and the trap is that plain Dijkstra is wrong here. Dijkstra settles a city once, at its globally cheapest price — but the cheapest way to reach a city may use too many stops, and a pricier route with fewer stops might be the only one that can still complete the journey. The stop count is a second dimension of the state. Two correct readings follow: Bellman-Ford limited to k+1 relaxation rounds (round r computes the best cost using at most r flights), or Dijkstra over the state (city, stopsUsed) rather than city alone.",
+  "optimized": {
+    "idea": "Bellman-Ford with exactly k+1 rounds — k stops means at most k+1 flights. Each round relaxes every flight once, reading from the previous round's array and writing into a copy, so a single round can never chain two flights together. After k+1 rounds the array holds the cheapest cost reachable within the flight budget.",
+    "code": [
+      "public static int findCheapestPrice(int n, int[][] flights, int src, int dst, int k) {",
+      "    int[] cost = new int[n];",
+      "    Arrays.fill(cost, Integer.MAX_VALUE);",
+      "    cost[src] = 0;",
+      "",
+      "    // k stops == at most k + 1 flights, so k + 1 rounds of relaxation.",
+      "    for (int round = 0; round <= k; round++) {",
+      "        // Copy first: relaxing in place would let two flights be used in one",
+      "        // round, silently exceeding the stop budget.",
+      "        int[] next = cost.clone();",
+      "        for (int[] flight : flights) {",
+      "            int from = flight[0], to = flight[1], price = flight[2];",
+      "            if (cost[from] == Integer.MAX_VALUE) continue;     // no route yet",
+      "            next[to] = Math.min(next[to], cost[from] + price);",
+      "        }",
+      "        cost = next;",
+      "    }",
+      "",
+      "    return cost[dst] == Integer.MAX_VALUE ? -1 : cost[dst];",
+      "}",
+      "",
+      "/**",
+      " * Dijkstra variant: the state is (city, flights used), not just city.",
+      " * Pop by cost as usual, but allow re-expanding a city if this route reaches",
+      " * it with strictly fewer flights than any route seen before.",
+      " */",
+      "public static int findCheapestPriceDijkstra(int n, int[][] flights, int src, int dst, int k) {",
+      "    List<List<int[]>> adj = new ArrayList<>();",
+      "    for (int i = 0; i < n; i++) adj.add(new ArrayList<>());",
+      "    for (int[] flight : flights) adj.get(flight[0]).add(new int[]{flight[1], flight[2]});",
+      "",
+      "    int[] fewestFlights = new int[n];",
+      "    Arrays.fill(fewestFlights, Integer.MAX_VALUE);",
+      "",
+      "    // {cost, city, flightsUsed}, ordered by cost.",
+      "    PriorityQueue<int[]> heap = new PriorityQueue<>((a, b) -> Integer.compare(a[0], b[0]));",
+      "    heap.offer(new int[]{0, src, 0});",
+      "",
+      "    while (!heap.isEmpty()) {",
+      "        int[] top = heap.poll();",
+      "        int cost = top[0], city = top[1], used = top[2];",
+      "",
+      "        if (city == dst) return cost;                  // popped by cost: this is cheapest",
+      "        if (used > k || used >= fewestFlights[city]) continue;   // stale or over budget",
+      "        fewestFlights[city] = used;",
+      "",
+      "        for (int[] edge : adj.get(city)) {",
+      "            heap.offer(new int[]{cost + edge[1], edge[0], used + 1});",
+      "        }",
+      "    }",
+      "    return -1;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(k * E) for the Bellman-Ford version — k + 1 rounds over every flight",
+      "space": "O(n) — two cost arrays"
+    }
+  },
+  "commonMistakes": [
+    "Running plain Dijkstra keyed on city alone. It settles a city at its globally cheapest price, which may use more than k stops, and then never reconsiders it — a wrong answer with no warning.",
+    "Relaxing in place instead of into a cloned array. Within one round, a flight relaxed after another can chain onto it, so the result quietly uses more flights than the budget allows.",
+    "Using k rounds instead of k + 1. k stops means k + 1 flights; off by one here loses exactly the longest legal route.",
+    "Adding to Integer.MAX_VALUE when a city is still unreachable, which overflows to a negative cost that then looks like a bargain.",
+    "In the Dijkstra variant, guarding with a plain visited set. The guard must be on the fewest flights used to reach the city, since a pricier but shorter-hop route can still be the answer.",
+    "Assuming the answer equals the unconstrained shortest path when k is large. It does once k >= n - 1, but not before."
+  ],
+  "similar": [
+    "network-delay-time",
+    "path-with-minimum-effort",
+    "coin-change"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 787,
+      "slug": "cheapest-flights-within-k-stops",
+      "title": "Cheapest Flights Within K Stops",
+      "url": "https://leetcode.com/problems/cheapest-flights-within-k-stops/",
+      "premium": false
+    }
+  }
+}

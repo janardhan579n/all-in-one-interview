@@ -1,0 +1,349 @@
+{
+  "id": "dynamic-programming-basics",
+  "kind": "pattern",
+  "title": "Dynamic Programming — The Basics",
+  "group": "Dynamic Programming",
+  "level": 3,
+  "difficulty": "advanced",
+  "estimatedMinutes": 45,
+  "summary": "Recursion plus memory. When the same subproblem is solved repeatedly, compute each one once and reuse it — exponential becomes polynomial.",
+  "prerequisites": [
+    "recursion",
+    "arrays"
+  ],
+  "tags": [
+    "dp",
+    "memoization",
+    "tabulation",
+    "optimization",
+    "level-3"
+  ],
+  "analogy": {
+    "beginner": "Twenty people ask you what 17 × 23 is. You don't multiply it out twenty times — you work it out once, write 391 on a sticky note, and read the note the other nineteen times. Dynamic programming is that sticky note applied to recursion: whenever a calculation repeats, store the answer instead of redoing it.",
+    "interview": "DP applies when a problem exhibits optimal substructure (the optimum is composed of optima of subproblems) and overlapping subproblems (the same subproblems recur across different branches of the recursion). Solve top-down with memoisation or bottom-up with tabulation; complexity is (number of distinct states) × (work per state)."
+  },
+  "intuition": "DP has a fearsome reputation that mostly comes from being taught backwards — table first, meaning later. Built forwards it is a three-step process you can run on any problem.\n\n**Step 1: write the honest recursion.** Do not think about efficiency. Just express the answer in terms of smaller versions. `fib(n) = fib(n-1) + fib(n-2)`. `climbStairs(n) = climbStairs(n-1) + climbStairs(n-2)`.\n\n**Step 2: notice the repetition.** Draw the call tree for `fib(5)` and you find `fib(2)` computed three times, `fib(1)` five times. Exponential work for a linear amount of actual information.\n\n**Step 3: remember.** Add a cache — that is memoisation, top-down DP, and it is usually a three-line change to the recursion you already wrote. Then, if you want, flip it around into a loop filling a table bottom-up.\n\nThat is the whole method. The hard part of a DP problem is never the table; it is **defining the state**: what does `dp[i]` actually mean? Write that sentence down explicitly. If you cannot, no amount of index fiddling will save you, and if you can, the recurrence usually writes itself.",
+  "problemFirst": {
+    "motivatingProblem": "You can climb 1 or 2 stairs at a time. How many distinct ways are there to climb n stairs?",
+    "bruteForce": {
+      "idea": "From step 0 you either take 1 step or 2. Recurse on both and add the results.",
+      "code": [
+        "int climbStairs(int n) {",
+        "    if (n <= 1) return 1;",
+        "    return climbStairs(n - 1) + climbStairs(n - 2);",
+        "}"
+      ],
+      "complexity": {
+        "time": "O(2ⁿ)",
+        "space": "O(n) call stack"
+      },
+      "whySlow": "The recursion is correct but computes the same values over and over. climbStairs(45) makes over 3 billion calls and takes minutes, even though there are only 45 distinct answers to compute. Every subtree is recomputed from scratch every time it appears."
+    },
+    "observation": "The call tree has enormous width but only n distinct nodes. `climbStairs(5)` is asked for in many places, and the answer is the same every time.",
+    "leap": "Store each answer the first time you compute it. n distinct subproblems × O(1) work each = O(n) total. A minutes-long computation becomes microseconds, from a three-line change.",
+    "optimizedSketch": [
+      "Integer[] memo = new Integer[n + 1];",
+      "",
+      "int climb(int n) {",
+      "    if (n <= 1) return 1;",
+      "    if (memo[n] != null) return memo[n];   // already known",
+      "    memo[n] = climb(n - 1) + climb(n - 2);",
+      "    return memo[n];",
+      "}"
+    ]
+  },
+  "howItWorks": [
+    "**1. Define the state in words.** 'dp[i] = the number of ways to reach step i.' If you cannot write this sentence, stop and keep thinking — everything else depends on it.",
+    "**2. Write the recurrence.** How does the answer at state i relate to smaller states? `dp[i] = dp[i-1] + dp[i-2]`.",
+    "**3. Identify the base cases.** The smallest states you can answer directly: `dp[0] = 1, dp[1] = 1`.",
+    "**4. Decide the direction.** *Top-down (memoisation)*: keep the recursion, add a cache. Closest to how you thought about it, and it only computes states you actually need. *Bottom-up (tabulation)*: loop from the base cases upwards. No stack-overflow risk, and it makes space optimisation easy.",
+    "**5. Optimise the space.** If `dp[i]` only reads `dp[i-1]` and `dp[i-2]`, you never need the whole array — two variables suffice, turning O(n) space into O(1).",
+    "**Common state shapes**: 1-D over positions (climbing stairs, house robber); 2-D over two sequences (edit distance, LCS); 2-D over item-and-capacity (knapsack, coin change); over intervals (matrix chain); over grid cells (unique paths, min path sum)."
+  ],
+  "patternRecognition": {
+    "signals": [
+      "'How many ways…', 'minimum/maximum cost…', 'longest/shortest…' where choices compound",
+      "You can make a decision at each step, and the decision affects what is available later",
+      "A recursive solution exists and the call tree visibly repeats subproblems",
+      "'Can this set reach exactly X?' — subset sum family",
+      "Two sequences compared position by position — edit distance, LCS, regex matching",
+      "Constraints allow O(n²) or O(n·k) and n is in the thousands"
+    ],
+    "antiSignals": [
+      "A greedy choice is provably optimal — far simpler and faster",
+      "Subproblems do **not** overlap — plain divide-and-conquer (merge sort) needs no memo",
+      "You must output all the solutions, not count or optimise them → backtracking",
+      "The range is contiguous and the aggregate is incremental → sliding window or prefix sum"
+    ],
+    "decisionTreeId": "dp-or-not"
+  },
+  "visualizations": [
+    {
+      "id": "fib-repetition",
+      "title": "Where the work goes: the fib(5) call tree",
+      "engine": "recursionTrace",
+      "input": {
+        "kind": "fib",
+        "n": 5
+      },
+      "code": [
+        "int fib(int n) {",
+        "    if (n <= 1) return n;",
+        "    return fib(n - 1) + fib(n - 2);",
+        "}"
+      ]
+    },
+    {
+      "id": "climb-table",
+      "title": "Bottom-up: filling the table one cell at a time",
+      "engine": "dp1d",
+      "input": {
+        "kind": "climbStairs",
+        "n": 8
+      },
+      "code": [
+        "int[] dp = new int[n + 1];",
+        "dp[0] = 1;",
+        "dp[1] = 1;",
+        "for (int i = 2; i <= n; i++) {",
+        "    dp[i] = dp[i - 1] + dp[i - 2];",
+        "}",
+        "return dp[n];"
+      ]
+    },
+    {
+      "id": "grid-paths",
+      "title": "2-D DP: unique paths through a grid",
+      "engine": "dpGrid",
+      "input": {
+        "rows": 4,
+        "cols": 5
+      },
+      "code": [
+        "int[][] dp = new int[rows][cols];",
+        "for (int r = 0; r < rows; r++) {",
+        "    for (int c = 0; c < cols; c++) {",
+        "        if (r == 0 || c == 0) dp[r][c] = 1;          // only one way along an edge",
+        "        else dp[r][c] = dp[r-1][c] + dp[r][c-1];     // from above + from the left",
+        "    }",
+        "}",
+        "return dp[rows-1][cols-1];"
+      ]
+    }
+  ],
+  "implementations": [
+    {
+      "label": "Simple",
+      "language": "java",
+      "explanation": "The same problem three ways. Read them in order — each is a mechanical transformation of the one above it, and that progression is exactly what you should reproduce in an interview.",
+      "code": [
+        "// 1. Plain recursion — O(2^n). Correct, unusable.",
+        "public static int climbSlow(int n) {",
+        "    if (n <= 1) return 1;",
+        "    return climbSlow(n - 1) + climbSlow(n - 2);",
+        "}",
+        "",
+        "// 2. Top-down with memoisation — O(n) time, O(n) space.",
+        "public static int climbMemo(int n) {",
+        "    return climb(n, new Integer[n + 1]);",
+        "}",
+        "private static int climb(int n, Integer[] memo) {",
+        "    if (n <= 1) return 1;",
+        "    if (memo[n] != null) return memo[n];      // the sticky note",
+        "    memo[n] = climb(n - 1, memo) + climb(n - 2, memo);",
+        "    return memo[n];",
+        "}",
+        "",
+        "// 3. Bottom-up tabulation — O(n) time, O(n) space, no recursion.",
+        "public static int climbTable(int n) {",
+        "    if (n <= 1) return 1;",
+        "    int[] dp = new int[n + 1];",
+        "    dp[0] = 1;",
+        "    dp[1] = 1;",
+        "    for (int i = 2; i <= n; i++) {",
+        "        dp[i] = dp[i - 1] + dp[i - 2];",
+        "    }",
+        "    return dp[n];",
+        "}"
+      ]
+    },
+    {
+      "label": "Optimized",
+      "language": "java",
+      "explanation": "Space optimisation (only the last two states are ever read, so two variables replace the array), plus two canonical problems: House Robber, where the state is 'best up to here', and Coin Change, the unbounded-knapsack shape worth memorising.",
+      "code": [
+        "// O(n) time, O(1) space — the rolling-variable trick",
+        "public static int climbStairs(int n) {",
+        "    if (n <= 1) return 1;",
+        "    int twoBack = 1, oneBack = 1;",
+        "    for (int i = 2; i <= n; i++) {",
+        "        int current = oneBack + twoBack;",
+        "        twoBack = oneBack;",
+        "        oneBack = current;",
+        "    }",
+        "    return oneBack;",
+        "}",
+        "",
+        "/** House Robber: dp[i] = max loot from the first i houses, no two adjacent. */",
+        "public static int rob(int[] houses) {",
+        "    int skipPrev = 0;   // best if we do NOT rob the previous house",
+        "    int robPrev  = 0;   // best including the previous house",
+        "    for (int money : houses) {",
+        "        int robThis  = skipPrev + money;",
+        "        int skipThis = Math.max(skipPrev, robPrev);",
+        "        robPrev  = robThis;",
+        "        skipPrev = skipThis;",
+        "    }",
+        "    return Math.max(robPrev, skipPrev);",
+        "}",
+        "",
+        "/** Coin Change: fewest coins totalling `amount`, or -1. O(amount · coins). */",
+        "public static int coinChange(int[] coins, int amount) {",
+        "    int[] dp = new int[amount + 1];",
+        "    Arrays.fill(dp, amount + 1);          // sentinel meaning 'unreachable'",
+        "    dp[0] = 0;                            // zero coins make zero",
+        "",
+        "    for (int target = 1; target <= amount; target++) {",
+        "        for (int coin : coins) {",
+        "            if (coin <= target) {",
+        "                dp[target] = Math.min(dp[target], dp[target - coin] + 1);",
+        "            }",
+        "        }",
+        "    }",
+        "    return dp[amount] > amount ? -1 : dp[amount];",
+        "}"
+      ]
+    }
+  ],
+  "complexity": {
+    "time": "(number of distinct states) × (work per state). 1-D over n: O(n). 2-D over n×m: O(n·m). Coin change: O(amount × coins).",
+    "space": "O(number of states), often reducible to O(one row) or O(1) when the recurrence only reaches back a fixed distance",
+    "why": "This formula is the whole complexity analysis of DP, and it is worth stating in exactly these terms in an interview. Memoisation guarantees each state is computed once, so the total is the state count times the per-state cost. Note that DP's promise is 'polynomial instead of exponential', not 'fast' — coin change with amount = 10⁹ is pseudo-polynomial and still infeasible, because the state count depends on the *value* of the input rather than its length. Space optimisation follows from the recurrence's reach: `dp[i]` depending only on `dp[i-1]` and `dp[i-2]` means two variables suffice."
+  },
+  "commonMistakes": [
+    {
+      "mistake": "Starting from the table instead of the recursion",
+      "fix": "Write the brute-force recursion first, then add the cache. Building the table directly is how people get lost in indices."
+    },
+    {
+      "mistake": "Not defining the state in words",
+      "fix": "'dp[i] = …' as an English sentence, written down. Every subsequent decision follows from it."
+    },
+    {
+      "mistake": "Wrong base cases",
+      "fix": "The recurrence can be perfect and the answer still wrong. Verify n = 0 and n = 1 by hand."
+    },
+    {
+      "mistake": "Using 0 as 'unreachable' in a minimisation",
+      "fix": "0 is a legitimate minimum and will win the `Math.min`. Use a sentinel larger than any real answer, and translate it at the end."
+    },
+    {
+      "mistake": "Iterating in an order where dependencies are not yet computed",
+      "fix": "Bottom-up requires every state a cell reads to already be filled. If in doubt, use top-down memoisation, which handles ordering automatically."
+    },
+    {
+      "mistake": "Optimising the space before the solution is correct",
+      "fix": "Get the full table right, verify it, *then* collapse it to rolling variables."
+    },
+    {
+      "mistake": "Reaching for DP when greedy is provably correct",
+      "fix": "Ask whether a locally optimal choice is globally optimal. If yes, greedy is simpler and faster."
+    }
+  ],
+  "realWorldUses": [
+    "`diff` and version control merges are longest-common-subsequence DP.",
+    "Spell checkers and fuzzy search use edit (Levenshtein) distance.",
+    "Sequence alignment in bioinformatics — Needleman–Wunsch is DP.",
+    "Query optimisers choose join orders with DP over subsets of relations.",
+    "Resource allocation, budget planning and cache-replacement policies are knapsack variants.",
+    "Speech recognition and handwriting matching use dynamic time warping."
+  ],
+  "interviewNotes": [
+    "Narrate the progression: brute-force recursion → identify overlap → memoise → tabulate → optimise space. Reaching the final answer instantly looks memorised; walking the ladder looks like thinking.",
+    "Say the state definition out loud before writing code. Interviewers are listening for exactly that sentence.",
+    "Give the complexity as states × work-per-state.",
+    "If asked to reconstruct the actual solution rather than its value, keep a parent/choice array alongside the DP table and walk it backwards at the end."
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "mcq",
+      "question": "What two properties must a problem have for DP to apply?",
+      "options": [
+        "Sorted input and a unique answer",
+        "Optimal substructure and overlapping subproblems",
+        "A graph structure and no cycles",
+        "Small input and a greedy rule"
+      ],
+      "answerIndex": 1,
+      "explanation": "Optimal substructure means the answer is built from optimal sub-answers; overlapping subproblems means caching pays off. Merge sort has the first but not the second, so it needs no memo."
+    },
+    {
+      "id": "q2",
+      "type": "complexity",
+      "question": "Naive `fib(n)` is O(2ⁿ). What does memoisation make it?",
+      "options": [
+        "O(log n)",
+        "O(n)",
+        "O(n log n)",
+        "O(n²)"
+      ],
+      "answerIndex": 1,
+      "explanation": "There are n distinct states and each does O(1) work once computed, so the total is O(n) time and O(n) space."
+    },
+    {
+      "id": "q3",
+      "type": "mcq",
+      "question": "In coin change, why initialise the dp array to `amount + 1` rather than 0?",
+      "options": [
+        "To save memory",
+        "0 is a valid coin count and would always win the Math.min, so an unreachable sentinel larger than any real answer is needed",
+        "Because arrays cannot hold 0",
+        "It makes no difference"
+      ],
+      "answerIndex": 1,
+      "explanation": "In a minimisation, an uninitialised 0 looks like the best possible answer and poisons every cell that reads it. The sentinel must exceed any achievable count — no valid answer can need more than `amount` coins."
+    },
+    {
+      "id": "q4",
+      "type": "identify-pattern",
+      "question": "'Find the length of the longest increasing subsequence.' Which pattern?",
+      "options": [
+        "Sliding Window",
+        "Dynamic Programming — dp[i] = LIS length ending at index i",
+        "Two Pointers",
+        "BFS"
+      ],
+      "answerIndex": 1,
+      "explanation": "A *subsequence* need not be contiguous, which immediately rules out sliding window. The O(n²) DP is dp[i] = 1 + max(dp[j]) over all j < i with nums[j] < nums[i]; a patience-sorting variant with binary search reaches O(n log n)."
+    },
+    {
+      "id": "q5",
+      "type": "mcq",
+      "question": "When is top-down memoisation preferable to bottom-up tabulation?",
+      "options": [
+        "Always — it is faster",
+        "When only a fraction of the state space is actually reachable, or when the natural recursion is much easier to write than the fill order",
+        "Never",
+        "When the input is sorted"
+      ],
+      "answerIndex": 1,
+      "explanation": "Memoisation computes only the states it needs and handles dependency ordering automatically. Tabulation avoids recursion overhead and stack-depth limits, and makes rolling-array space optimisation straightforward."
+    }
+  ],
+  "practiceProblems": [
+    "climbing-stairs",
+    "min-cost-climbing-stairs",
+    "house-robber",
+    "unique-paths",
+    "decode-ways",
+    "house-robber-ii",
+    "word-break",
+    "coin-change"
+  ],
+  "related": [
+    "recursion",
+    "backtracking",
+    "big-o"
+  ]
+}

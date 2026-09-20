@@ -1,0 +1,120 @@
+{
+  "id": "running-sum",
+  "title": "Running Sum of 1D Array",
+  "patternId": "prefix-sum",
+  "difficulty": "beginner",
+  "tags": [
+    "array",
+    "prefix-sum"
+  ],
+  "statement": "Return an array where each element is the sum of all elements up to and including that index in the input.",
+  "realWorld": "Cumulative revenue by day on a dashboard, or a running account balance from a list of transactions. Once you have the cumulative series, any date range is a single subtraction.",
+  "examples": [
+    {
+      "input": "nums = [1,2,3,4]",
+      "output": "[1,3,6,10]",
+      "explanation": "1, 1+2, 1+2+3, 1+2+3+4."
+    },
+    {
+      "input": "nums = [3,1,2,10,1]",
+      "output": "[3,4,6,16,17]",
+      "explanation": ""
+    }
+  ],
+  "constraints": [
+    "1 <= nums.length <= 1000",
+    "-10^6 <= nums[i] <= 10^6"
+  ],
+  "bruteForce": {
+    "idea": "For each index, sum everything from 0 up to it.",
+    "code": [
+      "int[] result = new int[nums.length];",
+      "for (int i = 0; i < nums.length; i++) {",
+      "    int sum = 0;",
+      "    for (int j = 0; j <= i; j++) sum += nums[j];",
+      "    result[i] = sum;",
+      "}",
+      "return result;"
+    ],
+    "complexity": {
+      "time": "O(n^2)",
+      "space": "O(n)"
+    },
+    "whySlow": "Position i re-adds everything already added for position i-1. The prefix up to i-1 is exactly the answer we computed on the previous iteration."
+  },
+  "patternIdentification": "Each answer is the previous answer plus one new element — the definition of a cumulative (prefix) computation.",
+  "optimized": {
+    "idea": "Carry the running total forward. One addition per element.",
+    "code": [
+      "public static int[] runningSum(int[] nums) {",
+      "    int[] result = new int[nums.length];",
+      "    int running = 0;",
+      "    for (int i = 0; i < nums.length; i++) {",
+      "        running += nums[i];",
+      "        result[i] = running;",
+      "    }",
+      "    return result;",
+      "}",
+      "",
+      "// In place, if mutating the input is allowed:",
+      "// for (int i = 1; i < nums.length; i++) nums[i] += nums[i - 1];"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(1) extra, excluding the output"
+    }
+  },
+  "visualization": {
+    "engine": "prefixSum",
+    "input": {
+      "array": [
+        3,
+        1,
+        4,
+        1,
+        5,
+        9,
+        2,
+        6
+      ],
+      "queries": [
+        [
+          1,
+          3
+        ],
+        [
+          0,
+          4
+        ],
+        [
+          5,
+          7
+        ]
+      ]
+    },
+    "code": [
+      "int[] prefix = new int[nums.length + 1];",
+      "for (int i = 0; i < nums.length; i++) {",
+      "    prefix[i + 1] = prefix[i] + nums[i];",
+      "}",
+      "// range i..j inclusive:",
+      "return prefix[j + 1] - prefix[i];"
+    ]
+  },
+  "commonMistakes": [
+    "Accumulating into an int when the totals can exceed 2.1 billion — use long.",
+    "Mutating the caller's array without saying so."
+  ],
+  "similar": [
+    "subarray-sum-equals-k"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 1480,
+      "slug": "running-sum-of-1d-array",
+      "title": "Running Sum of 1d Array",
+      "url": "https://leetcode.com/problems/running-sum-of-1d-array/",
+      "premium": false
+    }
+  }
+}

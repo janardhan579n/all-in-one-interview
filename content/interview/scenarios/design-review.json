@@ -1,0 +1,182 @@
+{
+  "id": "scenarios-design-review",
+  "trackId": "scenarios",
+  "topic": "design-review",
+  "title": "Design & Code Review",
+  "summary": "Rounds where you are handed someone else's design and asked what you think — judged on how you reason, not on whether you find the planted flaw.",
+  "questions": [
+    {
+      "id": "sdr-01",
+      "level": "mid",
+      "type": "tradeoff",
+      "question": "A colleague proposes putting a message queue in front of every service call 'for scalability'. What do you say?",
+      "answer": "I would start by asking what problem the queue is solving, because the answer determines whether this is good or bad architecture, and 'scalability' is not specific enough to judge.\n\n**Where a queue genuinely earns its place**: the work is asynchronous in the domain — the caller does not need the result to respond; load is spiky and you want to absorb bursts rather than provision for the peak; the consumer needs to retry independently; or several consumers need the same event. Order placement triggering email, analytics and inventory updates is the textbook fit, and it is a good one.\n\n**What it costs, which the proposal has not priced**: every synchronous call converted to a queue becomes eventually consistent, and the caller must now handle a result that arrives later or never. You need a dead-letter queue and someone who looks at it. Debugging crosses a broker, so you need correlation ids and tracing to follow anything. Ordering guarantees become a design problem. And the queue is now infrastructure you operate, monitor and page on.\n\n**The specific objection to 'every call'**: a request that needs an answer to render a response cannot be queued — you would be building a synchronous request-reply over an asynchronous transport, which is all of the complexity and none of the benefit. And a queue does not make a slow consumer faster; it makes the backlog invisible until the lag alert fires.\n\n**What I would propose instead**: identify which calls are genuinely fire-and-forget and queue those. For the rest, the scalability answer is usually timeouts, connection pooling, caching and horizontal scaling of the consumer. If the honest driver is 'the downstream cannot keep up', say that — and then the queue is a buffer for a capacity problem, which is a legitimate but temporary use with a different conversation attached.",
+      "keyPoints": [
+        "Ask what problem it solves before agreeing or disagreeing",
+        "Genuine fits: async work, burst absorption, independent retry, fan-out",
+        "Costs: eventual consistency, DLQ ownership, harder debugging, more infrastructure",
+        "A call whose result the caller needs cannot be usefully queued",
+        "A queue hides a capacity problem rather than solving it"
+      ],
+      "followUps": [
+        {
+          "q": "They say the queue gives them retries for free. Is that true?",
+          "a": "Partly, and the free part is the dangerous part. You get redelivery, but redelivery without idempotent consumers means duplicate effects — and a poison message will be redelivered forever unless a DLQ catches it. So it gives you retry mechanics and hands you the correctness work, which is the larger half."
+        }
+      ],
+      "redFlags": [
+        "Agreeing because queues are associated with scale",
+        "Rejecting it outright without asking what the calls do",
+        "Not mentioning eventual consistency or the dead-letter queue"
+      ],
+      "related": [
+        "message-queue",
+        "api"
+      ]
+    },
+    {
+      "id": "sdr-02",
+      "level": "junior",
+      "type": "code",
+      "question": "You are reviewing a pull request that stores monetary amounts as `double`. What is your comment?",
+      "answer": "This needs to change before merge, and the reason is not stylistic.\n\n**The mechanism**: `double` is IEEE-754 binary floating point. Values like 0.1 and 0.01 have no exact binary representation, in the same way 1/3 has no exact decimal one. So `0.1 + 0.2 == 0.30000000000000004`, and errors compound across a sum. Add a few thousand line items and the total is visibly wrong; run it through a percentage calculation and it is wrong sooner. In a financial context that is not a rounding nuisance, it is a reconciliation failure and potentially a regulatory one.\n\n**The two correct options**:\n\n- **Integer minor units** — store 1299 for £12.99, in a `long`, with the currency alongside. Exact, fast, trivially serialisable, and the standard in payment systems. The discipline required is that every display and calculation knows the scale.\n- **`BigDecimal`** (or `decimal` in .NET/SQL), constructed **from a string or the integer minor units, never from a double** — `new BigDecimal(0.1)` faithfully preserves the error you were trying to avoid. And `equals` compares scale as well as value, so `2.0` does not equal `2.00`; use `compareTo`.\n\n**In the database**: `NUMERIC`/`DECIMAL` with an explicit precision and scale, never `FLOAT` or `REAL`.\n\n**How I would phrase the comment**: state the rule, give the one-line reproduction, and name the fix — \"`0.1 + 0.2 != 0.3` in binary floating point; please use `BigDecimal` constructed from a string, and `NUMERIC(19,4)` in the column\". A review comment that includes the reproduction is acted on; one that says 'never use double for money' invites a debate.",
+      "keyPoints": [
+        "Binary floating point cannot represent common decimal fractions exactly",
+        "Errors compound across sums and percentage calculations",
+        "Integer minor units or BigDecimal — never double",
+        "Never construct BigDecimal from a double; use compareTo not equals",
+        "NUMERIC/DECIMAL in the schema, not FLOAT"
+      ],
+      "followUps": [
+        {
+          "q": "Where does the rounding decision live?",
+          "a": "It has to be explicit and stated once: which rounding mode, at what scale, at which step. Half-up is common in finance, banker's rounding in some jurisdictions, and the choice is frequently specified by regulation or the payment scheme rather than by preference. Leaving it to the default is how two systems compute different totals from the same inputs."
+        }
+      ],
+      "redFlags": [
+        "\"Doubles are accurate enough for money\"",
+        "Suggesting a float with rounding at display time as the fix",
+        "Constructing BigDecimal from a double"
+      ]
+    },
+    {
+      "id": "sdr-03",
+      "level": "senior",
+      "type": "scenario",
+      "question": "A service calls six downstream services synchronously to serve one request. Critique the design.",
+      "answer": "The arithmetic is the argument. **Latency adds**: six sequential calls at 50ms each is 300ms before your own work. **Availability multiplies**: six dependencies at 99.9% each give you 99.4% — about four hours of downtime a month caused entirely by other people. And your tail is the worst of six tails, so your p99 is roughly their p95s combined.\n\n**But I would not reject it outright**, because the alternatives have costs too, and which applies depends on what the six calls are for.\n\n**If the calls are independent**, the first fix is free: make them concurrent. Six parallel calls take as long as the slowest, so 300ms becomes 50ms. `CompletableFuture.allOf` or structured concurrency, with a bounded pool. This alone often ends the conversation.\n\n**If some are optional** — enrichment, recommendations, a badge — they should be non-blocking with a fallback. A service that degrades to a slightly poorer response beats one that fails. That requires deciding, per call, what the response looks like without it, which is a product question worth forcing.\n\n**If they are all required and all on the critical path**, that is a boundary problem. Needing six services to answer one question usually means the boundaries were drawn around data ownership rather than around use cases. The options are to denormalise — keep a local read model updated by events, so the read needs no calls at all — or to merge services that are never independently useful.\n\n**What I would insist on regardless**: a timeout on every call, a bulkhead so one slow dependency cannot consume all threads, and a circuit breaker. Without those, the slowest of six determines whether your service stays up at all.",
+      "keyPoints": [
+        "Latency adds; availability multiplies — state both numbers",
+        "Parallelise independent calls first; it is often the whole fix",
+        "Optional calls need fallbacks and must not block",
+        "Six required calls usually means the boundaries follow data, not use cases",
+        "A local read model built from events removes the calls entirely",
+        "Timeouts, bulkheads and circuit breakers are non-negotiable either way"
+      ],
+      "followUps": [
+        {
+          "q": "What does the event-driven read model cost?",
+          "a": "Eventual consistency and duplicated data. You are trading a synchronous correctness guarantee for availability and latency, and you now own the staleness question: how old can this data be before someone is harmed? For a product catalogue, seconds are fine. For an account balance shown before a transfer, they may not be. That is the trade-off to state out loud rather than decide silently."
+        }
+      ],
+      "redFlags": [
+        "Not doing the availability multiplication",
+        "Proposing a rewrite to events without pricing the consistency change",
+        "Missing that the calls could simply run in parallel"
+      ],
+      "related": [
+        "java-microservices",
+        "api",
+        "message-queue",
+        "cap-theorem"
+      ]
+    },
+    {
+      "id": "sdr-04",
+      "level": "mid",
+      "type": "code",
+      "question": "A retry policy is configured as: on any exception, retry 5 times immediately. What do you change?",
+      "answer": "Three things are wrong, and the third is the one that causes outages.\n\n**Retrying any exception.** Retries are only valid for *transient* failures — a timeout, a 503, a connection reset. Retrying a 400 sends the same invalid request five times and fails five times. Retrying a 409 or a 422 is pointless. Worse, retrying a non-idempotent operation that actually succeeded but timed out creates duplicates — the classic double charge. So the policy must name which failures are retryable, and the operation must be idempotent before any retry is safe.\n\n**No backoff.** Immediate retries arrive while the downstream is still in whatever state caused the failure. Exponential backoff gives it time to recover.\n\n**No jitter — and this is the dangerous one.** With deterministic backoff, every client that failed at the same moment retries at the same moment, then again together, and again. A brief blip becomes a synchronised hammer that prevents recovery. Randomising the delay is what breaks the synchronisation, and it is one line.\n\n**And the missing piece**: a **retry budget** or circuit breaker. Five retries per request means a struggling downstream receives six times its normal load exactly when it can least handle it — retries amplify, which is how a partial failure becomes a total one. A breaker stops retrying once the failure rate says retrying is pointless.\n\nThe policy I would write: retry only on timeouts and 5xx, on idempotent operations, three attempts, exponential backoff with full jitter, capped total time, behind a circuit breaker.",
+      "keyPoints": [
+        "Retry only transient failures — never a 4xx",
+        "Retrying a non-idempotent call creates duplicates on timeout",
+        "Exponential backoff, and jitter to break synchronisation",
+        "Retries amplify load on the failing dependency",
+        "Cap total elapsed time, and sit behind a circuit breaker"
+      ],
+      "followUps": [
+        {
+          "q": "What is 'full jitter' specifically?",
+          "a": "Rather than `delay = base * 2^n`, you take `delay = random(0, base * 2^n)`. It spreads retries across the whole window instead of clustering them at its end. It is the variant AWS's architecture guidance recommends after measuring the alternatives, and it is strictly better than adding a small random offset to a fixed delay."
+        },
+        {
+          "q": "How does a timeout interact with retries?",
+          "a": "Multiplicatively, and people forget it. Three retries against a 10-second timeout is a 30-second worst case, which may exceed the caller's own timeout — so the work continues after nobody is waiting for it. The total retry budget must fit inside the caller's deadline, which is the argument for passing a deadline down rather than configuring timeouts independently at each layer."
+        }
+      ],
+      "redFlags": [
+        "Adding backoff but not jitter",
+        "Retrying without asking whether the operation is idempotent",
+        "No cap on total time"
+      ],
+      "related": [
+        "rate-limiting",
+        "java-microservices"
+      ]
+    },
+    {
+      "id": "sdr-05",
+      "level": "mid",
+      "type": "tradeoff",
+      "question": "A design document says 'we'll add caching later if it's slow'. Is that the right call?",
+      "answer": "Often yes, and I would say so — but it depends on one distinction the sentence is hiding.\n\n**Where deferring is right**: caching is an optimisation, and optimising before you know what is slow is guessing. A cache adds invalidation, staleness, and a second source of truth that can disagree with the first; those are real costs paid immediately for a benefit that is hypothetical. \"Make it correct, measure, then make it fast\" is sound engineering, and the document is not wrong to say it.\n\n**Where deferring is a mistake**: when caching later would require changing the *architecture* rather than adding a component. Specifically — if the read path has no stable cache key because the query is assembled ad hoc; if responses are personalised in ways that make them uncacheable; if the write path has no event or hook where invalidation could be attached; or if the data has no defined staleness tolerance, because nobody can add a cache until someone decides how stale is acceptable.\n\nSo my review comment would not be 'add a cache now'. It would be: **leave the cache out, but make the decisions that keep it cheap to add** — define the cache key and the staleness budget for the main read path now, and make sure writes emit something an invalidator could subscribe to. That is an hour of design work that converts a future rewrite into a future configuration change.\n\n**The one thing I would push back on harder**: 'if it's slow' implies someone will notice. Without latency metrics per endpoint in place before launch, 'slow' will be discovered from a user complaint. Measurement is the part that genuinely cannot be deferred.",
+      "keyPoints": [
+        "Deferring optimisation is usually correct — a cache has immediate costs",
+        "The exception is when adding it later means changing the architecture",
+        "A stable cache key, an invalidation hook, and a staleness budget are design decisions, not implementation",
+        "Decide those now; add the cache later",
+        "Measurement cannot be deferred — otherwise 'slow' means 'a user complained'"
+      ],
+      "followUps": [
+        {
+          "q": "What is a 'staleness budget' and why decide it early?",
+          "a": "An explicit statement of how out-of-date a value may be before someone is harmed — five minutes for a product description, zero for an account balance shown during a transfer. It is a product decision disguised as a technical one, and it determines the TTL, whether you can serve stale on error, and whether a cache is permissible at all. Deciding it under incident pressure is how teams cache things they should not."
+        }
+      ],
+      "redFlags": [
+        "\"Always cache from the start\"",
+        "Agreeing without asking whether the read path is cacheable at all",
+        "Not mentioning that the measurement has to exist first"
+      ],
+      "related": [
+        "cache"
+      ]
+    },
+    {
+      "id": "sdr-06",
+      "level": "senior",
+      "type": "behavioural",
+      "question": "In a code review round: what do you look for, and how do you give feedback that actually gets acted on?",
+      "answer": "**What I look for, in priority order** — because reviewing everything equally is how the important thing gets missed:\n\n1. **Correctness under conditions the author did not consider**: concurrency, failure paths, empty and boundary inputs, what happens on retry.\n2. **Security and data handling**: injection, authorisation checks on the server rather than the client, secrets, PII in logs.\n3. **Whether this is the right change at all.** Sometimes the cleanest implementation is of something that should not be built. This is the most valuable comment and the hardest to make late.\n4. **Operability**: can I debug this at 3am? Is there a log line with the identifiers I would need, a metric, a sensible error message?\n5. **Tests that would fail if the behaviour broke** — not coverage percentage, which measures execution rather than assertion.\n6. Naming, structure, style — last, and mostly automatable.\n\n**How I give feedback that lands:**\n\n- **Separate the blocking from the optional.** Prefix non-blocking comments explicitly ('nit:' or 'optional:'). A review where everything reads as mandatory gets either full compliance or resentment, and neither is thinking.\n- **Ask rather than assert when I might be wrong** — \"what happens if this is called twice?\" surfaces the same issue as \"this is not idempotent\" and leaves the author room to know something I do not. When I *am* sure, I say so plainly; false uncertainty is its own form of unclear communication.\n- **Explain the consequence, not just the rule.** \"This will be O(n²) once the tenant has a thousand orders\" is acted on; \"don't nest loops\" is argued with.\n- **Review the code, never the person.** \"This method does three things\" rather than \"you've written an unfocused method\".\n- **Move to a conversation after two rounds.** If a thread is on its third reply, the medium is wrong — five minutes of talking resolves what ten comments will not.\n- **Approve with comments when nothing is blocking.** Holding a PR hostage to preferences is the fastest way to make people stop asking for reviews.\n\n**What interviewers are actually assessing here** is whether you can disagree with someone without creating an adversary, and whether you know which of your opinions are facts.",
+      "keyPoints": [
+        "Priority order: correctness, security, is-this-the-right-change, operability, tests, then style",
+        "Mark clearly what blocks and what does not",
+        "Explain the consequence rather than citing the rule",
+        "Question form when uncertain; plain statement when sure",
+        "Escalate to conversation after two rounds",
+        "Review the code, not the person"
+      ],
+      "followUps": [
+        {
+          "q": "The author disagrees and you still think you are right. What then?",
+          "a": "Separate whether it is a correctness question or a preference. For correctness, ask for the concrete case — 'show me what happens when two requests arrive together' — because a reproduction settles it without either of us needing to win. For preference, state my view once, say it is a preference, and approve. Spending authority on style is how you have none left when it is a real bug."
+        }
+      ],
+      "redFlags": [
+        "Describing review as finding mistakes",
+        "No distinction between blocking and non-blocking feedback",
+        "Never mentioning that a review can conclude the change is unnecessary"
+      ]
+    }
+  ]
+}

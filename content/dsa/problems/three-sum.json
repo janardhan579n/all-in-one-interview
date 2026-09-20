@@ -1,0 +1,111 @@
+{
+  "id": "three-sum",
+  "title": "3Sum",
+  "patternId": "two-pointers",
+  "difficulty": "advanced",
+  "tags": [
+    "array",
+    "two-pointers",
+    "sorting"
+  ],
+  "statement": "Given an integer array, return all unique triplets [a, b, c] such that a + b + c == 0. The solution set must not contain duplicate triplets.",
+  "realWorld": "Portfolio balancing: find sets of three positions whose net exposure cancels out. The deduplication requirement mirrors real reconciliation work, where the same combination reported twice is a bug.",
+  "examples": [
+    {
+      "input": "nums = [-1,0,1,2,-1,-4]",
+      "output": "[[-1,-1,2],[-1,0,1]]",
+      "explanation": "Note that [-1,0,1] appears via two different index pairs but must be reported once."
+    },
+    {
+      "input": "nums = [0,1,1]",
+      "output": "[]",
+      "explanation": "No triplet sums to zero."
+    },
+    {
+      "input": "nums = [0,0,0]",
+      "output": "[[0,0,0]]",
+      "explanation": "Reported once, not three times."
+    }
+  ],
+  "constraints": [
+    "3 <= nums.length <= 3000",
+    "-10^5 <= nums[i] <= 10^5"
+  ],
+  "bruteForce": {
+    "idea": "Three nested loops over all triplets, with a set to deduplicate results.",
+    "code": [
+      "Set<List<Integer>> found = new HashSet<>();",
+      "for (int i = 0; i < n; i++)",
+      "    for (int j = i + 1; j < n; j++)",
+      "        for (int k = j + 1; k < n; k++)",
+      "            if (nums[i] + nums[j] + nums[k] == 0) {",
+      "                List<Integer> t = new ArrayList<>(List.of(nums[i], nums[j], nums[k]));",
+      "                Collections.sort(t);",
+      "                found.add(t);",
+      "            }"
+    ],
+    "complexity": {
+      "time": "O(n^3)",
+      "space": "O(number of triplets)"
+    },
+    "whySlow": "2.7 * 10^10 iterations at n = 3000. Sorting each triplet to deduplicate adds more constant cost on top."
+  },
+  "patternIdentification": "Fix one element and the problem reduces to 'two sum to a target' on the remainder. If the array is sorted first, that inner problem is the O(n) two-pointer scan — and sorting also makes duplicates adjacent, which solves the deduplication requirement structurally.",
+  "optimized": {
+    "idea": "Sort. For each anchor index i, run converging pointers over the suffix looking for -nums[i]. Skip equal anchors, and after recording a hit skip equal values on both sides so no triplet is emitted twice.",
+    "code": [
+      "public static List<List<Integer>> threeSum(int[] nums) {",
+      "    Arrays.sort(nums);",
+      "    List<List<Integer>> result = new ArrayList<>();",
+      "",
+      "    for (int i = 0; i < nums.length - 2; i++) {",
+      "        if (nums[i] > 0) break;                        // sorted: sum can only grow",
+      "        if (i > 0 && nums[i] == nums[i - 1]) continue; // skip duplicate anchors",
+      "",
+      "        int left = i + 1;",
+      "        int right = nums.length - 1;",
+      "        while (left < right) {",
+      "            int sum = nums[i] + nums[left] + nums[right];",
+      "            if (sum < 0) {",
+      "                left++;",
+      "            } else if (sum > 0) {",
+      "                right--;",
+      "            } else {",
+      "                result.add(List.of(nums[i], nums[left], nums[right]));",
+      "                while (left < right && nums[left]  == nums[left + 1])  left++;",
+      "                while (left < right && nums[right] == nums[right - 1]) right--;",
+      "                left++;",
+      "                right--;",
+      "            }",
+      "        }",
+      "    }",
+      "    return result;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n^2)",
+      "space": "O(1) ignoring the output and the sort's internal space"
+    }
+  },
+  "commonMistakes": [
+    "Forgetting to skip duplicate anchors, producing repeated triplets.",
+    "Skipping duplicates only on one side after a match.",
+    "Deduplicating with a HashSet of sorted lists — it works, but it hides that sorting already solved the problem and costs extra memory.",
+    "Not breaking early when nums[i] > 0, which is a free pruning step on sorted input."
+  ],
+  "similar": [
+    "two-sum-sorted",
+    "container-with-most-water",
+    "two-sum",
+    "four-sum-count"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 15,
+      "slug": "3sum",
+      "title": "3Sum",
+      "url": "https://leetcode.com/problems/3sum/",
+      "premium": false
+    }
+  }
+}

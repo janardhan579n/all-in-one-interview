@@ -1,0 +1,149 @@
+{
+  "id": "find-median-from-stream",
+  "title": "Find Median from Data Stream",
+  "patternId": "heap",
+  "difficulty": "advanced",
+  "tags": [
+    "heap",
+    "priority-queue",
+    "two-heaps",
+    "design",
+    "streaming"
+  ],
+  "statement": "Design a data structure that supports two operations on a stream of integers: addNum(int num), which ingests one value, and findMedian(), which returns the median of everything ingested so far. The median of an odd-sized set is its middle element; the median of an even-sized set is the average of the two middle elements. Both operations may be called any number of times, interleaved.",
+  "realWorld": "The p50 of a live latency stream in a monitoring system: requests arrive continuously and a dashboard asks for the current median many times a second, with no opportunity to store and re-sort the entire history. The same structure backs streaming quantiles in billing, anomaly detection, and any 'running middle' that has to survive an unbounded input.",
+  "examples": [
+    {
+      "input": "addNum(1); addNum(2); findMedian();",
+      "output": "1.5",
+      "explanation": "Two elements, so the median is the average of both. Returning 1 here is the integer-division bug."
+    },
+    {
+      "input": "addNum(1); addNum(2); findMedian(); addNum(3); findMedian();",
+      "output": "1.5, then 2.0",
+      "explanation": "After the third value the set is {1, 2, 3} and the median is the single middle element. With the invariant used below the low half holds {1, 2} and the high half holds {3}, so the median is the low half's root — not the high half's."
+    },
+    {
+      "input": "addNum(5); addNum(15); addNum(1); addNum(3); findMedian();",
+      "output": "4.0",
+      "explanation": "Sorted, the stream is 1, 3, 5, 15 and the median is (3 + 5) / 2 = 4. Note the values arrive far out of order: 1 has to migrate from the high half to the low half as later values push the boundary around. This is the case that catches a rebalance which only counts sizes."
+    }
+  ],
+  "constraints": [
+    "-10^5 <= num <= 10^5",
+    "findMedian() is only called after at least one addNum()",
+    "Up to 5 * 10^4 calls in total, so a per-call linear cost is too slow"
+  ],
+  "bruteForce": {
+    "idea": "Keep every value in an ArrayList. On findMedian, sort the list and read the middle. (Or keep the list sorted, inserting each new value at its binary-searched position.)",
+    "code": [
+      "private final List<Integer> all = new ArrayList<>();",
+      "",
+      "public void addNum(int num) {",
+      "    all.add(num);",
+      "}",
+      "",
+      "public double findMedian() {",
+      "    Collections.sort(all);                       // rebuild the whole order for one lookup",
+      "    int n = all.size();",
+      "    if (n % 2 == 1) return all.get(n / 2);",
+      "    return (all.get(n / 2 - 1) + (double) all.get(n / 2)) / 2.0;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n log n) per findMedian, or O(n) per addNum if the list is kept sorted",
+      "space": "O(n)"
+    },
+    "whySlow": "The sorting version throws away an ordering it computed a moment ago and rebuilds it even though the collection changed by one element. The keep-it-sorted version does the opposite and is no better: it preserves a *total* order at a cost of shifting on average n/2 elements on every insert, when the query only ever reads the one or two elements in the middle. Both are paying to know the relative order of pairs of values nobody will ever ask about — the ranking of the small values among themselves, and of the large values among themselves, is never consulted."
+  },
+  "patternIdentification": "The query touches only the middle, so what has to be maintained is not an order but a *boundary*: the split point between the smaller half and the larger half. Two heaps facing each other put exactly that boundary at their roots — a max-heap holding the lower half, whose root is the largest small value, and a min-heap holding the upper half, whose root is the smallest large value. Any question of the form 'maintain a split point in a set that keeps changing' has this shape, and the giveaway is a query that reads only the elements next to the split.",
+  "optimized": {
+    "idea": "Maintain two heaps under two invariants, and write them down before writing any code, because the rebalancing is meaningless without them. (I1) every element of low is <= every element of high. (I2) low.size() - high.size() is either 0 or 1 — the low half carries the extra element when the total is odd. Given those, findMedian is trivial: if the sizes differ, the answer is low's root; if they are equal, it is the average of the two roots.\n\nFor addNum, the tempting move is to compare num with low's root and decide which heap it belongs in — but then you still have to fix the sizes, and the branches multiply into four cases each with its own off-by-one, plus a special case for the very first element when there is no root to compare against. Instead, push unconditionally into low and immediately move low's root into high. That single move restores I1 for free: whatever comes off low's top is the largest of everything low held, including the newcomer, so it is >= all of low's remainder, and pushing it into high keeps high's contents above low's. Now only I2 can be violated, and only in one direction (high can be one too big), so one conditional move back fixes it. Two unconditional operations and one conditional one, no case analysis, no empty-heap special case.",
+    "code": [
+      "class MedianFinder {",
+      "    private final PriorityQueue<Integer> low = new PriorityQueue<>(Comparator.reverseOrder());   // max-heap: lower half",
+      "    private final PriorityQueue<Integer> high = new PriorityQueue<>();                           // min-heap: upper half",
+      "",
+      "    public void addNum(int num) {",
+      "        low.offer(num);",
+      "        high.offer(low.poll());   // hand the low half's largest across: I1 restored without a single comparison",
+      "        if (high.size() > low.size()) low.offer(high.poll());",
+      "    }",
+      "",
+      "    public double findMedian() {",
+      "        if (low.size() > high.size()) return low.peek();",
+      "        return (low.peek() + (double) high.peek()) / 2.0;",
+      "    }",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(log n) per addNum, O(1) per findMedian",
+      "space": "O(n)"
+    }
+  },
+  "visualization": {
+    "engine": "heapOps",
+    "title": "The upper half on its own: a min-heap whose root is the smallest large value — one side of the median boundary. Watch what addNum really costs: an insert climbs at most log n levels, and the hand-across is a single extract-min. The lower half is the identical structure with the comparison flipped.",
+    "input": {
+      "operations": [
+        {
+          "op": "insert",
+          "value": 5
+        },
+        {
+          "op": "insert",
+          "value": 15
+        },
+        {
+          "op": "insert",
+          "value": 3
+        },
+        {
+          "op": "extract"
+        },
+        {
+          "op": "insert",
+          "value": 1
+        },
+        {
+          "op": "extract"
+        }
+      ]
+    },
+    "code": [
+      "PriorityQueue<Integer> high = new PriorityQueue<>();   // upper half; the heap IS this array",
+      "heap[size++] = value;                        // offer(): append at the end, tree stays complete",
+      "int i = size - 1;",
+      "while (i > 0 && heap[parent(i)] > heap[i]) { // sift up while smaller than the parent",
+      "    swap(heap, i, parent(i));",
+      "    i = parent(i);                           // climb; stop at the root",
+      "}",
+      "int smallestLarge = heap[0];                 // poll(): the boundary value, one half of the median",
+      "heap[0] = heap[--size];                      // last element to the root, then sift it down",
+      "int j = 0, child;",
+      "while ((child = smallerChild(j)) != -1 && heap[child] < heap[j]) { swap(heap, j, child); j = child; }",
+      "// property restored — addNum is one offer plus one poll plus at most one more, all O(log n)"
+    ]
+  },
+  "commonMistakes": [
+    "Averaging with int arithmetic: `return (low.peek() + high.peek()) / 2;`. Integer division truncates, so the stream 1, 2 reports a median of 1 instead of 1.5, and with large values the addition can overflow to a negative median. Cast one operand to double *before* the division.",
+    "Deciding the target heap by comparing against `low.peek()` without guarding the empty case — the very first addNum calls peek() on an empty heap, gets null, and throws NullPointerException on unboxing. The push-then-move form has no first-element special case at all, which is half of why it is worth preferring.",
+    "Reading the median off the wrong root in the odd case. Invariant I2 gives the extra element to the low half, so low.peek() is the median; returning high.peek() returns the value just above it and the stream 1, 2, 3 reports a median of 3. Pick which half carries the extra element, write it down, and make both addNum and findMedian obey the same choice."
+  ],
+  "similar": [
+    "kth-largest-element",
+    "k-closest-points",
+    "last-stone-weight",
+    "merge-k-sorted-lists",
+    "top-k-frequent"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 295,
+      "slug": "find-median-from-data-stream",
+      "title": "Find Median from Data Stream",
+      "url": "https://leetcode.com/problems/find-median-from-data-stream/",
+      "premium": false
+    }
+  }
+}

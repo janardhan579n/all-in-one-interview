@@ -1,0 +1,21 @@
+# Test configuration.
+#
+# Tests run against SQLite (the supported target) rather than H2, in a throwaway file under
+# target/ so `mvn clean` resets it. The content directory is pinned relative to backend/.
+#
+# CAREFUL: this file REPLACES src/main/resources/application.yml during tests — it does not
+# merge with it. Test resources come first on the classpath and Spring loads exactly one
+# application.yml, so anything the main file configures is simply absent here unless repeated
+# below. Do not assume a setting is inherited; if a test needs it, write it out again.
+content:
+  directory: ../content
+
+app:
+  datasource:
+    mode: sqlite
+    file: target/test-data/learning-test.db
+
+logging:
+  level:
+    root: WARN
+    com.learningplatform: INFO

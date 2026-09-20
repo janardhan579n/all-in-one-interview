@@ -1,0 +1,102 @@
+{
+  "id": "middle-of-linked-list",
+  "title": "Middle of the Linked List",
+  "patternId": "fast-slow-pointer",
+  "difficulty": "beginner",
+  "tags": [
+    "linked-list",
+    "two-pointers"
+  ],
+  "statement": "Given the head of a singly linked list, return the middle node. If there are two middle nodes, return the second one.",
+  "realWorld": "Splitting a stream into halves for merge sort, or finding the median position of a list you can only traverse forwards — for example a paged API result you cannot index into.",
+  "examples": [
+    {
+      "input": "[1,2,3,4,5]",
+      "output": "Node 3",
+      "explanation": "Odd length: the exact middle."
+    },
+    {
+      "input": "[1,2,3,4,5,6]",
+      "output": "Node 4",
+      "explanation": "Even length: the second of the two middles."
+    }
+  ],
+  "constraints": [
+    "1 <= number of nodes <= 100"
+  ],
+  "bruteForce": {
+    "idea": "Walk the list once to count the nodes, then walk again to node n/2.",
+    "code": [
+      "int n = 0;",
+      "for (Node cur = head; cur != null; cur = cur.next) n++;",
+      "Node cur = head;",
+      "for (int i = 0; i < n / 2; i++) cur = cur.next;",
+      "return cur;"
+    ],
+    "complexity": {
+      "time": "O(n), two passes",
+      "space": "O(1)"
+    },
+    "whySlow": "Correct and O(n), but it needs two traversals. For a stream you can only read once — or a list too large to traverse twice cheaply — that is a real limitation, and interviewers ask for a single pass."
+  },
+  "patternIdentification": "'Middle in one pass' is the fast/slow pointer. When the fast pointer has travelled 2k steps, the slow pointer has travelled k.",
+  "optimized": {
+    "idea": "Advance slow by one and fast by two. When fast runs off the end, slow is at the middle by construction.",
+    "code": [
+      "public static Node middleNode(Node head) {",
+      "    Node slow = head;",
+      "    Node fast = head;",
+      "    while (fast != null && fast.next != null) {",
+      "        slow = slow.next;",
+      "        fast = fast.next.next;",
+      "    }",
+      "    return slow;   // second middle when the length is even",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n), one pass",
+      "space": "O(1)"
+    }
+  },
+  "visualization": {
+    "engine": "fastSlowPointer",
+    "input": {
+      "values": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "mode": "middle"
+    },
+    "code": [
+      "Node slow = head, fast = head;",
+      "while (fast != null && fast.next != null) {",
+      "    slow = slow.next;",
+      "    fast = fast.next.next;",
+      "}",
+      "return slow;"
+    ]
+  },
+  "commonMistakes": [
+    "Guarding with fast != null only; fast.next.next then throws on even-length lists.",
+    "Starting fast at head.next, which returns the first middle rather than the second — check which the problem wants.",
+    "Returning slow.next or slow.prev out of uncertainty instead of reasoning about the two cases."
+  ],
+  "similar": [
+    "linked-list-cycle",
+    "find-duplicate-number"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 876,
+      "slug": "middle-of-the-linked-list",
+      "title": "Middle of the Linked List",
+      "url": "https://leetcode.com/problems/middle-of-the-linked-list/",
+      "premium": false
+    }
+  }
+}

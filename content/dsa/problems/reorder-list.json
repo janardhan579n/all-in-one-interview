@@ -1,0 +1,147 @@
+{
+  "id": "reorder-list",
+  "title": "Reorder List",
+  "patternId": "linked-list",
+  "difficulty": "intermediate",
+  "tags": [
+    "linked-list",
+    "fast-slow-pointer",
+    "in-place",
+    "composition"
+  ],
+  "statement": "Given a singly linked list L0 -> L1 -> ... -> Ln-1, reorder it in place to L0 -> Ln-1 -> L1 -> Ln-2 -> L2 -> ... You may not change any node's value; only the links may be rewritten.",
+  "realWorld": "Fair queueing: alternately serving the oldest and the newest pending request bounds the worst-case wait for both ends of a queue instead of starving one of them. The same interleave appears when a reader must pair the front and back of a chunk list — a double-ended scan over a structure that only walks forwards — without allocating a second buffer for the tail.",
+  "examples": [
+    {
+      "input": "head = [1,2,3,4]",
+      "output": "[1,4,2,3]",
+      "explanation": "Middle at node 2, so the halves are [1,2] and [3,4]. Reversing the second gives [4,3], and the interleave produces 1, 4, 2, 3."
+    },
+    {
+      "input": "head = [1,2,3,4,5]",
+      "output": "[1,5,2,4,3]",
+      "explanation": "Odd length: slow stops on node 3, so the first half is [1,2,3] and the second is [4,5], reversed to [5,4]. The splice yields 1 -> 5 -> 2 -> 4, and then second is null so the loop ends with node 3 still terminating the list — its next was set to null by the cut in step 2."
+    },
+    {
+      "input": "head = [1,2]",
+      "output": "[1,2]",
+      "explanation": "The second half is the single node [2] and the splice puts it straight back. The output is unchanged, which is a useful check that the cut did not leave a cycle — if it had, printing this list would never terminate."
+    }
+  ],
+  "constraints": [
+    "1 <= number of nodes <= 5 * 10^4",
+    "1 <= Node.val <= 1000",
+    "node values may not be modified — only the next pointers",
+    "O(1) extra space"
+  ],
+  "bruteForce": {
+    "idea": "Collect the node references into an ArrayList so the back half becomes randomly accessible, then relink with one index walking forwards from 0 and another walking backwards from the end.",
+    "code": [
+      "List<Node> nodes = new ArrayList<>();",
+      "for (Node p = head; p != null; p = p.next) {",
+      "    nodes.add(p);",
+      "}",
+      "int i = 0;",
+      "int j = nodes.size() - 1;",
+      "while (i < j) {",
+      "    nodes.get(i).next = nodes.get(j);",
+      "    i++;",
+      "    if (i == j) break;",
+      "    nodes.get(j).next = nodes.get(i);",
+      "    j--;",
+      "}",
+      "nodes.get(i).next = null;"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(n)"
+    },
+    "whySlow": "The time is already linear; the ArrayList is the waste. It exists for one purpose — to answer 'what is the node k from the end?', a question the list refuses to answer and two cursors answer for free. Paying n object references, a full second skeleton of the structure, to buy random access that is used only to walk backwards from the tail is the wasted work. In practice it also doubles the memory traffic per node: every node is now touched through the array as well as through its own next pointer, so a list that fit in cache no longer does."
+  },
+  "patternIdentification": "The output interleaves the front half of the list with the back half in reverse. Whenever a singly linked list problem needs the back half reversed, the answer is a composition of three primitives you already own, in this exact order: find the middle with fast/slow, reverse the second half in place, then walk the two halves together doing whatever the problem asks at each pair. Learn the composition rather than the problem — palindrome-linked-list is the identical three steps with a comparison at the third instead of a splice, and recognising that is worth more than either solution on its own.",
+  "optimized": {
+    "idea": "Three steps, each one a primitive. (1) Find the middle: advance fast two nodes for every one of slow, stopping while fast still has a successor, so that slow ends on the last node of the first half. (2) Reverse: take second = slow.next, cut the first half loose with slow.next = null — this cut is what stops step 3 from building a cycle — and reverse the detached tail with the standard three-pointer loop. (3) Interleave: walk one cursor down each half, and at every step save both successors before rewriting either next pointer, because first.next = second destroys the link to the rest of the first half.",
+    "code": [
+      "public static void reorderList(Node head) {",
+      "    if (head == null || head.next == null) return;",
+      "",
+      "    // 1. middle: slow ends on the LAST node of the first half",
+      "    Node slow = head;",
+      "    Node fast = head;",
+      "    while (fast.next != null && fast.next.next != null) {",
+      "        slow = slow.next;",
+      "        fast = fast.next.next;",
+      "    }",
+      "",
+      "    // 2. detach and reverse the second half",
+      "    Node second = slow.next;",
+      "    slow.next = null;   // the cut: without it step 3 closes a loop",
+      "    Node prev = null;",
+      "    while (second != null) {",
+      "        Node next = second.next;",
+      "        second.next = prev;",
+      "        prev = second;",
+      "        second = next;",
+      "    }",
+      "",
+      "    // 3. splice one node from each half, alternating",
+      "    Node first = head;",
+      "    second = prev;",
+      "    while (second != null) {",
+      "        Node n1 = first.next;",
+      "        Node n2 = second.next;",
+      "        first.next = second;",
+      "        second.next = n1;",
+      "        first = n1;",
+      "        second = n2;",
+      "    }",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(1)"
+    }
+  },
+  "visualization": {
+    "engine": "fastSlowPointer",
+    "input": {
+      "values": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "mode": "middle"
+    },
+    "code": [
+      "Node slow = head, fast = head;",
+      "while (fast != null && fast.next != null) {",
+      "    slow = slow.next;",
+      "    fast = fast.next.next;",
+      "}",
+      "// step 1 of 3 done: slow is the middle",
+      "// step 2: reverse everything after slow; step 3: interleave the halves"
+    ]
+  },
+  "commonMistakes": [
+    "Skipping slow.next = null. The first half's last node still points into the second half, which is now reversed, so the splice closes a loop — the function returns normally and the caller hangs forever the first time anything traverses or prints the list.",
+    "Reversing from slow instead of slow.next, which leaves the middle node in both halves. The node ends up pointing at itself and the list prints one value forever.",
+    "Writing first.next = second before saving first.next in a local. The pointer to the rest of the first half is overwritten, so the walk falls into the reversed half immediately and [1,2,3,4] comes back as the three-node list [1,4,3]."
+  ],
+  "similar": [
+    "palindrome-linked-list",
+    "reverse-linked-list",
+    "middle-of-linked-list",
+    "remove-nth-from-end"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 143,
+      "slug": "reorder-list",
+      "title": "Reorder List",
+      "url": "https://leetcode.com/problems/reorder-list/",
+      "premium": false
+    }
+  }
+}

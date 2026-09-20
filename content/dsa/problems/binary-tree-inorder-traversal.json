@@ -1,0 +1,139 @@
+{
+  "id": "binary-tree-inorder-traversal",
+  "title": "Binary Tree Inorder Traversal",
+  "patternId": "trees",
+  "difficulty": "beginner",
+  "tags": [
+    "tree",
+    "recursion",
+    "stack",
+    "traversal"
+  ],
+  "statement": "Given the root of a binary tree, return the values of its nodes in inorder: the entire left subtree, then the node itself, then the entire right subtree. Write it recursively, then write it again with an explicit stack and no recursion.",
+  "realWorld": "Inorder is how a sorted range comes out of an index. A B-tree index scan behind `SELECT ... ORDER BY id` is this walk, and it is written iteratively precisely because the engine must be able to pause after each row, hand it to the client, and resume — something a recursive walk cannot do. Printing an expression tree back as infix notation is the same traversal.",
+  "examples": [
+    {
+      "input": "root = [1,null,2,3]",
+      "output": "[1,3,2]",
+      "explanation": "Level-order notation: values level by level, left to right, null for a missing child. So: 1 has no left child and a right child 2, and 2 has a left child 3. Inorder visits 1's (empty) left, then 1, then descends right into 2, whose left subtree 3 comes before 2 itself."
+    },
+    {
+      "input": "root = [4,2,6,1,3,5,7]",
+      "output": "[1,2,3,4,5,6,7]",
+      "explanation": "This tree is a BST, and the output is sorted. That is not a coincidence: 'everything in my left subtree is smaller than me' is exactly the rule inorder reads the tree by, so inorder on a BST always yields sorted order. validate-bst, kth-smallest-in-bst and lowest-common-ancestor-bst all rest on this one fact."
+    },
+    {
+      "input": "root = []",
+      "output": "[]",
+      "explanation": "The empty tree. Both versions must handle it without special-casing: the recursion returns at its null base case, and the iterative loop's condition is false from the start."
+    }
+  ],
+  "constraints": [
+    "0 <= number of nodes <= 100 (but write it as if the tree could be 10^5 deep)",
+    "-100 <= node.val <= 100",
+    "The tree is not necessarily a BST"
+  ],
+  "bruteForce": {
+    "idea": "Write the definition down literally: walk the left subtree, record this node, walk the right subtree. Let the language's call stack keep track of where you are.",
+    "code": [
+      "public static List<Integer> inorderTraversal(TreeNode root) {",
+      "    List<Integer> out = new ArrayList<>();",
+      "    walk(root, out);",
+      "    return out;",
+      "}",
+      "",
+      "private static void walk(TreeNode node, List<Integer> out) {",
+      "    if (node == null) return;",
+      "    walk(node.left, out);",
+      "    out.add(node.val);          // BETWEEN the two calls — that placement is what 'inorder' means",
+      "    walk(node.right, out);",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(h)"
+    },
+    "whySlow": "Nothing here is wasted — every node is touched exactly once and the work per node is constant. What it wastes is control. The JVM is pushing one frame per level on your behalf and never lets you see it, so you cannot stop the walk after k values, you cannot pause and resume it, and you cannot bound its depth: on a 10^5-node tree that has degenerated into a chain the frames overflow the default thread stack and the program dies rather than returning a wrong answer. The iterative version below does not do less work — it does exactly the same work, with the stack moved out of the runtime and into a variable you own."
+  },
+  "patternIdentification": "Every recursion is a loop plus a stack; the recursion just hides the stack inside the call frames. When you want what the recursion gives you (the visit order) but not what it costs you (a stack you cannot inspect, interrupt or bound), write the stack out by hand. The conversion is mechanical: push what you were about to recurse into, pop to resume where you left off. 'Recursive' and 'iterative' are not two algorithms here — they are one algorithm with two owners of the same stack. The same move turns recursive DFS into iterative DFS and recursive quicksort into an explicit work queue.",
+  "optimized": {
+    "idea": "Own the stack. Descend left as far as possible, pushing every node you pass, because none of them can be visited until their left subtrees are done. Then pop: that node's left subtree is finished, so it is next in order — record it and move to its right child, and repeat. The pushed-but-not-yet-popped nodes are precisely the call frames the recursive version would have had.",
+    "code": [
+      "public static List<Integer> inorderTraversal(TreeNode root) {",
+      "    List<Integer> out = new ArrayList<>();",
+      "    Deque<TreeNode> stack = new ArrayDeque<>();",
+      "    TreeNode node = root;",
+      "    while (node != null || !stack.isEmpty()) {",
+      "        while (node != null) {       // descend left, remembering the way back",
+      "            stack.push(node);",
+      "            node = node.left;",
+      "        }",
+      "        node = stack.pop();          // its left subtree is done, so this node is next in order",
+      "        out.add(node.val);",
+      "        node = node.right;",
+      "    }",
+      "    return out;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(h) — the same bound as the recursion, now in a Deque you can measure"
+    }
+  },
+  "visualization": {
+    "engine": "treeTraversal",
+    "input": {
+      "tree": {
+        "value": 4,
+        "left": {
+          "value": 2,
+          "left": {
+            "value": 1
+          },
+          "right": {
+            "value": 3
+          }
+        },
+        "right": {
+          "value": 6,
+          "left": {
+            "value": 5
+          },
+          "right": {
+            "value": 7
+          }
+        }
+      },
+      "order": "inorder"
+    },
+    "code": [
+      "void inorder(TreeNode node, List<Integer> out) {",
+      "    if (node == null) return;",
+      "    inorder(node.left, out);",
+      "    out.add(node.val);",
+      "    inorder(node.right, out);",
+      "}"
+    ]
+  },
+  "commonMistakes": [
+    "Recording the node on the way down instead of on the pop. That is preorder: on the BST [4,2,6,1,3,5,7] you get [4,2,1,3,6,5,7] instead of sorted output, and the symptom is a result that contains all the right values in a plausible-looking order that is quietly wrong.",
+    "Looping on `while (!stack.isEmpty())` alone. The stack is empty before the first push, so the loop body never runs and the function returns [] for every non-empty tree. The condition must be `node != null || !stack.isEmpty()` — the current pointer is part of the state, not just the stack.",
+    "Forgetting `node = node.right` after the pop, or setting `node` back to the node just popped. The same node is pushed and popped forever: the program hangs or runs out of memory rather than returning a wrong answer, which makes it look like an infinite-tree bug instead of a one-line omission."
+  ],
+  "similar": [
+    "validate-bst",
+    "kth-smallest-in-bst",
+    "serialize-deserialize-tree",
+    "binary-tree-level-order",
+    "invert-binary-tree"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 94,
+      "slug": "binary-tree-inorder-traversal",
+      "title": "Binary Tree Inorder Traversal",
+      "url": "https://leetcode.com/problems/binary-tree-inorder-traversal/",
+      "premium": false
+    }
+  }
+}

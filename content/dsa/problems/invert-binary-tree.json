@@ -1,0 +1,113 @@
+{
+  "id": "invert-binary-tree",
+  "title": "Invert Binary Tree",
+  "patternId": "trees",
+  "difficulty": "beginner",
+  "tags": [
+    "tree",
+    "recursion",
+    "dfs"
+  ],
+  "statement": "Given the root of a binary tree, invert it — every node's left and right children swap — and return the root. The values do not change; only the shape is mirrored.",
+  "realWorld": "Mirroring a layout tree for a right-to-left locale: every container's children have to be reversed all the way down, and the tree is the layout. The same operation shows up in a compiler when a comparison is flipped (`a < b` becomes `b > a`) and the operand subtrees must swap with it.",
+  "examples": [
+    {
+      "input": "root = [2,1,3]",
+      "output": "[2,3,1]",
+      "explanation": "Trees here use level-order notation: values listed level by level, left to right, with null for a missing child. The root keeps its value; its two children trade places."
+    },
+    {
+      "input": "root = [4,2,7,1,3,6,9]",
+      "output": "[4,7,2,9,6,3,1]",
+      "explanation": "The swap happens at every node, not just the root: 4's children swap, and then inside each subtree 2's children (1,3) and 7's children (6,9) swap too."
+    },
+    {
+      "input": "root = [1,2]",
+      "output": "[1,null,2]",
+      "explanation": "A node with exactly one child. The 2 moves from left to right — the case that a 'swap only when both children exist' implementation silently gets wrong."
+    }
+  ],
+  "constraints": [
+    "0 <= number of nodes <= 10^4",
+    "-100 <= node.val <= 100",
+    "The tree may be arbitrarily skewed — a chain of 10^4 nodes is legal input"
+  ],
+  "bruteForce": {
+    "idea": "Do it level by level. BFS to collect the nodes at each depth, reverse that list, then walk the level above and re-point every parent at its new children.",
+    "code": [
+      "Queue<TreeNode> queue = new ArrayDeque<>();",
+      "if (root != null) queue.offer(root);",
+      "while (!queue.isEmpty()) {",
+      "    int levelSize = queue.size();",
+      "    List<TreeNode> level = new ArrayList<>();",
+      "    for (int i = 0; i < levelSize; i++) {",
+      "        TreeNode node = queue.poll();",
+      "        level.add(node);",
+      "        if (node.left  != null) queue.offer(node.left);",
+      "        if (node.right != null) queue.offer(node.right);",
+      "    }",
+      "    Collections.reverse(level);",
+      "    rewireParentsToMatch(level);   // the awkward part",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(n)"
+    },
+    "whySlow": "It reconstructs relationships that were never lost. Flattening a level into a list throws away which parent owned which child, so a second pass has to put that information back — bookkeeping that exists only because the first pass discarded it. And it holds the widest level in memory (about n/2 nodes for a balanced tree) to perform an edit that is entirely local: standing at a node, you already hold both child pointers, and the whole operation is exchanging them."
+  },
+  "patternIdentification": "Ask the tree question: what does this node have to do, assuming its children are already correct? Here the answer is 'exchange my two child pointers', and nothing about it depends on the rest of the tree. When a whole-structure transformation turns out to be one local edit applied everywhere, the recursion is that edit plus a null base case — there is no bookkeeping, no parent pointers, no second pass.",
+  "optimized": {
+    "idea": "Recurse into both children first, then swap the two returned subtrees into place. Because each call returns the already-inverted subtree, the parent never has to look inside it — it just needs both pointers in hand before it assigns either one.",
+    "code": [
+      "public static TreeNode invertTree(TreeNode root) {",
+      "    if (root == null) return null;          // an empty tree is its own mirror",
+      "    TreeNode left  = invertTree(root.left);",
+      "    TreeNode right = invertTree(root.right);",
+      "    root.left  = right;   // both pointers are captured BEFORE either is overwritten",
+      "    root.right = left;",
+      "    return root;",
+      "}",
+      "",
+      "/** Same work, explicit stack — use this when the tree could be 10^5 deep. */",
+      "public static TreeNode invertTreeIterative(TreeNode root) {",
+      "    Deque<TreeNode> stack = new ArrayDeque<>();",
+      "    if (root != null) stack.push(root);",
+      "    while (!stack.isEmpty()) {",
+      "        TreeNode node = stack.pop();",
+      "        TreeNode temp = node.left;",
+      "        node.left  = node.right;",
+      "        node.right = temp;",
+      "        if (node.left  != null) stack.push(node.left);",
+      "        if (node.right != null) stack.push(node.right);",
+      "    }",
+      "    return root;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(h) — O(log n) balanced, O(n) for a skewed chain"
+    }
+  },
+  "commonMistakes": [
+    "Assigning as you go: `root.left = invertTree(root.right); root.right = invertTree(root.left);`. The second call now inverts the subtree the first line just installed, so on [4,2,7,1,3,6,9] the original 7-subtree ends up hanging off both sides and the 2-subtree is lost entirely. Capture both results in locals first.",
+    "Swapping only when both children are non-null (`if (root.left != null && root.right != null)`). A node with one child keeps it on its original side, so [1,2] stays [1,2] instead of becoming [1,null,2] — and the bug is invisible on every perfectly balanced test tree.",
+    "Treating the recursion as free. The call stack is O(h), and a legal 10^4-node input can be a straight chain; the symptom is a StackOverflowError on skewed input while all the balanced tests pass."
+  ],
+  "similar": [
+    "same-tree",
+    "binary-tree-inorder-traversal",
+    "diameter-of-binary-tree",
+    "max-depth-binary-tree",
+    "binary-tree-level-order"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 226,
+      "slug": "invert-binary-tree",
+      "title": "Invert Binary Tree",
+      "url": "https://leetcode.com/problems/invert-binary-tree/",
+      "premium": false
+    }
+  }
+}

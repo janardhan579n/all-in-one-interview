@@ -1,0 +1,465 @@
+{
+  "id": "matrix",
+  "kind": "pattern",
+  "title": "Matrix — 2-D Traversal",
+  "group": "Arrays & Strings",
+  "level": 2,
+  "difficulty": "beginner",
+  "estimatedMinutes": 35,
+  "summary": "A matrix is an array of arrays. Almost every matrix problem is won or lost on two things: keeping `row` and `col` straight, and replacing a bookkeeping structure with a few shrinking boundaries.",
+  "prerequisites": [
+    "arrays"
+  ],
+  "tags": [
+    "matrix",
+    "grid",
+    "2d-array",
+    "traversal",
+    "simulation",
+    "level-2"
+  ],
+  "analogy": {
+    "beginner": "A spreadsheet. To name a cell you say the row first and the column second — row 3, column B. Reading a spreadsheet in a spiral means walking the outer border, drawing a line through it, then walking the border of what is left. You never keep a list of the cells you have already read; you just remember where the remaining rectangle starts and ends.",
+    "interview": "A 2-D array is row-major: `matrix[row][col]`, `matrix.length` is the row count and `matrix[0].length` is the column count. Traversal problems reduce to maintaining a small amount of positional state — four boundaries for a spiral, a direction vector for a walk, a pair of index transforms for a rotation — rather than materialising a visited structure. The time is O(rows × cols) because every cell is touched a constant number of times; the interesting axis is space."
+  },
+  "intuition": "Nothing about a matrix is conceptually hard. The difficulty is entirely bookkeeping, and it concentrates in three places.\n\n**First, the index discipline.** In Java a 2-D array is an array whose elements are arrays, so `matrix[row]` hands you one row and `matrix[row][col]` hands you one cell. That gives you the two numbers you will write a hundred times:\n\n```\nint rows = matrix.length;        // how many rows: how many inner arrays\nint cols = matrix[0].length;     // how many columns: the length of one row\n```\n\nIf you ever write `matrix[col][row]`, or loop `c` up to `matrix.length`, the code will still compile and will either throw `ArrayIndexOutOfBoundsException` on a non-square input or — far worse — silently produce a transposed answer on a square one. Name the loop variables `r` and `c`, never `i` and `j`. It costs nothing and removes an entire class of bug.\n\n**Second, the instinct to remember.** The obvious way to walk a matrix in a strange order is to keep a `boolean[][] visited` and skip anything already seen. It works, it is O(rows × cols) time — and it is the wrong answer, because the *order itself* already tells you where you are. A spiral is not a search; it is four straight walks that repeat on a shrinking rectangle. Once you hold `top`, `bottom`, `left` and `right`, the visited array is redundant.\n\n**Third, the off-by-one at the end.** When the remaining rectangle narrows to a single row or a single column, the four-walk loop will traverse it twice — once left-to-right on the top pass and once right-to-left on the bottom pass. Two `if` guards fix it. Almost every candidate writes the spiral without them, and the bug only shows up on inputs that are not square.\n\nEverything else in this pattern — rotation, zeroing, flood fill — is the same story: find the small amount of state that makes the extra structure unnecessary.",
+  "problemFirst": {
+    "motivatingProblem": "Given a matrix such as `[[1,2,3,4],[5,6,7,8],[9,10,11,12]]`, print its elements in spiral order: 1, 2, 3, 4, 8, 12, 11, 10, 9, 5, 6, 7.",
+    "bruteForce": {
+      "idea": "Simulate a walker. Keep a `boolean[][] visited`, step in the current direction, and whenever the next cell is off the edge or already visited, turn right.",
+      "code": [
+        "int rows = matrix.length, cols = matrix[0].length;",
+        "boolean[][] visited = new boolean[rows][cols];",
+        "int[][] DIRS = {{0, 1}, {1, 0}, {0, -1}, {-1, 0}};   // right, down, left, up",
+        "int r = 0, c = 0, dir = 0;",
+        "List<Integer> out = new ArrayList<>();",
+        "",
+        "for (int step = 0; step < rows * cols; step++) {",
+        "    out.add(matrix[r][c]);",
+        "    visited[r][c] = true;",
+        "    int nr = r + DIRS[dir][0], nc = c + DIRS[dir][1];",
+        "    if (nr < 0 || nr >= rows || nc < 0 || nc >= cols || visited[nr][nc]) {",
+        "        dir = (dir + 1) % 4;                          // blocked: turn right",
+        "        nr = r + DIRS[dir][0];",
+        "        nc = c + DIRS[dir][1];",
+        "    }",
+        "    r = nr;",
+        "    c = nc;",
+        "}",
+        "return out;"
+      ],
+      "complexity": {
+        "time": "O(rows × cols)",
+        "space": "O(rows × cols) for the visited grid"
+      },
+      "whySlow": "This one is not asymptotically slow — it touches each cell once, which is optimal. The cost is elsewhere. It allocates a second grid the same size as the input purely to remember where it has been, and the turn logic is fiddly: you must probe the next cell, detect the block, rotate, and re-probe, and a mistake in that sequence produces a walk that looks almost right. The leap is realising the spiral's shape is already known, so nothing needs remembering."
+    },
+    "observation": "A spiral is not an exploration. It is four straight walks — across the top, down the right, back across the bottom, up the left — repeated on the rectangle that is left over. The only thing that changes between rounds is where that rectangle starts and ends.",
+    "leap": "Replace the whole visited grid with four integers: `top`, `bottom`, `left`, `right`. After each straight walk, shrink the corresponding boundary inwards. The walk can never revisit a cell because the boundaries have already excluded it. Same O(rows × cols) time, O(1) extra space, and the turn logic disappears entirely.",
+    "optimizedSketch": [
+      "int top = 0, bottom = rows - 1, left = 0, right = cols - 1;",
+      "",
+      "while (top <= bottom && left <= right) {",
+      "    for (int c = left; c <= right; c++) out.add(matrix[top][c]);      // across the top",
+      "    top++;",
+      "    for (int r = top; r <= bottom; r++) out.add(matrix[r][right]);    // down the right",
+      "    right--;",
+      "    if (top <= bottom) { /* back across the bottom */ }               // the guards matter",
+      "    if (left <= right) { /* up the left */ }",
+      "}"
+    ]
+  },
+  "howItWorks": [
+    "**Index discipline first.** `matrix[row][col]`. `matrix.length` is the number of **rows**; `matrix[0].length` is the number of **columns**. Declare `int rows = matrix.length; int cols = matrix[0].length;` at the top of every matrix method and name your loop variables `r` and `c` — `i`/`j` is how transposed answers get written.",
+    "**Four shrinking boundaries.** Hold `top`, `bottom`, `left`, `right` as the inclusive bounds of the rectangle still to be visited. Walk one edge, then move that boundary one step inwards. The loop condition is `top <= bottom && left <= right`, because the rectangle is empty as soon as either pair crosses.",
+    "**The two guards everyone forgets.** After the top row and the right column have been consumed, the rectangle may have collapsed to a single row or a single column. Walking the bottom row without checking `top <= bottom` re-emits the row you just walked, backwards; walking the left column without checking `left <= right` does the same to a column. A 1×n or n×1 input is the smallest case that exposes it, which is exactly why a square test matrix hides the bug.",
+    "**Rotation is transpose, then reverse.** To rotate an n×n matrix 90° clockwise in place: first transpose it (swap `matrix[r][c]` with `matrix[c][r]` for every `c > r`, so only the upper triangle is touched and no swap is undone), then reverse each row. Counter-clockwise is the same transpose followed by reversing each *column* instead. Deriving it beats memorising it: transposing sends row r to column r, which is a clockwise rotation composed with a horizontal mirror, so reversing each row cancels the mirror.",
+    "**Direction vectors for grid walks.** `int[][] DIRS = {{0,1},{1,0},{0,-1},{-1,0}};` is right, down, left, up — a clockwise cycle, so `dir = (dir + 1) % 4` is a right turn. Written this way a neighbour loop is `for (int[] d : DIRS) { int nr = r + d[0], nc = c + d[1]; … }` instead of four copy-pasted blocks, and the copy-paste version is where a wrong sign hides. Add `{1,1},{1,-1},{-1,1},{-1,-1}` when diagonals count (Game of Life, 8-connected islands).",
+    "**Always bounds-check before indexing.** `if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) continue;` must come *before* you read `grid[nr][nc]`. Java evaluates `||` left to right and short-circuits, so the order inside the condition is load-bearing, not cosmetic.",
+    "**Using the matrix itself as storage.** Many O(rows × cols) space solutions collapse to O(1) by writing markers into the input — the first row and first column as the flag store in Set Matrix Zeroes, or overwriting land with water in flood fill. State clearly whether mutating the input is allowed before doing this."
+  ],
+  "patternRecognition": {
+    "signals": [
+      "The input is a 2-D array, grid, board, image or spreadsheet-shaped table",
+      "'Spiral', 'diagonal', 'rotate', 'transpose', 'in place' — a prescribed traversal order rather than a search",
+      "Coordinates appear as `(row, col)` pairs and the answer is a walk over cells",
+      "The problem is really a simulation: apply a fixed rule to every cell (Game of Life, Set Matrix Zeroes)",
+      "'Without allocating another matrix' or 'O(1) extra space' — the hint that boundaries or in-place markers are wanted"
+    ],
+    "antiSignals": [
+      "You need the shortest path or connected regions across the grid → treat cells as graph nodes and use BFS or DFS",
+      "Each cell's value is built from other cells' answers (paths, minimum cost) → grid dynamic programming, not traversal",
+      "The rows are sorted and you are searching for a value → treat the matrix as one sorted array and binary search it",
+      "The grid is enormous and sparse → a map from `(r, c)` to value beats a dense array"
+    ]
+  },
+  "visualizations": [
+    {
+      "id": "spiral-boundaries",
+      "title": "Spiral order — four boundaries closing in, no visited array",
+      "engine": "matrixSpiral",
+      "input": {
+        "matrix": [
+          [
+            1,
+            2,
+            3,
+            4
+          ],
+          [
+            5,
+            6,
+            7,
+            8
+          ],
+          [
+            9,
+            10,
+            11,
+            12
+          ]
+        ]
+      },
+      "code": [
+        "int top = 0, bottom = rows - 1, left = 0, right = cols - 1;",
+        "while (top <= bottom && left <= right) {",
+        "    for (int c = left; c <= right; c++) out.add(matrix[top][c]);",
+        "    top++;",
+        "    for (int r = top; r <= bottom; r++) out.add(matrix[r][right]);",
+        "    right--;",
+        "    // guard 1: without this, a single remaining row is walked twice",
+        "    if (top <= bottom) for (int c = right; c >= left; c--) out.add(matrix[bottom][c]);",
+        "    bottom--;",
+        "    // guard 2: without this, a single remaining column is walked twice",
+        "    if (left <= right) for (int r = bottom; r >= top; r--) out.add(matrix[r][left]);",
+        "    left++;",
+        "}",
+        "return out;"
+      ]
+    },
+    {
+      "id": "direction-vectors",
+      "title": "Direction vectors in action — a grid walk over four neighbours",
+      "engine": "gridBfs",
+      "input": {
+        "grid": [
+          [
+            0,
+            0,
+            1,
+            0,
+            0
+          ],
+          [
+            1,
+            0,
+            1,
+            0,
+            1
+          ],
+          [
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          [
+            0,
+            1,
+            1,
+            1,
+            0
+          ],
+          [
+            0,
+            0,
+            0,
+            1,
+            0
+          ]
+        ],
+        "start": [
+          0,
+          0
+        ],
+        "target": [
+          4,
+          4
+        ]
+      },
+      "code": [
+        "seen[sr][sc] = true;  q.offer(new int[]{sr, sc});",
+        "int[][] DIRS = {{0,1},{1,0},{0,-1},{-1,0}};              // right, down, left, up",
+        "while (!q.isEmpty()) {  int ring = q.size();",
+        "    while (ring-- > 0) { int[] cur = q.poll(); if (cur[0] == tr && cur[1] == tc) return distance;",
+        "        for (int[] d : DIRS) {",
+        "            int nr = cur[0] + d[0], nc = cur[1] + d[1];",
+        "            if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) continue;   // bounds BEFORE indexing",
+        "            if (seen[nr][nc] || grid[nr][nc] == 1) continue;              // already queued, or a wall",
+        "            seen[nr][nc] = true;  q.offer(new int[]{nr, nc});",
+        "    } }  distance++;   // the ring is drained — everything still queued is one step further out",
+        "}",
+        "// the queue emptied without ever popping the target: it is walled off",
+        "return -1;"
+      ]
+    }
+  ],
+  "implementations": [
+    {
+      "label": "Simple",
+      "language": "java",
+      "explanation": "Spiral order with four boundaries. Read the two `if` guards carefully — they are the whole difference between a solution that passes and one that fails on a 1×n input. Note also that `cols` is read from `matrix[0]`, not from `matrix`.",
+      "code": [
+        "/**",
+        " * Spiral order. O(rows · cols) time, O(1) extra space (the output list aside).",
+        " */",
+        "public static List<Integer> spiralOrder(int[][] matrix) {",
+        "    List<Integer> out = new ArrayList<>();",
+        "    if (matrix == null || matrix.length == 0 || matrix[0].length == 0) return out;",
+        "",
+        "    int rows = matrix.length;          // number of rows",
+        "    int cols = matrix[0].length;       // number of columns — length of ONE row",
+        "",
+        "    int top = 0, bottom = rows - 1;",
+        "    int left = 0, right = cols - 1;",
+        "",
+        "    while (top <= bottom && left <= right) {",
+        "        for (int c = left; c <= right; c++) out.add(matrix[top][c]);      // → top row",
+        "        top++;",
+        "",
+        "        for (int r = top; r <= bottom; r++) out.add(matrix[r][right]);    // ↓ right column",
+        "        right--;",
+        "",
+        "        if (top <= bottom) {                                              // GUARD 1",
+        "            for (int c = right; c >= left; c--) out.add(matrix[bottom][c]);   // ← bottom row",
+        "            bottom--;",
+        "        }",
+        "",
+        "        if (left <= right) {                                              // GUARD 2",
+        "            for (int r = bottom; r >= top; r--) out.add(matrix[r][left]);     // ↑ left column",
+        "            left++;",
+        "        }",
+        "    }",
+        "    return out;",
+        "}"
+      ]
+    },
+    {
+      "label": "Optimized",
+      "language": "java",
+      "explanation": "The other three things worth having in your fingers: in-place rotation as transpose-then-reverse, the direction-vector neighbour loop that replaces four copy-pasted blocks, and the O(1)-space version of Set Matrix Zeroes that stores its flags in the matrix's own first row and column.",
+      "code": [
+        "/** Rotate an n×n matrix 90° clockwise, in place. O(n²) time, O(1) space. */",
+        "public static void rotate(int[][] matrix) {",
+        "    int n = matrix.length;",
+        "",
+        "    // 1. Transpose: reflect across the main diagonal.",
+        "    //    c starts at r + 1 so each pair is swapped exactly once — starting at 0",
+        "    //    would swap every pair twice and leave the matrix unchanged.",
+        "    for (int r = 0; r < n; r++) {",
+        "        for (int c = r + 1; c < n; c++) {",
+        "            int tmp = matrix[r][c];",
+        "            matrix[r][c] = matrix[c][r];",
+        "            matrix[c][r] = tmp;",
+        "        }",
+        "    }",
+        "",
+        "    // 2. Reverse each row.",
+        "    for (int[] row : matrix) {",
+        "        for (int lo = 0, hi = n - 1; lo < hi; lo++, hi--) {",
+        "            int tmp = row[lo];",
+        "            row[lo] = row[hi];",
+        "            row[hi] = tmp;",
+        "        }",
+        "    }",
+        "}",
+        "",
+        "/** The direction-vector idiom: one loop instead of four copy-pasted blocks. */",
+        "private static final int[][] DIRS = {{0, 1}, {1, 0}, {0, -1}, {-1, 0}};  // R, D, L, U",
+        "",
+        "public static int countOpenNeighbours(int[][] grid, int r, int c) {",
+        "    int rows = grid.length, cols = grid[0].length, open = 0;",
+        "    for (int[] d : DIRS) {",
+        "        int nr = r + d[0], nc = c + d[1];",
+        "        if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) continue;  // bounds BEFORE indexing",
+        "        if (grid[nr][nc] == 0) open++;",
+        "    }",
+        "    return open;",
+        "}",
+        "",
+        "/**",
+        " * Set Matrix Zeroes in O(1) extra space: row 0 and column 0 become the flag arrays,",
+        " * so the only real state is one boolean for column 0's own fate.",
+        " */",
+        "public static void setZeroes(int[][] matrix) {",
+        "    int rows = matrix.length, cols = matrix[0].length;",
+        "    boolean firstColHasZero = false;",
+        "",
+        "    for (int r = 0; r < rows; r++) {",
+        "        if (matrix[r][0] == 0) firstColHasZero = true;",
+        "        for (int c = 1; c < cols; c++) {",
+        "            if (matrix[r][c] == 0) {",
+        "                matrix[r][0] = 0;      // flag the row",
+        "                matrix[0][c] = 0;      // flag the column",
+        "            }",
+        "        }",
+        "    }",
+        "",
+        "    // Apply flags bottom-up and right-to-left so the flags are read before overwriting.",
+        "    for (int r = rows - 1; r >= 0; r--) {",
+        "        for (int c = cols - 1; c >= 1; c--) {",
+        "            if (matrix[r][0] == 0 || matrix[0][c] == 0) matrix[r][c] = 0;",
+        "        }",
+        "        if (firstColHasZero) matrix[r][0] = 0;",
+        "    }",
+        "}"
+      ]
+    }
+  ],
+  "complexity": {
+    "time": "O(rows × cols) for a full traversal; O(n²) for an n×n rotation",
+    "space": "O(1) extra with boundaries or in-place markers; O(rows × cols) if you allocate a visited grid or a copy",
+    "why": "Time is forced: a spiral must emit every cell, so it cannot beat the size of the input, and every cell is touched a constant number of times — once by the walk, or twice by transpose-then-reverse (each swap moves two cells, each reversal moves two cells). There is no cleverness available on the time axis, which is precisely why interviewers grade these problems on space and on correctness at the edges. The boundary technique is O(1) because four `int`s replace a grid of booleans, and rotation is O(1) because transpose and row-reversal are both sequences of in-place swaps, each needing a single temporary. Note that the output list of a spiral is O(rows × cols), but output is not counted as auxiliary space."
+  },
+  "commonMistakes": [
+    {
+      "mistake": "Confusing `matrix.length` with `matrix[0].length`",
+      "fix": "`matrix.length` = rows, `matrix[0].length` = columns. On a square matrix the confusion compiles and runs and quietly transposes your answer; on a rectangular one it throws. Test with a 2×5 input every time."
+    },
+    {
+      "mistake": "Omitting the `top <= bottom` and `left <= right` guards in the spiral",
+      "fix": "When the rectangle has narrowed to one row or one column, the bottom and left passes re-emit cells the top and right passes already took. Add both `if`s and test with `[[1,2,3]]` and `[[1],[2],[3]]`."
+    },
+    {
+      "mistake": "Indexing before bounds-checking",
+      "fix": "`grid[nr][nc]` throws if `nr` or `nc` is out of range, so the bounds test must come first in the `&&`/`||` chain — the short-circuit is doing real work, not tidying."
+    },
+    {
+      "mistake": "Transposing with the inner loop starting at `c = 0`",
+      "fix": "That swaps every pair twice and the matrix comes back unchanged. Start at `c = r + 1` so only the upper triangle is visited."
+    },
+    {
+      "mistake": "Setting zeroes in Set Matrix Zeroes during the first pass",
+      "fix": "A zero you write becomes indistinguishable from a zero that was in the input, and it cascades until the whole matrix is zero. Collect the rows and columns first, apply afterwards."
+    },
+    {
+      "mistake": "Assuming the matrix is square, or non-empty",
+      "fix": "Handle `rows != cols`, and guard `matrix.length == 0` before touching `matrix[0]` — a zero-row matrix makes `matrix[0].length` throw."
+    },
+    {
+      "mistake": "Allocating a `boolean[][] visited` out of habit",
+      "fix": "Ask what the order already tells you. For a prescribed traversal, boundaries or an index transform give the same answer in O(1) space."
+    }
+  ],
+  "realWorldUses": [
+    "Image processing: rotation, mirroring and cropping are index transforms on a pixel matrix; convolution kernels are direction-vector walks with weights.",
+    "Game boards — chess, minesweeper, Conway's Game of Life — are grids whose rules are neighbour scans.",
+    "Spreadsheets and data tables: row/column addressing, transposition and pivoting.",
+    "Screen and tile rendering: a 2-D buffer walked in a fixed order, and sprite rotation done in place to avoid a second buffer.",
+    "Robot and drone coverage planning literally walks a spiral or boustrophedon path over a grid of cells.",
+    "Dense linear algebra: matrix multiplication and transposition, where the row/column loop order also determines cache behaviour."
+  ],
+  "interviewNotes": [
+    "Write `int rows = matrix.length; int cols = matrix[0].length;` as your first two lines, out loud. It signals index discipline before you have written any logic.",
+    "Name the two guards before you code them: 'a single remaining row or column would be walked twice, so I need these two checks'. Spotting that bug in advance is most of the signal in Spiral Matrix.",
+    "For rotation, derive transpose-then-reverse rather than reciting it — say that transposing maps row r onto column r, which is a clockwise turn plus a mirror, so reversing each row undoes the mirror.",
+    "Use a `DIRS` array as soon as more than one direction is involved, and say why: four copy-pasted neighbour blocks is where a sign error hides.",
+    "Ask whether you may mutate the input before reaching for in-place markers. If not, the O(rows + cols) two-set solution to Set Matrix Zeroes is the honest answer.",
+    "Standard follow-ups: 'anti-clockwise?', 'what if it is not square?', 'can you do it without extra space?', 'now do the diagonal traversal'."
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "mcq",
+      "question": "For `int[][] matrix`, which expression gives the number of columns?",
+      "options": [
+        "matrix.length",
+        "matrix[0].length",
+        "matrix.length * matrix[0].length",
+        "matrix.size()"
+      ],
+      "answerIndex": 1,
+      "explanation": "A 2-D array is an array of row arrays. `matrix.length` counts the rows; the length of any one row, `matrix[0].length`, is the column count. Arrays have a `length` field, not a `size()` method — that belongs to collections."
+    },
+    {
+      "id": "q2",
+      "type": "mcq",
+      "question": "In the four-boundary spiral, what goes wrong if you drop the `if (top <= bottom)` guard before the bottom-row pass?",
+      "options": [
+        "It runs forever",
+        "It throws ArrayIndexOutOfBoundsException on every input",
+        "When only one row remains, that row is emitted a second time in reverse",
+        "Nothing — the guard is defensive only"
+      ],
+      "answerIndex": 2,
+      "explanation": "After the top row is consumed `top` moves past it. If that was the last row, `top > bottom`, and the bottom pass would walk the very same row backwards, duplicating every element. `[[1,2,3]]` produces 1,2,3,2,1 instead of 1,2,3."
+    },
+    {
+      "id": "q3",
+      "type": "mcq",
+      "question": "How do you rotate an n×n matrix 90° clockwise in place?",
+      "options": [
+        "Reverse each row, then transpose",
+        "Transpose, then reverse each row",
+        "Transpose twice",
+        "Reverse each column, then reverse each row"
+      ],
+      "answerIndex": 1,
+      "explanation": "Transpose reflects across the main diagonal, which is a clockwise rotation composed with a horizontal mirror; reversing each row cancels the mirror. Doing it the other way round — reverse rows, then transpose — gives the anti-clockwise rotation."
+    },
+    {
+      "id": "q4",
+      "type": "complexity",
+      "question": "What is the extra space used by the four-boundary spiral traversal, not counting the output list?",
+      "options": [
+        "O(rows × cols)",
+        "O(rows + cols)",
+        "O(1)",
+        "O(min(rows, cols))"
+      ],
+      "answerIndex": 2,
+      "explanation": "Four `int` boundaries and a loop counter — a constant amount, independent of the input size. That is the entire point of the pattern: the traversal order is known in advance, so nothing needs to be remembered."
+    },
+    {
+      "id": "q5",
+      "type": "mcq",
+      "question": "Given `int[][] DIRS = {{0,1},{1,0},{0,-1},{-1,0}}` applied as `r + d[0], c + d[1]`, what does `{0,1}` mean?",
+      "options": [
+        "Move up one row",
+        "Move right one column",
+        "Move down one row",
+        "Stay put"
+      ],
+      "answerIndex": 1,
+      "explanation": "The first component is the row delta and the second is the column delta, so `{0,1}` leaves the row alone and increases the column — one step right. Listed in this order the four vectors cycle clockwise, which makes `dir = (dir + 1) % 4` a right turn."
+    },
+    {
+      "id": "q6",
+      "type": "identify-pattern",
+      "question": "'Given a grid of 0s and 1s, find the length of the shortest path from the top-left to the bottom-right through 0-cells.' Which approach?",
+      "options": [
+        "Spiral traversal with four boundaries",
+        "BFS over the grid, treating each open cell as a node",
+        "Transpose then reverse",
+        "Binary search on the answer"
+      ],
+      "answerIndex": 1,
+      "explanation": "'Shortest path' on an unweighted grid is a graph question, not a traversal question — the matrix pattern supplies the direction-vector idiom and the bounds check, but the algorithm is BFS, which explores in rings and so reaches the target by the fewest steps first."
+    }
+  ],
+  "practiceProblems": [
+    "spiral-matrix",
+    "rotate-image",
+    "set-matrix-zeroes",
+    "diagonal-traverse",
+    "game-of-life"
+  ],
+  "related": [
+    "arrays",
+    "bfs",
+    "dfs",
+    "graphs",
+    "two-pointers"
+  ]
+}

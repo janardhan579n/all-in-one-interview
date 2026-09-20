@@ -1,0 +1,187 @@
+{
+  "id": "word-search-ii",
+  "title": "Word Search II",
+  "patternId": "trie",
+  "difficulty": "advanced",
+  "tags": [
+    "trie",
+    "backtracking",
+    "dfs",
+    "matrix",
+    "string"
+  ],
+  "statement": "Given an m × n board of characters and a list of words, return every word from the list that can be formed on the board. A word is formed from letters of sequentially adjacent cells — horizontally or vertically neighbouring — and the same cell may not be used more than once within a single word.",
+  "realWorld": "The generic shape is 'match a whole dictionary against a stream or a space in one pass instead of one pattern at a time' — which is what intrusion-detection systems, content filters and `grep -F` with thousands of patterns do, using Aho–Corasick: a trie of all the patterns, plus links that let the scan continue after a partial match.",
+  "examples": [
+    {
+      "input": "board = [[\"o\",\"a\",\"a\",\"n\"],[\"e\",\"t\",\"a\",\"e\"],[\"i\",\"h\",\"k\",\"r\"],[\"i\",\"f\",\"l\",\"v\"]], words = [\"oath\",\"pea\",\"eat\",\"rain\"]",
+      "output": "[\"eat\",\"oath\"]",
+      "explanation": "\"oath\" runs o(0,0)→a(0,1)→t(1,1)→h(2,1); \"eat\" runs e(1,3)→a(1,2)→t(1,1). \"pea\" fails at once — the board has no 'p', so the trie has no such child at the root and the search never starts. \"rain\" runs out of adjacency."
+    },
+    {
+      "input": "board = [[\"a\",\"b\"],[\"c\",\"d\"]], words = [\"abcb\"]",
+      "output": "[]",
+      "explanation": "a→b→c is not a valid path, and even reaching 'b' twice is forbidden: a cell cannot be reused within one word."
+    },
+    {
+      "input": "board = [[\"a\"]], words = [\"a\",\"a\",\"aa\"]",
+      "output": "[\"a\"]",
+      "explanation": "Duplicates in the input must not be duplicated in the output — clearing the trie's terminal flag on a hit handles this for free. \"aa\" would need the single cell twice."
+    }
+  ],
+  "constraints": [
+    "m == board.length, n == board[i].length",
+    "1 <= m, n <= 12",
+    "board[i][j] is a lowercase English letter",
+    "1 <= words.length <= 3 * 10^4",
+    "1 <= words[i].length <= 10",
+    "words[i] consists of lowercase English letters",
+    "All strings in words are unique in the classic statement, but a robust solution should not depend on it"
+  ],
+  "bruteForce": {
+    "idea": "Solve Word Search once per word: for each word, start a DFS from every cell and try to spell it out.",
+    "code": [
+      "List<String> found = new ArrayList<>();",
+      "for (String word : words) {                       // 30,000 independent searches",
+      "    if (exists(board, word)) found.add(word);",
+      "}",
+      "return found;",
+      "",
+      "private static boolean exists(char[][] board, String word) {",
+      "    for (int r = 0; r < board.length; r++) {",
+      "        for (int c = 0; c < board[0].length; c++) {",
+      "            if (dfs(board, r, c, word, 0)) return true;   // re-walks the same paths",
+      "        }",
+      "    }",
+      "    return false;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(W · m · n · 3^L) — W words, each searched from every cell, each search branching three ways per step",
+      "space": "O(L) for the recursion"
+    },
+    "whySlow": "Every word is searched in complete isolation, so shared prefixes are re-explored from scratch. If the dictionary contains `oath`, `oaths`, `oat` and `oatmeal`, the path o→a→t is walked four separate times over the same cells. Worse, nothing prunes: a search for `zebra` on a board containing no 'z' still starts m·n times before failing. With W = 30,000 that is thirty thousand full-board traversals to answer one question."
+  },
+  "patternIdentification": "Two signals fire together. 'Search a grid for paths' is DFS with backtracking — mark the cell, recurse into the four neighbours, unmark on the way out. 'Match against a whole word list at once, not one word at a time' is the trie signal: the dictionary is fixed, the words share prefixes, and what you actually need at each cell is the question *is there any word that continues this way?* — which is exactly 'does this trie node have a child for this character?'. Inverting the loops is the leap: instead of walking the board once per word, walk the board once and carry a trie node alongside the position. The trie then prunes the search, because a branch dies the instant no word carries the prefix built so far.",
+  "optimized": {
+    "idea": "Build one trie from the whole word list. Then DFS from every cell, carrying the current trie node next to the current position: a step onto a neighbouring cell is legal only if the trie node has a child for that cell's letter. When a node is terminal, record the word stored on it and clear the flag so it is never reported twice. The trie turns 30,000 searches into one, and it prunes aggressively — most DFS branches die after one or two characters because no word continues that way. Store the whole word on the terminal node so no StringBuilder is needed, and mark visited cells by mutating the board in place, restoring the character on the way out.",
+    "code": [
+      "import java.util.ArrayList;",
+      "import java.util.List;",
+      "",
+      "class Solution {",
+      "",
+      "    private static final class TrieNode {",
+      "        final TrieNode[] next = new TrieNode[26];   // lowercase a-z is guaranteed here",
+      "        String word;                               // non-null ⇒ a word ends at this node",
+      "    }",
+      "",
+      "    public List<String> findWords(char[][] board, String[] words) {",
+      "        TrieNode root = buildTrie(words);",
+      "        List<String> found = new ArrayList<>();",
+      "",
+      "        for (int r = 0; r < board.length; r++) {",
+      "            for (int c = 0; c < board[0].length; c++) {",
+      "                dfs(board, r, c, root, found);",
+      "            }",
+      "        }",
+      "        return found;",
+      "    }",
+      "",
+      "    private TrieNode buildTrie(String[] words) {",
+      "        TrieNode root = new TrieNode();",
+      "        for (String word : words) {",
+      "            TrieNode node = root;",
+      "            for (char ch : word.toCharArray()) {",
+      "                int i = ch - 'a';",
+      "                if (node.next[i] == null) node.next[i] = new TrieNode();",
+      "                node = node.next[i];        // shared prefixes are walked once, stored once",
+      "            }",
+      "            node.word = word;               // the whole word lives on its terminal node",
+      "        }",
+      "        return root;",
+      "    }",
+      "",
+      "    private void dfs(char[][] board, int r, int c, TrieNode node, List<String> found) {",
+      "        if (r < 0 || r >= board.length || c < 0 || c >= board[0].length) return;",
+      "",
+      "        char ch = board[r][c];",
+      "        if (ch == '#') return;              // '#' marks a cell already used in THIS word",
+      "",
+      "        TrieNode child = node.next[ch - 'a'];",
+      "        if (child == null) return;          // THE PRUNE: no word continues this way",
+      "",
+      "        if (child.word != null) {",
+      "            found.add(child.word);",
+      "            child.word = null;              // de-duplicate without a HashSet",
+      "        }",
+      "",
+      "        board[r][c] = '#';                  // mark visited",
+      "        dfs(board, r + 1, c, child, found);",
+      "        dfs(board, r - 1, c, child, found);",
+      "        dfs(board, r, c + 1, child, found);",
+      "        dfs(board, r, c - 1, child, found);",
+      "        board[r][c] = ch;                   // UNMARK — the cell is free for other words",
+      "    }",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(total characters in words) to build the trie, plus O(m · n · 4 · 3^(L-1)) for the search, where L is the longest word — the first step has four directions and every later one has three, since you never walk straight back",
+      "space": "O(total characters in words) for the trie, plus O(L) recursion depth. The board is marked in place, so the visited set costs nothing"
+    }
+  },
+  "visualization": {
+    "engine": "trieOps",
+    "title": "The dictionary as one trie — a DFS step is legal only if the current node has a child for that letter",
+    "input": {
+      "words": [
+        "oath",
+        "pea",
+        "eat",
+        "rain"
+      ],
+      "search": "eat",
+      "prefix": "ea"
+    },
+    "code": [
+      "TrieNode root = new TrieNode();                               // one trie for the WHOLE list",
+      "TrieNode node = root;                                         // --- buildTrie(words) ---",
+      "for (char c : word.toCharArray())                             // an existing child is reused",
+      "    node = node.children.computeIfAbsent(c, x -> new TrieNode());  // a missing one is created",
+      "node.word = word;                                             // terminal: the word ends here",
+      "",
+      "node = root;                                                  // --- a DFS path on the board ---",
+      "for (char c : path) { node = node.children.get(c); if (node == null) break; }   // null ⇒ prune",
+      "if (node != null && node.word != null) found.add(node.word);  // a word ends at this cell",
+      "",
+      "node = root;                                                  // --- why the prune works ---",
+      "for (char c : prefix.toCharArray()) node = node.children.get(c);   // everything below is still reachable"
+    ]
+  },
+  "commonMistakes": [
+    "Forgetting to unmark the cell after the four recursive calls. The cell must be free for a different word starting elsewhere; leaving it as '#' silently loses matches, and the bug only shows up on inputs where two answers overlap.",
+    "Checking the trie after recursing instead of before. The child lookup is the prune — testing `child == null` at the top of `dfs` is what kills a branch in O(1); doing the work first and checking later throws away the entire advantage of the trie.",
+    "Re-walking the trie from the root at every cell. Carry the current node as a DFS parameter. Restarting means each step costs O(L) instead of O(1) and no pruning survives.",
+    "Rebuilding a StringBuilder path and looking each candidate up in a HashSet. Storing the word on its terminal node removes the string building, the lookup and the de-duplication in one move.",
+    "Reporting duplicates. Clearing `child.word` after a hit is the idiomatic fix and also handles a duplicated word in the input; a HashSet works but costs memory and hashing per hit.",
+    "Skipping the optional pruning of dead trie branches. After a word is found and its flag cleared, a leaf with no children can be unlinked from its parent, which shrinks the trie as the search proceeds. It is the difference between passing and timing out on adversarial inputs such as a 12×12 board of all 'a' with words like \"aaaaaaaaaa\".",
+    "Using `TrieNode[26]` without confirming the alphabet is lowercase-only — here the constraints guarantee it, but `ch - 'a'` on any other character indexes out of bounds.",
+    "Mutating the board and then returning it to the caller, or failing to restore it fully on an early return path. Every `return` after the mark must be preceded by the unmark, which is why the mark is placed as late as possible in the method."
+  ],
+  "similar": [
+    "implement-trie",
+    "longest-common-prefix",
+    "number-of-islands",
+    "n-queens",
+    "word-search"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 212,
+      "slug": "word-search-ii",
+      "title": "Word Search II",
+      "url": "https://leetcode.com/problems/word-search-ii/",
+      "premium": false
+    }
+  }
+}

@@ -1,0 +1,129 @@
+{
+  "id": "sliding-window-maximum",
+  "title": "Sliding Window Maximum",
+  "patternId": "sliding-window",
+  "difficulty": "advanced",
+  "tags": [
+    "sliding-window",
+    "monotonic-deque",
+    "array"
+  ],
+  "statement": "Given an array nums and a window size k, the window slides one position at a time from the left end to the right end. Return an array holding the maximum of every window position — n - k + 1 values in all.",
+  "realWorld": "Streaming peak detection. A metrics agent reporting 'highest CPU in the last 60 seconds' for every second of a long run cannot afford to rescan 60 samples per tick at high cardinality. The same structure powers rolling-maximum indicators in market data feeds and the peak-hold display on an audio meter.",
+  "examples": [
+    {
+      "input": "nums = [1,3,-1,-3,5,3,6,7], k = 3",
+      "output": "[3,3,5,5,6,7]",
+      "explanation": "Windows [1,3,-1] -> 3, [3,-1,-3] -> 3, [-1,-3,5] -> 5, [-3,5,3] -> 5, [5,3,6] -> 6, [3,6,7] -> 7. Notice the 3 stays the answer for two windows and then expires by position, not by being beaten."
+    },
+    {
+      "input": "nums = [7,2,4], k = 3",
+      "output": "[7]",
+      "explanation": "One window covering the whole array. The 7 is never evicted from the front because the window never advances past index 0."
+    },
+    {
+      "input": "nums = [1,-1], k = 1",
+      "output": "[1,-1]",
+      "explanation": "Windows of size 1. Every element is its own maximum, including the negative one — the case that breaks any solution initialising its running max to 0."
+    }
+  ],
+  "constraints": [
+    "1 <= nums.length <= 10^5",
+    "-10^4 <= nums[i] <= 10^4",
+    "1 <= k <= nums.length"
+  ],
+  "bruteForce": {
+    "idea": "For every window position, scan its k elements and take the largest.",
+    "code": [
+      "int n = nums.length;",
+      "int[] result = new int[n - k + 1];",
+      "for (int i = 0; i + k <= n; i++) {",
+      "    int best = nums[i];",
+      "    for (int j = i + 1; j < i + k; j++) {",
+      "        if (nums[j] > best) best = nums[j];",
+      "    }",
+      "    result[i] = best;",
+      "}",
+      "return result;"
+    ],
+    "complexity": {
+      "time": "O(n * k)",
+      "space": "O(1) beyond the output"
+    },
+    "whySlow": "Two adjacent windows share k-1 elements, and the rescan re-compares every one of them. Worse, most of those comparisons were already known to be losers: once you have seen that nums[i] < nums[j] for some later j inside the window, nums[i] can never be the maximum of this window or of any window further right, because every such window that contains i also contains j. The rescan keeps asking about elements that have been permanently disqualified — with k = 50,000 that is 50,000 comparisons per step to find a value that is usually the same one as last time."
+  },
+  "patternIdentification": "This is where the sliding window meets the monotonic stack. The window itself gives the usual two-pointer frame — one element enters on the right, one leaves on the left — but the aggregate is a maximum, and a maximum cannot be *undone* the way a sum can: you can subtract the departing value from a running sum, but you cannot subtract it from a running max.\n\nThe fix is the same observation that drives `daily-temperatures` and `next-greater-element`: an older element that is smaller than a newer one is dead. It can never be the answer again, because any future window containing the old one also contains the newer, larger one. So keep the candidates in a deque holding *indices*, with their values decreasing from front to back — a monotonic structure — and the front is always the current window's maximum.\n\nSeeing this pairing is the point. When a window needs a running minimum, maximum, or any aggregate that cannot be inverted on removal, the answer is a monotonic deque, not a smarter running variable. A heap also works and gives O(n log k); the deque gives O(n) because it never re-examines a candidate it has already discarded.",
+  "optimized": {
+    "idea": "Maintain a deque of indices whose values are strictly decreasing from front to back. The front is the index of the current window's maximum.\n\nAn index leaves the deque for exactly two distinct reasons, and keeping them separate is what makes the code correct:\n\n1. **It fell out of the window.** The index at the front is older than everything else; if it is <= right - k it is no longer inside [right-k+1, right], so poll it from the *front*. This is a positional eviction and has nothing to do with its value — it may well be the largest number in the array. At most one index per step can expire this way, so this is an `if`, not a `while`.\n\n2. **It was dominated by a newer, larger element.** Before pushing `right`, pop from the *back* every index whose value is <= nums[right]. Those elements are strictly older and no larger, so every future window containing them contains nums[right] too — they can never win again. This is a value-based eviction and may remove many indices at once, so it is a `while`.\n\nEach index is pushed once and popped once, which is what makes the total work O(n) despite the inner while loop.",
+    "code": [
+      "public static int[] maxSlidingWindow(int[] nums, int k) {",
+      "    int n = nums.length;",
+      "    int[] result = new int[n - k + 1];",
+      "    Deque<Integer> deque = new ArrayDeque<>();   // INDICES, values decreasing front to back",
+      "    for (int right = 0; right < n; right++) {",
+      "        if (!deque.isEmpty() && deque.peekFirst() <= right - k) {",
+      "            deque.pollFirst();        // reason 1: the front index fell out of the window",
+      "        }",
+      "        while (!deque.isEmpty() && nums[deque.peekLast()] <= nums[right]) {",
+      "            deque.pollLast();         // reason 2: an older, no-larger element can never win again",
+      "        }",
+      "        deque.offerLast(right);",
+      "        if (right >= k - 1) result[right - k + 1] = nums[deque.peekFirst()];",
+      "    }",
+      "    return result;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n) — each index is pushed once and popped once",
+      "space": "O(k) for the deque"
+    }
+  },
+  "visualization": {
+    "engine": "monotonicStack",
+    "input": {
+      "array": [
+        1,
+        3,
+        -1,
+        -3,
+        5,
+        3,
+        6,
+        7
+      ]
+    },
+    "code": [
+      "Deque<Integer> deque = new ArrayDeque<>();",
+      "for (int right = 0; right < n; right++) {",
+      "    if (!deque.isEmpty() && deque.peekFirst() <= right - k) deque.pollFirst();",
+      "    while (!deque.isEmpty() && nums[deque.peekLast()] <= nums[right]) {",
+      "        deque.pollLast();",
+      "    }",
+      "    deque.offerLast(right);",
+      "    if (right >= k - 1) result[right - k + 1] = nums[deque.peekFirst()];",
+      "}",
+      "return result;"
+    ]
+  },
+  "commonMistakes": [
+    "Storing values in the deque instead of indices. You then have no way to tell whether the front element has expired, because its position is exactly the information you threw away — the symptom is a stale maximum that outlives its window, for example [1,3,-1,-3,5,3,6,7] with k = 3 reporting 3 for the window [-1,-3,5].",
+    "Writing the front eviction as `deque.peekFirst() < right - k` instead of `<= right - k`. The window at position `right` is [right-k+1, right], so an index is stale as soon as it equals right-k, and the strict comparison keeps it one step too long: [5,1,1] with k = 2 returns [5,5] instead of [5,1]. The symptom is a maximum that is correct for the first few windows and then lags one position behind.",
+    "Using `while` for the front eviction and `if` for the back eviction — the two loops swapped. Back eviction genuinely needs to remove many elements at once, so with `if` a smaller stale value survives beneath the new one and later surfaces as the window maximum. It passes ascending and descending inputs and fails on zig-zag data like [1,3,-1,-3,5]."
+  ],
+  "similar": [
+    "daily-temperatures",
+    "next-greater-element",
+    "largest-rectangle-histogram",
+    "max-sum-subarray-k",
+    "kth-largest-element"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 239,
+      "slug": "sliding-window-maximum",
+      "title": "Sliding Window Maximum",
+      "url": "https://leetcode.com/problems/sliding-window-maximum/",
+      "premium": false
+    }
+  }
+}

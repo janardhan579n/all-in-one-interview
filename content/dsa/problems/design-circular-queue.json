@@ -1,0 +1,175 @@
+{
+  "id": "design-circular-queue",
+  "title": "Design Circular Queue",
+  "patternId": "queue",
+  "difficulty": "intermediate",
+  "tags": [
+    "queue",
+    "design",
+    "array",
+    "ring-buffer"
+  ],
+  "statement": "Implement a fixed-capacity FIFO queue on top of a single array that is allocated once and never resized: enQueue(value) and deQueue() return false when the operation is impossible, Front() and Rear() return -1 on an empty queue, and isEmpty() and isFull() report the state. Every operation must be O(1) — no element may ever be copied to a different slot.",
+  "realWorld": "Ring buffers are the standard producer/consumer handoff: an audio driver's sample buffer, a network card's DMA descriptor ring, a lock-free logging queue, the kernel's pipe buffer. Fixed memory with no per-item allocation and no copying is exactly the property these need, and the same structure backs java.util.ArrayDeque.",
+  "examples": [
+    {
+      "input": "MyCircularQueue(3); enQueue(1), enQueue(2), enQueue(3), enQueue(4), Rear(), isFull(), deQueue(), enQueue(4), Rear()",
+      "output": "true, true, true, false, 3, true, true, true, 4",
+      "explanation": "The fourth enQueue is rejected because the ring is full. After one deQueue frees a slot, the next enQueue wraps around and reuses the slot at index 0 — no element moved."
+    },
+    {
+      "input": "MyCircularQueue(2); enQueue(1), deQueue(), enQueue(2), enQueue(3), enQueue(4)",
+      "output": "true, true, true, true, false",
+      "explanation": "head and tail have both wrapped past the end by the time 3 is stored. A queue holding two elements with head == 1 and tail == 1 is full, while the same indices on an untouched queue mean empty — that ambiguity is the real problem here."
+    },
+    {
+      "input": "MyCircularQueue(1); Front(), enQueue(7), Front(), Rear(), deQueue(), Front()",
+      "output": "-1, true, 7, 7, true, -1",
+      "explanation": "Capacity 1: head and tail coincide constantly, and Front() and Rear() are the same element. The -1 sentinel distinguishes 'empty' from a stored value."
+    }
+  ],
+  "constraints": [
+    "1 <= k <= 1000",
+    "0 <= value <= 1000",
+    "At most 3000 calls in total",
+    "Every operation must be O(1) and the backing array is allocated once"
+  ],
+  "bruteForce": {
+    "idea": "Use an array in which the front always lives at index 0. enQueue appends at the current length; deQueue returns element 0 and shifts everything one slot left so the next element becomes index 0.",
+    "code": [
+      "private final int[] slots;",
+      "private int count = 0;",
+      "",
+      "public boolean deQueue() {",
+      "    if (count == 0) return false;",
+      "    for (int i = 1; i < count; i++) slots[i - 1] = slots[i];   // shift the whole tail left",
+      "    count--;",
+      "    return true;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(1) enQueue, O(n) deQueue",
+      "space": "O(k)"
+    },
+    "whySlow": "The shift copies n-1 elements purely so that the front keeps the name 'index 0'. Nothing about the data or its order changed — a label moved, and we paid n memory writes for it. Draining a full ring of k elements performs k(k-1)/2 writes to deliver k values, and a steady producer/consumer stream pays that shift on every single message forever. The array's job was to store the elements; deciding which slot is 'first' is a bookkeeping question that does not need the elements' help."
+  },
+  "patternIdentification": "When items only ever enter at one end and leave at the other, nothing needs to move — move the *indices* and let them wrap with modulo. `(i + 1) % capacity` replaces copying wherever a fixed-size window slides over a fixed array, which is the same arithmetic that backs hash-table probing and round-robin schedulers. But wrapping creates a new problem that is worth recognising on sight: once indices are allowed to lap each other, head == tail is ambiguous — it means empty on an untouched ring and full on a saturated one, and the indices alone cannot tell you which. Any wrap-around structure needs one extra bit of information to break that tie, and there are exactly two standard ways to supply it. (1) Keep an explicit size counter: isEmpty() is size == 0 and isFull() is size == capacity, both unambiguous, at the cost of one more field to keep in sync with every mutation. (2) Sacrifice one slot: never let the queue hold more than capacity - 1 elements, so tail can never catch head from behind. Then empty is head == tail and full is (tail + 1) % capacity == head. This needs no counter — which is why lock-free single-producer/single-consumer rings prefer it, since two independent indices can each be written by one side without a shared mutable counter — but it wastes a slot and makes the capacity arithmetic easy to get wrong by one.",
+  "optimized": {
+    "idea": "Take resolution (1): store head and an explicit size, and derive the tail as (head + size) % capacity so there is no second index to keep in sync. enQueue writes at the derived tail and increments size; deQueue advances head and decrements size. Both are a handful of arithmetic operations and neither touches any element other than the one being added or logically removed. Front() is slots[head]; Rear() is slots[(head + size - 1) % capacity], with the -1 because the derived tail points at the next free slot rather than at the last stored element.",
+    "code": [
+      "class MyCircularQueue {",
+      "",
+      "    private final int[] slots;",
+      "    private int head = 0;",
+      "    private int size = 0;   // the extra bit that makes head == tail unambiguous",
+      "",
+      "    public MyCircularQueue(int k) {",
+      "        slots = new int[k];",
+      "    }",
+      "",
+      "    public boolean enQueue(int value) {",
+      "        if (isFull()) return false;",
+      "        slots[(head + size) % slots.length] = value;",
+      "        size++;",
+      "        return true;",
+      "    }",
+      "",
+      "    public boolean deQueue() {",
+      "        if (isEmpty()) return false;",
+      "        head = (head + 1) % slots.length;   // nothing is copied; only the index moves",
+      "        size--;",
+      "        return true;",
+      "    }",
+      "",
+      "    public int Front() {",
+      "        return isEmpty() ? -1 : slots[head];",
+      "    }",
+      "",
+      "    public int Rear() {",
+      "        return isEmpty() ? -1 : slots[(head + size - 1) % slots.length];",
+      "    }",
+      "",
+      "    public boolean isEmpty() {",
+      "        return size == 0;",
+      "    }",
+      "",
+      "    public boolean isFull() {",
+      "        return size == slots.length;",
+      "    }",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(1) for every operation",
+      "space": "O(k)"
+    }
+  },
+  "visualization": {
+    "engine": "circularQueue",
+    "input": {
+      "capacity": 4,
+      "operations": [
+        {
+          "op": "enqueue",
+          "value": 1
+        },
+        {
+          "op": "enqueue",
+          "value": 2
+        },
+        {
+          "op": "enqueue",
+          "value": 3
+        },
+        {
+          "op": "dequeue"
+        },
+        {
+          "op": "enqueue",
+          "value": 4
+        },
+        {
+          "op": "enqueue",
+          "value": 5
+        },
+        {
+          "op": "enqueue",
+          "value": 6
+        }
+      ]
+    },
+    "code": [
+      "public boolean enQueue(int value) {",
+      "    if (isFull()) return false;",
+      "    slots[tail] = value;",
+      "    tail = (tail + 1) % slots.length;",
+      "    size++; return true;",
+      "}",
+      "public boolean deQueue() {",
+      "    if (isEmpty()) return false;",
+      "    head = (head + 1) % slots.length;",
+      "    size--; return true;",
+      "}"
+    ]
+  },
+  "commonMistakes": [
+    "Keeping head and tail with no size counter and no sacrificed slot, then testing head == tail for empty — a ring filled to capacity reports itself empty, so enQueue succeeds and overwrites the oldest unread element. The data loss is silent: the queue simply returns values that were never the front.",
+    "Wrapping only one index. Writing `if (tail == capacity) tail = 0;` in enQueue but leaving deQueue as a bare `head++` works perfectly until head reaches the end of the array, then throws ArrayIndexOutOfBoundsException — and only after the first full lap, so every short test passes.",
+    "Computing Rear() as `slots[tail]` when tail points at the next free slot, or fixing it as `slots[(tail - 1) % capacity]` — the first returns stale data from a previous lap, and the second returns slots[-1] and throws whenever tail is 0. The correct form adds the capacity back before the modulo: (tail - 1 + capacity) % capacity."
+  ],
+  "similar": [
+    "implement-queue-using-stacks",
+    "moving-average-stream",
+    "min-stack",
+    "max-sum-subarray-k",
+    "lru-cache"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 622,
+      "slug": "design-circular-queue",
+      "title": "Design Circular Queue",
+      "url": "https://leetcode.com/problems/design-circular-queue/",
+      "premium": false
+    }
+  }
+}

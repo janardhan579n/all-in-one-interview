@@ -1,0 +1,152 @@
+{
+  "id": "longest-common-prefix",
+  "title": "Longest Common Prefix",
+  "patternId": "trie",
+  "difficulty": "beginner",
+  "tags": [
+    "string",
+    "trie",
+    "prefix",
+    "array"
+  ],
+  "statement": "Write a function to find the longest string that is a prefix of every string in an array. If there is no common prefix, return the empty string \"\".",
+  "realWorld": "Collapsing a set of paths or URLs to their shared root — what a file browser does to show 'you are in /var/log/app', what a CDN does when deciding a cache-invalidation prefix, and what a router does when summarising a block of addresses into one route.",
+  "examples": [
+    {
+      "input": "strs = [\"flower\",\"flow\",\"flight\"]",
+      "output": "\"fl\"",
+      "explanation": "All three begin f,l. At the third character \"flower\" and \"flow\" have 'o' while \"flight\" has 'i', so the agreement ends after two characters."
+    },
+    {
+      "input": "strs = [\"dog\",\"racecar\",\"car\"]",
+      "output": "\"\"",
+      "explanation": "They disagree at the very first character, so the common prefix is empty. Note this is a valid answer, not a failure."
+    },
+    {
+      "input": "strs = [\"interspecies\",\"interstellar\",\"interstate\"]",
+      "output": "\"inters\"",
+      "explanation": "Six characters shared. The answer is bounded by the shortest string, which here is longer than the answer."
+    },
+    {
+      "input": "strs = [\"ab\",\"a\"]",
+      "output": "\"a\"",
+      "explanation": "The shortest string ends first. A common prefix can never be longer than the shortest input, so the scan must stop there."
+    }
+  ],
+  "constraints": [
+    "1 <= strs.length <= 200",
+    "0 <= strs[i].length <= 200",
+    "strs[i] consists of lowercase English letters only",
+    "An empty string may appear in the array, in which case the answer is \"\""
+  ],
+  "bruteForce": {
+    "idea": "Horizontal scanning: take the first string as a candidate prefix and shrink it by one character at a time until every other string starts with it.",
+    "code": [
+      "public static String longestCommonPrefix(String[] strs) {",
+      "    if (strs.length == 0) return \"\";",
+      "    String prefix = strs[0];",
+      "",
+      "    for (int i = 1; i < strs.length; i++) {",
+      "        while (!strs[i].startsWith(prefix)) {      // re-compares the same leading chars",
+      "            prefix = prefix.substring(0, prefix.length() - 1);   // a new String each time",
+      "            if (prefix.isEmpty()) return \"\";",
+      "        }",
+      "    }",
+      "    return prefix;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(S) comparisons in the best case but O(S · L) work in the worst, where S is the total number of characters and L the prefix length",
+      "space": "O(L) for the repeated substrings"
+    },
+    "whySlow": "Each `startsWith` re-compares the candidate from character 0, so a prefix that shrinks one character at a time re-reads the same leading characters L times over. Worse, `substring` allocates a fresh String on every shrink — so a case like [\"aaaa…a\", \"aaaa…b\"] does quadratic character work and allocates L strings to discover a single mismatch that the first pass could have seen. The algorithm keeps asking a question it has already answered."
+  },
+  "patternIdentification": "This is the trie lesson's idea without the trie object. Imagine inserting every string into a prefix tree: the words share a single chain of nodes for as long as they agree, and the moment two of them differ that chain branches. **The longest common prefix is exactly the path from the root down to the first node that has more than one child, or that ends a word.** Seeing that tells you two things at once — that you should compare the strings *column by column* rather than string by string, and that you can stop the instant a column disagrees or the shortest string runs out. You do not need to build the trie; the vertical scan walks the same spine for free.",
+  "optimized": {
+    "idea": "Vertical scanning. Fix a character position, compare that column across every string, and stop at the first disagreement or at the end of the shortest string. This walks exactly the trie's single-child spine: one pass, each character read at most once, no allocation until the answer is cut. When you need the answer repeatedly against a changing query rather than once over a fixed array, build the actual trie instead and walk down while `children.size() == 1 && !isWord` — same spine, amortised over many queries.",
+    "code": [
+      "/**",
+      " * Vertical scan: compare column 0 across all strings, then column 1, and so on.",
+      " * This is the trie's single-child spine, walked without building the trie.",
+      " * O(S) worst case where S is the total number of characters; O(1) extra space.",
+      " */",
+      "public static String longestCommonPrefix(String[] strs) {",
+      "    if (strs == null || strs.length == 0) return \"\";",
+      "",
+      "    for (int column = 0; column < strs[0].length(); column++) {",
+      "        char expected = strs[0].charAt(column);",
+      "",
+      "        for (int i = 1; i < strs.length; i++) {",
+      "            // The shortest string ends the prefix — a trie node with no child here.",
+      "            if (column == strs[i].length() || strs[i].charAt(column) != expected) {",
+      "                return strs[0].substring(0, column);   // one allocation, at the end",
+      "            }",
+      "        }",
+      "    }",
+      "    return strs[0];   // strs[0] is itself a prefix of every other string",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(S) worst case, where S is the total number of characters; in practice it stops at the first mismatched column, so the typical cost is O(strs.length × answer length)",
+      "space": "O(1) extra — a single substring is allocated for the result"
+    }
+  },
+  "visualization": {
+    "engine": "trieOps",
+    "title": "The same words in a trie — the answer is the single-child spine f→l, where the tree first branches",
+    "input": {
+      "words": [
+        "flower",
+        "flow",
+        "flight"
+      ],
+      "search": "flow",
+      "prefix": "fl"
+    },
+    "code": [
+      "TrieNode root = new TrieNode();                               // the root holds no character",
+      "TrieNode node = root;                                         // --- insert every word ---",
+      "for (char c : word.toCharArray())                             // an existing child is reused",
+      "    node = node.children.computeIfAbsent(c, x -> new TrieNode());  // a missing one branches",
+      "node.isWord = true;                                           // terminal: the word ends here",
+      "",
+      "node = root;                                                  // --- search(word) ---",
+      "for (char c : word.toCharArray()) { node = node.children.get(c); if (node == null) break; }",
+      "boolean found = node != null && node.isWord;                  // a word may end mid-spine",
+      "",
+      "node = root;                                                  // --- startsWith(prefix) ---",
+      "for (char c : prefix.toCharArray()) node = node.children.get(c);   // then collect everything below",
+      "",
+      "// --- the answer: walk down while the spine is unbranched and no word has ended ---",
+      "node = root;  StringBuilder lcp = new StringBuilder();",
+      "while (node.children.size() == 1 && !node.isWord) {            // one child ⇒ still shared",
+      "    char c = node.children.keySet().iterator().next();",
+      "    lcp.append(c);",
+      "    node = node.children.get(c);",
+      "}   // lcp is now \"fl\" — exactly where the spine stops and the tree branches"
+    ]
+  },
+  "commonMistakes": [
+    "Indexing past the end of a shorter string. The common prefix can never exceed the shortest input, so the column loop must check `column == strs[i].length()` before calling `charAt` — otherwise [\"ab\",\"a\"] throws StringIndexOutOfBoundsException.",
+    "Returning null or throwing when there is no common prefix. The empty string is the correct answer for [\"dog\",\"racecar\"], and callers rely on it.",
+    "Shrinking a candidate with `substring` inside a loop. Each call allocates and copies, turning an O(S) problem into quadratic character work plus L allocations.",
+    "Building an actual trie for a single query. It is the right mental model and the wrong implementation here: constructing the trie costs O(S) time *and* O(S) space, while the vertical scan gets the same answer in O(S) time and O(1) space. Build the trie only when many queries will amortise it.",
+    "Sorting the array and comparing only the first and last strings. This is a legitimate trick — lexicographic extremes bound the common prefix — but it costs O(S log n) for the sort, which is worse than the linear scan; offer it as an alternative, not as the optimisation.",
+    "Ignoring an empty string in the input. One \"\" forces the answer to \"\", and a loop that only compares non-empty strings will miss it."
+  ],
+  "similar": [
+    "implement-trie",
+    "word-search-ii",
+    "group-anagrams",
+    "valid-parentheses"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 14,
+      "slug": "longest-common-prefix",
+      "title": "Longest Common Prefix",
+      "url": "https://leetcode.com/problems/longest-common-prefix/",
+      "premium": false
+    }
+  }
+}

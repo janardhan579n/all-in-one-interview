@@ -1,0 +1,133 @@
+{
+  "id": "permutation-in-string",
+  "title": "Permutation in String",
+  "patternId": "sliding-window",
+  "difficulty": "intermediate",
+  "tags": [
+    "sliding-window",
+    "string",
+    "counting"
+  ],
+  "statement": "Given two strings s1 and s2, return true if s2 contains a permutation of s1 as a contiguous substring. In other words, return true if any window of s2 of length s1.length() has exactly the same character multiset as s1.",
+  "realWorld": "Scanning a byte stream for a signature whose field order is not fixed — a protocol header whose options may appear in any order, or an anagram-based content filter that must catch a term however its letters are arranged. The same machinery detects a fixed-size basket of items appearing together in a transaction log regardless of order.",
+  "examples": [
+    {
+      "input": "s1 = \"ab\", s2 = \"eidbaooo\"",
+      "output": "true",
+      "explanation": "The window \"ba\" at indices 3..4 is a permutation of \"ab\". Order inside the window is irrelevant — only the counts matter."
+    },
+    {
+      "input": "s1 = \"ab\", s2 = \"eidboaoo\"",
+      "output": "false",
+      "explanation": "Both characters appear, but never adjacent: \"b\" is at index 3 and \"a\" at index 5. A solution that merely checks whether the characters are present anywhere returns true here."
+    },
+    {
+      "input": "s1 = \"adc\", s2 = \"dcda\"",
+      "output": "true",
+      "explanation": "The match is the final window \"cda\", found only after the loop has slid all the way to the end — the case that catches a solution that forgets to test the last window."
+    }
+  ],
+  "constraints": [
+    "1 <= s1.length, s2.length <= 10^4",
+    "s1 and s2 consist of lowercase English letters",
+    "If s1 is longer than s2 the answer is false"
+  ],
+  "bruteForce": {
+    "idea": "For every window of s2 with length s1.length(), build a fresh 26-element count array and compare it with s1's.",
+    "code": [
+      "int[] need = new int[26];",
+      "for (char ch : s1.toCharArray()) need[ch - 'a']++;",
+      "for (int i = 0; i + s1.length() <= s2.length(); i++) {",
+      "    int[] window = new int[26];",
+      "    for (int t = i; t < i + s1.length(); t++) window[s2.charAt(t) - 'a']++;",
+      "    if (Arrays.equals(need, window)) return true;",
+      "}",
+      "return false;"
+    ],
+    "complexity": {
+      "time": "O(n * m) where m = s1.length()",
+      "space": "O(1)"
+    },
+    "whySlow": "Consecutive windows overlap in all but two characters, and the code rebuilds the count table for every one of them — re-reading m-1 characters it already counted a moment ago. On s1 of length 5000 inside s2 of length 10000 that is roughly 25 million character reads to maintain a table that two increments and two decrements would keep correct."
+  },
+  "patternIdentification": "The window size is fixed by the problem — it is always s1.length() — so this is the *fixed*-size sliding window, not the grow-and-shrink kind: one character enters on the right and exactly one leaves on the left, in lockstep. The signal is the phrase 'contiguous substring of length k' (here k is given indirectly, as the length of the other string).\n\nThe second, more transferable idea is the **match counter**. Even with an incrementally maintained table, comparing two 26-element arrays at every position is 26 reads per step. But those two arrays can only differ where their contents changed, and only two slots change per step. So maintain a single integer `matches` = how many of the 26 letters currently satisfy have[c] == need[c], and update it only for the two letters that moved. The answer is 'yes' exactly when matches == 26 — an O(1) test. Generally: when you repeatedly re-derive a boolean from a whole structure that changes in a bounded way, promote that boolean to a maintained counter.",
+  "optimized": {
+    "idea": "Build `need` from s1 and `have` from the first window of s2, then compute `matches`, the number of the 26 letters whose counts already agree. Slide the window one position at a time: the entering letter's count goes up and the leaving letter's count goes down, and for each of those two letters check whether the change just made it agree (matches++) or just broke an agreement (matches--). Nothing else can change. A window is a permutation of s1 precisely when matches == 26, which includes all the letters that are zero in both.\n\nThe two update rules read oddly at first. After `have[in]++`, the count agrees now if have[in] == need[in]; it disagreed a moment ago and now agrees, so matches++. If have[in] == need[in] + 1 then it agreed a moment ago and no longer does, so matches--. Any other value means it disagreed before and still does. The symmetric pair applies to the decrement.",
+    "code": [
+      "public static boolean checkInclusion(String s1, String s2) {",
+      "    if (s1.length() > s2.length()) return false;",
+      "    int[] need = new int[26];",
+      "    int[] have = new int[26];",
+      "    for (int i = 0; i < s1.length(); i++) {",
+      "        need[s1.charAt(i) - 'a']++;",
+      "        have[s2.charAt(i) - 'a']++;",
+      "    }",
+      "    int matches = 0;",
+      "    for (int c = 0; c < 26; c++) if (need[c] == have[c]) matches++;",
+      "    for (int right = s1.length(); right < s2.length(); right++) {",
+      "        if (matches == 26) return true;",
+      "        int in = s2.charAt(right) - 'a';",
+      "        int out = s2.charAt(right - s1.length()) - 'a';",
+      "        have[in]++;",
+      "        if (have[in] == need[in]) matches++;              // only the two letters that moved can flip a match",
+      "        else if (have[in] == need[in] + 1) matches--;",
+      "        have[out]--;",
+      "        if (have[out] == need[out]) matches++;",
+      "        else if (have[out] == need[out] - 1) matches--;",
+      "    }",
+      "    return matches == 26;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n + m)",
+      "space": "O(1) — two arrays of 26 counters"
+    }
+  },
+  "visualization": {
+    "engine": "slidingWindowFixed",
+    "input": {
+      "array": [
+        5,
+        9,
+        4,
+        2,
+        8,
+        1,
+        7
+      ],
+      "k": 2
+    },
+    "code": [
+      "for (int i = 0; i < s1.length(); i++) {",
+      "    need[s1.charAt(i) - 'a']++;",
+      "    have[s2.charAt(i) - 'a']++;",
+      "}",
+      "for (int right = s1.length(); right < s2.length(); right++) {",
+      "    if (matches == 26) return true;",
+      "    have[s2.charAt(right) - 'a']++;",
+      "    have[s2.charAt(right - s1.length()) - 'a']--;",
+      "}",
+      "return matches == 26;"
+    ]
+  },
+  "commonMistakes": [
+    "Checking `matches == 26` only inside the loop and never after it. The loop body tests the window *before* sliding, so the final window is never examined: s1 = \"adc\", s2 = \"dcda\" returns false because the answer is the last window \"cda\". The symptom is a solution that is correct unless the match sits at the very end.",
+    "Updating `matches` by recomputing it from the whole array anyway, or by comparing have and need with Arrays.equals inside the loop. The answer is right but the run time is back to O(26n), which on the largest inputs is the difference between passing and a timeout — and in an interview it signals you did not see why the counter exists.",
+    "Forgetting the `if (s1.length() > s2.length()) return false` guard. Building the first window then reads past the end of s2 and throws StringIndexOutOfBoundsException, which never happens in the sample cases because s1 is always the shorter string there."
+  ],
+  "similar": [
+    "group-anagrams",
+    "longest-substring-no-repeat",
+    "min-window-substring",
+    "longest-repeating-char-replacement"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 567,
+      "slug": "permutation-in-string",
+      "title": "Permutation in String",
+      "url": "https://leetcode.com/problems/permutation-in-string/",
+      "premium": false
+    }
+  }
+}

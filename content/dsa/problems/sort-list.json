@@ -1,0 +1,149 @@
+{
+  "id": "sort-list",
+  "title": "Sort List",
+  "patternId": "sorting",
+  "difficulty": "intermediate",
+  "tags": [
+    "sorting",
+    "linked-list",
+    "merge-sort",
+    "divide-and-conquer"
+  ],
+  "statement": "Given the head of a linked list, return the list sorted in ascending order. Aim for O(n log n) time and no copying of the elements — the nodes must be relinked, not rewritten.",
+  "realWorld": "External merge sort — sorting a dataset larger than memory — is exactly this algorithm: split into runs, sort each run, merge the runs. The same structure drives compaction in an LSM-tree storage engine, where sorted runs of records are merged into a new level by advancing cursors and emitting the smaller key, never by loading everything into an array.",
+  "examples": [
+    {
+      "input": "head = [4,2,1,3]",
+      "output": "[1,2,3,4]",
+      "explanation": "Split into [4,2] and [1,3], sort each to [2,4] and [1,3], then merge: 1, 2, 3, 4."
+    },
+    {
+      "input": "head = [-1,5,3,4,0]",
+      "output": "[-1,0,3,4,5]",
+      "explanation": "The middle split gives [-1,5,3] and [4,0]. The left sorts to [-1,3,5] (via [-1,5] and [3]) and the right to [0,4]. Merging them compares -1 vs 0, 3 vs 0, 3 vs 4, 5 vs 4, and then attaches the leftover [5] with a single pointer assignment."
+    },
+    {
+      "input": "head = []",
+      "output": "[]",
+      "explanation": "The guard returns immediately. The same guard is what terminates the recursion on single-node sublists, which is why it covers both the empty input and the base case."
+    }
+  ],
+  "constraints": [
+    "0 <= number of nodes <= 5 * 10^4",
+    "-10^5 <= Node.val <= 10^5",
+    "O(n log n) time; elements must be relinked rather than copied"
+  ],
+  "bruteForce": {
+    "idea": "Sort in place the way you would an array: choose a pivot and partition around it. With no random access, the only pivot available for free is the head, so partition the remaining nodes into a 'less' list and a 'not less' list and recurse on each.",
+    "code": [
+      "Node quickSort(Node head) {",
+      "    if (head == null || head.next == null) return head;",
+      "    Node pivot = head;                      // the only node we can reach in O(1)",
+      "    Node lessHead = new Node(0), less = lessHead;",
+      "    Node moreHead = new Node(0), more = moreHead;",
+      "    for (Node p = head.next; p != null; p = p.next) {",
+      "        if (p.val < pivot.val) { less.next = p; less = p; }",
+      "        else { more.next = p; more = p; }",
+      "    }",
+      "    less.next = null;",
+      "    more.next = null;",
+      "    Node left = quickSort(lessHead.next);",
+      "    Node right = quickSort(moreHead.next);",
+      "    pivot.next = right;",
+      "    return concat(left, pivot);",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n^2) worst case, O(n log n) average",
+      "space": "O(n) recursion stack in the worst case"
+    },
+    "whySlow": "The pivot is the problem, and the cause is the data structure. On an array you reach the middle element, or three sampled elements for a median-of-three, in constant time — that constant-time reach is what keeps quicksort's partitions balanced. A linked list hands you only the head for free: sampling any other candidate costs a walk, so a better pivot costs O(n) per level and buys nothing the merge already gives you. Take the head instead and an already-sorted list — the single most common real input, since data usually arrives partly ordered — partitions into 0 and n-1 every single time, so the recursion is n levels deep and performs n(n-1)/2 comparisons. Either way the wasted work is traversals spent hunting for a pivot the structure will not surrender."
+  },
+  "patternIdentification": "You are sorting a structure with no random access. That rules out every algorithm whose inner loop indexes — heapsort, quicksort with a positional pivot, anything containing a[i] — and leaves the divide-and-conquer sort whose merge step is purely sequential. The transferable rule is to match the algorithm to the access pattern the structure actually supports rather than to the one you memorised for arrays. The corollary is pleasant: merge sort's weakness on arrays is the O(n) scratch buffer it needs to merge, and on a linked list that weakness vanishes, because merging means rewriting next pointers rather than copying elements.",
+  "optimized": {
+    "idea": "Merge sort, performed by relinking. Split the list at its middle using fast/slow with fast starting one node ahead, which guarantees the first half is non-empty even for a two-node list, and cut the halves apart with slow.next = null — without that cut the recursion gets the same list back and never terminates. Sort each half recursively, then fuse them with the merge from merge-two-sorted-lists. Nothing is ever copied: the merge only rewrites next fields, so a node carrying a megabyte of payload costs exactly the same as one carrying an int. The only extra memory is the O(log n) recursion stack, and a bottom-up iterative version that merges runs of width 1, 2, 4, ... removes even that.",
+    "code": [
+      "public static Node sortList(Node head) {",
+      "    if (head == null || head.next == null) return head;",
+      "",
+      "    Node slow = head;",
+      "    Node fast = head.next;   // one ahead, so a 2-node list still splits 1 and 1",
+      "    while (fast != null && fast.next != null) {",
+      "        slow = slow.next;",
+      "        fast = fast.next.next;",
+      "    }",
+      "    Node second = slow.next;",
+      "    slow.next = null;",
+      "",
+      "    Node left = sortList(head);",
+      "    Node right = sortList(second);",
+      "    return merge(left, right);",
+      "}",
+      "",
+      "private static Node merge(Node a, Node b) {",
+      "    Node dummy = new Node(0);",
+      "    Node tail = dummy;",
+      "    while (a != null && b != null) {",
+      "        if (a.val <= b.val) {",
+      "            tail.next = a;",
+      "            a = a.next;",
+      "        } else {",
+      "            tail.next = b;",
+      "            b = b.next;",
+      "        }",
+      "        tail = tail.next;",
+      "    }",
+      "    tail.next = (a != null) ? a : b;   // relink the remainder — no element is ever copied",
+      "    return dummy.next;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n log n)",
+      "space": "O(log n) recursion stack; no data is copied"
+    }
+  },
+  "visualization": {
+    "engine": "mergeSortSteps",
+    "input": {
+      "array": [
+        4,
+        2,
+        1,
+        3,
+        6,
+        5
+      ]
+    },
+    "code": [
+      "Node sortList(Node head) {",
+      "    if (head == null || head.next == null) return head;   // one node: already sorted",
+      "",
+      "    Node second = splitAtMiddle(head);   // fast/slow, then cut with slow.next = null",
+      "    Node left  = sortList(head);",
+      "    Node right = sortList(second);",
+      "",
+      "    return merge(left, right);           // ONE pass, pure relinking — nothing is copied",
+      "}"
+    ]
+  },
+  "commonMistakes": [
+    "Starting fast at head instead of head.next. On a two-node list slow advances to the second node, so second is null and sortList(head) recurses on the identical unchanged list forever — StackOverflowError, and only on sublists of length 2, so [4,2,1,3] looks like it was going to work right up until it does not.",
+    "Omitting slow.next = null. The 'first half' still runs to the end of the list, so every recursive call receives the whole input; the result is either non-termination or a merged list containing the same node twice, which turns into a cycle and hangs whatever tries to print it.",
+    "Reaching for quicksort because it is 'the in-place one'. In place is not the distinction here — merge sort on a list does not copy either — and the head-as-pivot that a list forces on you converts already-sorted input into the O(n^2) worst case, which is precisely the input a 'sort this list' call receives most often."
+  ],
+  "similar": [
+    "merge-two-sorted-lists",
+    "merge-k-sorted-lists",
+    "largest-number",
+    "reorder-list"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 148,
+      "slug": "sort-list",
+      "title": "Sort List",
+      "url": "https://leetcode.com/problems/sort-list/",
+      "premium": false
+    }
+  }
+}

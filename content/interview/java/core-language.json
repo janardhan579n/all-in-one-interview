@@ -1,0 +1,287 @@
+{
+  "id": "java-core-language",
+  "trackId": "java",
+  "topic": "core-language",
+  "title": "Core Language",
+  "summary": "Equality, immutability, generics, exceptions — the mechanics every Java interview opens with.",
+  "questions": [
+    {
+      "id": "jcl-01",
+      "level": "junior",
+      "type": "concept",
+      "question": "What is the difference between `==` and `.equals()`?",
+      "answer": "`==` compares references for objects and values for primitives: it asks whether two variables point at the same object on the heap. `.equals()` is a method, so it means whatever the class defines — and `Object.equals` is itself just `==`, which is why a class that does not override it gets reference semantics by default.\n\nThe practical consequence is that `new String(\"a\") == new String(\"a\")` is false while `.equals()` is true. Interned string literals confuse this further: `\"a\" == \"a\"` *is* true because both refer to the same object in the string pool, which is exactly why you should never rely on `==` for strings.",
+      "keyPoints": [
+        "`==` is reference identity for objects, value comparison for primitives",
+        "`Object.equals` defaults to `==`; meaning comes from overriding it",
+        "The string pool makes `==` on literals appear to work, which is a trap"
+      ],
+      "followUps": [
+        {
+          "q": "Why must you override `hashCode` whenever you override `equals`?",
+          "a": "Because hash-based collections locate an object by bucket first and only then compare with `equals`. Two objects that are equal but hash differently land in different buckets, so a `HashMap` will fail to find a key that is genuinely present — a bug that shows up as intermittent cache misses rather than an exception."
+        },
+        {
+          "q": "What contract must `equals` satisfy?",
+          "a": "Reflexive, symmetric, transitive, consistent, and `x.equals(null)` must be false. Symmetry is the one people break in practice, usually by writing an `equals` that accepts a subclass on one side but not the other."
+        }
+      ],
+      "redFlags": [
+        "\"`==` compares values and `.equals()` compares references\" — reversed",
+        "Claiming `.equals()` always compares field by field; it does whatever the class implements",
+        "Not knowing the hashCode contract at mid level or above"
+      ],
+      "related": [
+        "hashing"
+      ]
+    },
+    {
+      "id": "jcl-02",
+      "level": "junior",
+      "type": "concept",
+      "question": "Is Java pass-by-value or pass-by-reference?",
+      "answer": "Always pass-by-value. What trips people up is that for an object, the *value being copied is the reference*. So the method gets its own copy of a pointer to the same object.\n\nThat is why mutating the object inside a method is visible to the caller, but reassigning the parameter is not:\n\n```java\nvoid mutate(List<String> list) { list.add(\"x\"); }   // caller sees it\nvoid reassign(List<String> list) { list = new ArrayList<>(); }  // caller sees nothing\n```\n\nThere is no way to write a Java method that swaps two caller variables, which is the cleanest proof.",
+      "keyPoints": [
+        "Java is pass-by-value without exception",
+        "For objects, the copied value is the reference, not the object",
+        "Mutation is visible; reassignment is not",
+        "You cannot write a working `swap(a, b)` in Java"
+      ],
+      "followUps": [
+        {
+          "q": "How would you actually swap two values then?",
+          "a": "Return a new object or pass a mutable holder — an array, a one-element container, or a small record you mutate. The language will not do it for you."
+        }
+      ],
+      "redFlags": [
+        "\"Objects are pass-by-reference, primitives are pass-by-value\" — a very common half-answer",
+        "Being unable to explain why mutation works but reassignment does not"
+      ]
+    },
+    {
+      "id": "jcl-03",
+      "level": "mid",
+      "type": "concept",
+      "question": "What makes a class immutable, and why does it matter?",
+      "answer": "Make the class `final` (or all constructors private), make every field `private final`, set every field in the constructor, provide no setters, and — the step people forget — **defensively copy any mutable state on the way in and on the way out**. A `final List` field is not immutable; only the reference is fixed.\n\n```java\npublic final class Order {\n    private final List<Item> items;\n    public Order(List<Item> items) { this.items = List.copyOf(items); }   // in\n    public List<Item> items() { return items; }                            // already unmodifiable\n}\n```\n\nIt matters because an immutable object is automatically thread-safe: there is no state to see half-written, so it needs no synchronisation, can be freely shared and cached, and is safe as a `HashMap` key. Most concurrency bugs are mutable shared state, and immutability removes the category rather than guarding it.",
+      "keyPoints": [
+        "final class, private final fields, no setters, construct fully",
+        "Defensive copies in and out — a final reference to a mutable list is not immutable",
+        "Thread safety for free; safe as a map key; safe to cache and share",
+        "Records give you most of this, but not deep immutability of mutable components"
+      ],
+      "followUps": [
+        {
+          "q": "Does making a class a `record` make it immutable?",
+          "a": "Shallowly. The fields are final and there are no setters, but a record holding a `List` still exposes the same list the caller passed in — mutate it and the record changes. Compact constructors are where you put the defensive copy."
+        },
+        {
+          "q": "What is the performance cost?",
+          "a": "Allocation pressure: every change produces a new object. Modern GCs handle short-lived garbage cheaply, so this is usually the right trade; when it is not, the answer is a builder or a mutable local that is published as immutable once complete."
+        }
+      ],
+      "redFlags": [
+        "Saying `final` alone makes a class immutable",
+        "Forgetting defensive copies for collections and dates",
+        "Not connecting immutability to thread safety"
+      ]
+    },
+    {
+      "id": "jcl-04",
+      "level": "mid",
+      "type": "concept",
+      "question": "Checked or unchecked exceptions — when do you use which?",
+      "answer": "The intended rule is: checked for conditions a caller can reasonably be expected to recover from (a file is missing, a remote call timed out), unchecked for programming errors (a null where one was not allowed, an illegal argument).\n\nIn practice most modern Java leans unchecked, because checked exceptions do not compose. They cannot cross a lambda or stream boundary without wrapping, and a checked exception thrown deep in a call stack forces every intermediate method to declare or swallow it — which is how you end up with `catch (Exception e) { }` blocks that hide real failures.\n\nThe position I would defend in an interview: use unchecked by default, use checked deliberately when the caller has a genuine alternative path, and never catch an exception you cannot do something about — let it reach a layer that can decide.",
+      "keyPoints": [
+        "Checked = recoverable by the caller; unchecked = programming error",
+        "Checked exceptions do not compose with lambdas and streams",
+        "Never swallow; never `catch (Exception e)` without rethrowing or logging with context",
+        "Preserve the cause when wrapping — `new ServiceException(msg, e)`"
+      ],
+      "followUps": [
+        {
+          "q": "What is wrong with `catch (Exception e) { log.error(e); }`?",
+          "a": "It converts a failure into a silent success. The caller carries on believing the work was done. If you catch, you either recover, or rethrow as something meaningful, or fail the operation — logging alone is none of those."
+        },
+        {
+          "q": "What does try-with-resources actually guarantee?",
+          "a": "`close()` is called on every resource in reverse order even if the body throws, and an exception from `close()` is added as a suppressed exception rather than replacing the original. The manual finally-block version loses the original exception, which is why it is banned in most style guides."
+        }
+      ],
+      "redFlags": [
+        "\"Always use checked exceptions\" with no reasoning",
+        "Catching and logging without rethrowing",
+        "Losing the cause when wrapping — `throw new RuntimeException(e.getMessage())`"
+      ]
+    },
+    {
+      "id": "jcl-05",
+      "level": "mid",
+      "type": "concept",
+      "question": "What is type erasure, and what does it stop you doing?",
+      "answer": "Generics are a compile-time feature. After compilation, `List<String>` and `List<Integer>` are both just `List` — the type argument is erased, with casts inserted by the compiler where needed. This was done for backwards compatibility with pre-generics bytecode.\n\nWhat it costs you at runtime:\n\n- `new T[]` and `new T()` are illegal — the type is not there to instantiate.\n- `if (list instanceof List<String>)` will not compile; only `List<?>` is checkable.\n- You cannot overload on `f(List<String>)` and `f(List<Integer>)` — same erased signature.\n- A `ClassCastException` can surface in code you did not write, in the compiler-inserted cast, which is what \"heap pollution\" means.\n\nThe workaround when you genuinely need the type at runtime is to pass it: `Class<T> type` as a constructor argument, which is exactly what Jackson and Spring do.",
+      "keyPoints": [
+        "Type arguments exist at compile time only; casts are inserted for you",
+        "No `new T[]`, no `instanceof List<String>`, no overload on type argument",
+        "Heap pollution produces a ClassCastException at an unexpected line",
+        "Pass `Class<T>` (a type token) when the type is needed at runtime"
+      ],
+      "followUps": [
+        {
+          "q": "What does `? extends T` versus `? super T` mean, and how do you remember it?",
+          "a": "PECS — producer extends, consumer super. If the structure produces T values you read, use `extends`. If it consumes T values you write into it, use `super`. `Collections.copy(List<? super T> dest, List<? extends T> src)` is the canonical example."
+        }
+      ],
+      "redFlags": [
+        "Believing generic type information is available at runtime",
+        "Not being able to name a single practical consequence"
+      ]
+    },
+    {
+      "id": "jcl-06",
+      "level": "mid",
+      "type": "code",
+      "question": "What is wrong with this code, and how would you fix it?",
+      "answer": "Two bugs, one of them intermittent.\n\n**The `equals` is broken.** It takes `Order` as the parameter type, so it *overloads* rather than overrides `Object.equals`. `HashMap` and `List.contains` call `equals(Object)` and will get the default reference comparison. The `@Override` annotation would have caught this at compile time, which is the real lesson.\n\n**`hashCode` is missing.** Even with `equals` fixed, unequal hash codes put equal objects in different buckets, so map lookups miss.\n\nThe fix:\n\n```java\n@Override\npublic boolean equals(Object o) {\n    if (this == o) return true;\n    if (!(o instanceof Order other)) return false;\n    return Objects.equals(id, other.id);\n}\n\n@Override\npublic int hashCode() { return Objects.hash(id); }\n```\n\nAnd the better answer: if the class is a value carrier, make it a `record` and get both for free.",
+      "codeExample": {
+        "language": "java",
+        "code": [
+          "public class Order {",
+          "    private final String id;",
+          "    public Order(String id) { this.id = id; }",
+          "",
+          "    public boolean equals(Order other) {",
+          "        return other != null && id.equals(other.id);",
+          "    }",
+          "}",
+          "",
+          "// elsewhere",
+          "Map<Order, Invoice> invoices = new HashMap<>();",
+          "invoices.put(new Order(\"A-1\"), invoice);",
+          "invoices.get(new Order(\"A-1\"));   // returns null"
+        ]
+      },
+      "keyPoints": [
+        "`equals(Order)` overloads instead of overriding — `@Override` catches it",
+        "Missing `hashCode` breaks every hash-based collection",
+        "Use `Objects.equals` / `Objects.hash`, or a record"
+      ],
+      "followUps": [
+        {
+          "q": "The object is used as a HashMap key and its id field is later mutated. What happens?",
+          "a": "It becomes unreachable in the map. The hash was computed at insert time and decides the bucket; changing the field changes the hash, so lookup goes to a different bucket and finds nothing — while iteration still shows the entry. Map keys must be immutable."
+        }
+      ],
+      "redFlags": [
+        "Spotting the missing hashCode but not the overload",
+        "Fixing it without `@Override`"
+      ],
+      "related": [
+        "hashing"
+      ]
+    },
+    {
+      "id": "jcl-07",
+      "level": "senior",
+      "type": "tradeoff",
+      "question": "`Optional` — where should it be used, and where should it not?",
+      "answer": "It was designed for one job: a return type that says \"there may legitimately be no value here\", so the caller cannot ignore the case the way a bare `null` lets them.\n\nUse it as a **return type**, particularly on repository and lookup methods. Do not use it as:\n\n- **A field type** — it is not serialisable, it adds an allocation per instance, and it says nothing a nullable field with a clear name does not.\n- **A method parameter** — the caller now has three states to construct (`null`, `empty`, `present`) instead of two. Overload the method instead.\n- **A collection element** — an empty list already means \"nothing\"; `List<Optional<T>>` is a design smell.\n\nAnd `optional.get()` without a prior `isPresent()` is just `NullPointerException` wearing a different name. Prefer `orElseThrow`, `map`, `filter`, `ifPresentOrElse`.",
+      "keyPoints": [
+        "Return type, not field or parameter type",
+        "`get()` without checking is worse than null — it hides intent",
+        "`orElseGet` over `orElse` when the default is expensive to build; `orElse` evaluates eagerly",
+        "Not serialisable — a real constraint for entities and DTOs"
+      ],
+      "followUps": [
+        {
+          "q": "What is the difference between `orElse` and `orElseGet`?",
+          "a": "`orElse` takes a value and evaluates it always, even when the Optional is present. `orElseGet` takes a supplier and only invokes it when empty. `orElse(repository.findDefault())` hits the database on every call including the happy path — a quiet and very common performance bug."
+        }
+      ],
+      "redFlags": [
+        "Optional fields in JPA entities",
+        "`.get()` sprinkled through the code",
+        "Not knowing the orElse / orElseGet evaluation difference at senior level"
+      ]
+    },
+    {
+      "id": "jcl-08",
+      "level": "senior",
+      "type": "concept",
+      "question": "Explain `String`, `StringBuilder` and `StringBuffer`, and when the difference actually matters.",
+      "answer": "`String` is immutable, so every concatenation allocates a new object and copies. `StringBuilder` is a mutable char buffer that grows amortised — no copy per append. `StringBuffer` is the same thing with synchronised methods, which is almost never what you want: the lock is on a local object that no other thread can see.\n\nWhere it actually matters is a loop. `s += x` inside a loop is O(n²) in both time and allocation, because each iteration copies the whole accumulated string. Outside a loop it does not matter at all — `javac` compiles `a + b + c` into a single `StringBuilder` chain (`invokedynamic` via `StringConcatFactory` since Java 9), so hand-optimising straight-line concatenation is noise.\n\nSo: `StringBuilder` in loops and when building incrementally; plain `+` everywhere else for readability; `StringBuffer` essentially never.",
+      "keyPoints": [
+        "Immutability is why concatenation in a loop is quadratic",
+        "The compiler already optimises straight-line `+`",
+        "StringBuffer's synchronisation is almost always pointless overhead",
+        "Know `String.join`, `Collectors.joining`, and text blocks as the readable options"
+      ],
+      "followUps": [
+        {
+          "q": "Why is String immutable in the first place?",
+          "a": "Security (a path or connection string cannot be changed after validation), the string pool (sharing is only safe if nobody can mutate), thread safety, and cached hash codes — `String.hashCode` is computed once and stored, which makes strings fast map keys."
+        }
+      ],
+      "redFlags": [
+        "\"Always use StringBuilder\" — cargo cult, and worse for readability",
+        "Recommending StringBuffer for thread safety without questioning whether the builder is shared"
+      ]
+    },
+    {
+      "id": "jcl-09",
+      "level": "senior",
+      "type": "concept",
+      "question": "What do `default` methods on interfaces solve, and what problem do they create?",
+      "answer": "They solve **interface evolution**. Before Java 8, adding a method to a published interface broke every implementation. `Collection.stream()` could not have been added at all. A default method lets an interface grow without breaking implementors.\n\nThe problem they create is the diamond: if a class implements two interfaces that both provide a default `foo()`, the compiler refuses to guess and demands you resolve it explicitly with `Interface.super.foo()`. Java's resolution rules are strict about this — class wins over interface, more specific interface wins over less specific, otherwise you disambiguate by hand.\n\nThe deeper design point is that they blur the line between interface and abstract class, and it is easy to start putting behaviour in interfaces that should have been a class. They are a compatibility tool, not a new way to share code.",
+      "keyPoints": [
+        "Purpose is backwards-compatible interface evolution, not code sharing",
+        "Diamond conflicts must be resolved explicitly with `X.super.foo()`",
+        "Class implementation always beats an interface default",
+        "Interfaces still hold no state, which is the real remaining difference from abstract classes"
+      ],
+      "followUps": [
+        {
+          "q": "When would you still choose an abstract class?",
+          "a": "When you need state, a constructor, or non-public members. An interface cannot hold a field, so anything with instance data belongs in a class."
+        }
+      ],
+      "redFlags": [
+        "Describing default methods as multiple inheritance with no mention of the conflict rules",
+        "Not knowing why they were introduced"
+      ]
+    },
+    {
+      "id": "jcl-10",
+      "level": "senior",
+      "type": "scenario",
+      "question": "A colleague's utility class is causing an OutOfMemoryError in production. It holds a `static Map<String, byte[]>` used as a cache with no eviction. Walk me through your response.",
+      "answer": "**First, stabilise.** A static map is a GC root: everything in it is reachable forever, so this will keep filling until the heap is gone. Confirm before changing anything — take a heap dump (`jmap -dump:live,format=b`, or `-XX:+HeapDumpOnOutOfMemoryError` which should already be on), open it in Eclipse MAT or VisualVM, and look at the dominator tree. If that map is the largest retained set, the diagnosis is confirmed rather than assumed.\n\n**Then the immediate fix**, which is not \"add a `clear()`\": bound the cache. Caffeine with `maximumSize` or `expireAfterWrite` gives you eviction, or `Collections.synchronizedMap(new LinkedHashMap<>(cap, 0.75f, true))` overriding `removeEldestEntry` if adding a dependency is not possible today.\n\n**Then the real questions.** Why is it static — is it shared deliberately, or just convenient? Is it thread-safe at all (a plain `HashMap` mutated concurrently can spin forever on a resized bucket, which is a hang rather than an error)? Should this be in the application at all, or in Redis where it can be sized and observed?\n\n**And prevent the recurrence:** an alert on heap-after-GC rather than heap used, cache size exported as a metric, and a review note that unbounded caches are the default failure mode of any `static Map`.",
+      "keyPoints": [
+        "Confirm with a heap dump before changing code — dominator tree, retained size",
+        "Static collections are GC roots; nothing in them is ever collected",
+        "The fix is bounding and eviction, not manual clearing",
+        "A plain HashMap under concurrent mutation can hang, not just leak",
+        "Follow up with a metric and an alert on heap after GC"
+      ],
+      "followUps": [
+        {
+          "q": "How would you tell a leak from a heap that is merely too small?",
+          "a": "Look at the sawtooth in heap-after-GC over hours. Healthy load returns to a flat baseline after each full GC; a leak has a baseline that climbs monotonically. The peak tells you nothing on its own."
+        },
+        {
+          "q": "Would a WeakHashMap have prevented this?",
+          "a": "Only if the keys were otherwise unreachable, and here the keys are Strings likely interned or held elsewhere — so probably not. Worse, weak references make cache behaviour unpredictable and timing-dependent. Bounded size with explicit eviction is the honest answer; `SoftReference` caches are a well-known way to get GC pressure instead of an OOM."
+        }
+      ],
+      "redFlags": [
+        "Jumping straight to increasing `-Xmx`",
+        "Guessing at the cause without a heap dump",
+        "Adding `map.clear()` on a timer and calling it fixed"
+      ],
+      "related": [
+        "cache",
+        "hashing"
+      ]
+    }
+  ]
+}

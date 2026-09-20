@@ -1,0 +1,258 @@
+{
+  "id": "consensus",
+  "title": "Consensus and Leader Election",
+  "group": "Distributed",
+  "level": 3,
+  "estimatedMinutes": 34,
+  "summary": "Getting several machines to agree on one value — who leads, what the next log entry is — while messages are lost and machines die mid-decision. The trick is a majority quorum; the price is a round trip to that majority on every write.",
+  "analogy": "A committee deciding by show of hands where some members are in a room with a broken phone line. You do not accept a decision because the loudest person announced it; you accept it once more than half the committee has raised a hand, because two groups of 'more than half' must share at least one member, and that member will not raise both hands. The cost is real: nothing is decided until the slowest of that majority answers, so the committee is a terrible place to route every routine question.",
+  "explanation": {
+    "beginner": "Several servers hold copies of the same information and need to agree on it. That sounds easy until you remember that a message can be delayed, arrive twice, arrive out of order, or never arrive, and a server can die halfway through. The rule that makes agreement safe is simple: a decision only counts once more than half the servers have accepted it. More than half of a group and another more than half of the same group always share at least one member, so two different decisions can never both be accepted. One server is elected leader and does the deciding; if it dies, the rest elect a new one.",
+    "interview": "Consensus gives a replicated state machine: every node applies the same log of commands in the same order. Raft splits it into leader election, log replication and safety. Time is divided into terms; a follower whose election timeout fires (randomised, typically 150–300 ms, so followers do not all campaign at once) increments the term and requests votes, and wins with a majority. The leader appends entries and commits one when a majority has persisted it. Safety rests on quorum intersection: any two majorities of the same cluster overlap in at least one node, so a candidate lacking the committed log cannot win. Failure modes: split brain if you accept a leader without a majority; a minority partition cannot elect a leader and correctly refuses writes — unavailable rather than wrong, the CP choice. Cost: every write is a round trip to a majority."
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "client",
+        "label": "Client",
+        "type": "client",
+        "x": 110,
+        "y": 300,
+        "note": "Writes only ever go to the current leader. A follower redirects the client rather than accepting the write itself."
+      },
+      {
+        "id": "leader",
+        "label": "Leader (term 7)",
+        "type": "server",
+        "x": 390,
+        "y": 300,
+        "note": "Elected by a majority for this term. Appends the entry locally, replicates it, and commits only when a majority has it on disk.",
+        "why": {
+          "without": [
+            "Any node that thinks it should lead starts accepting writes",
+            "A network partition leaves one leader on each side — split brain — and both take conflicting writes",
+            "When the partition heals, one side's accepted writes are silently discarded: data loss the client was told had succeeded"
+          ],
+          "with": [
+            "A leader needs votes from more than half the cluster, and two majorities of the same cluster always overlap",
+            "The minority side cannot elect anyone, so it stops accepting writes instead of diverging",
+            "An entry is acknowledged only once a majority has it, so it survives the loss of any minority"
+          ],
+          "conclusion": "One leader at a time, guaranteed by arithmetic rather than by hope — paid for with a majority round trip on every write."
+        }
+      },
+      {
+        "id": "f1",
+        "label": "Follower A",
+        "type": "replica",
+        "x": 700,
+        "y": 140,
+        "note": "Appends what the leader sends and acknowledges. Resets its election timer on every heartbeat."
+      },
+      {
+        "id": "f2",
+        "label": "Follower B",
+        "type": "replica",
+        "x": 700,
+        "y": 300,
+        "note": "Leader plus one follower is already a majority of 3 — the entry can commit without waiting for the third."
+      },
+      {
+        "id": "f3",
+        "label": "Follower C (partitioned)",
+        "type": "replica",
+        "x": 700,
+        "y": 460,
+        "note": "Cut off from the rest. Its election timer fires and it campaigns, but it can never collect a majority, so it never becomes leader and never accepts writes."
+      }
+    ],
+    "edges": [
+      {
+        "from": "client",
+        "to": "leader",
+        "label": "1. write"
+      },
+      {
+        "from": "leader",
+        "to": "f1",
+        "label": "2. replicate"
+      },
+      {
+        "from": "leader",
+        "to": "f2",
+        "label": "2. replicate"
+      },
+      {
+        "from": "leader",
+        "to": "f3",
+        "label": "2. replicate (lost)",
+        "dashed": true
+      },
+      {
+        "from": "f1",
+        "to": "leader",
+        "label": "3. ack — majority reached",
+        "dashed": true
+      },
+      {
+        "from": "leader",
+        "to": "client",
+        "label": "4. committed",
+        "dashed": true
+      }
+    ]
+  },
+  "why": {
+    "without": [
+      "\"Whoever claims it first leads\" produces two leaders the moment the network partitions — split brain",
+      "Two leaders both accept writes, so after the partition heals one side's acknowledged writes are thrown away: the client was told 'saved' and it was not",
+      "Failover becomes a human decision at 3am, and a human who promotes the wrong replica loses whatever the old primary had not shipped",
+      "Every service invents its own ad-hoc 'who is in charge' logic, each with its own subtle race"
+    ],
+    "with": [
+      "A decision needs more than half the cluster, and two majorities of the same cluster must share a node, so conflicting decisions cannot both win",
+      "At most one leader per term, enforced by the protocol rather than by configuration discipline",
+      "A minority partition cannot elect a leader, so it stops serving writes rather than diverging",
+      "Failover is automatic and bounded by the election timeout, not by a pager"
+    ],
+    "conclusion": "Consensus buys you a single agreed answer in the presence of partitions, at the price of a majority round trip per write — which is why it belongs under metadata and coordination, not under user traffic."
+  },
+  "whenToUse": [
+    "Electing a primary for a replicated database, or deciding which node owns which shard",
+    "Cluster membership and configuration that every node must agree on exactly",
+    "Distributed locks and leases where two holders would be a correctness bug",
+    "A replicated log whose entries must be applied by every node in the same order",
+    "Anything where being briefly unavailable is cheaper than being briefly wrong"
+  ],
+  "whenNotToUse": [
+    "The hot data path — putting every user write through a majority round trip turns a 1 ms local commit into 2–5 ms in one datacentre and 100 ms+ across continents, for data that did not need it",
+    "Workloads that would rather accept a conflict and merge later: a shopping cart or a like counter is better served by last-write-wins or a CRDT than by blocking on a quorum",
+    "Two nodes, or any even cluster you think of as 'extra safe' — a 4-node cluster tolerates the same single failure as a 3-node one and can split 2–2 with no majority at all",
+    "Geographically spread members chosen for coverage: a quorum that spans continents pays the slowest cross-region link on every single write",
+    "Writing it yourself when etcd, ZooKeeper or your database's built-in Raft already solves it — hand-rolled consensus is where subtle, rare, unreproducible data loss lives"
+  ],
+  "tradeoffs": [
+    {
+      "option": "Raft",
+      "pros": [
+        "Deliberately designed to be understandable: separate election, replication and safety phases",
+        "A strong leader means the normal path is one round trip and the log flows one way",
+        "Well-tested open implementations in etcd, Consul and several databases"
+      ],
+      "cons": [
+        "All writes funnel through one leader, so the leader is the throughput ceiling",
+        "Every leader change costs an election timeout of unavailability",
+        "Requires stable-ish network timing: flapping links cause repeated elections and no progress"
+      ]
+    },
+    {
+      "option": "Paxos (and Multi-Paxos)",
+      "pros": [
+        "The original, with the most thorough formal treatment of safety",
+        "Variants allow leaderless or multi-leader operation, avoiding a single write bottleneck"
+      ],
+      "cons": [
+        "Famously hard to reason about, and the gap between the paper and a working system is large",
+        "Nearly every real deployment is a custom variant, so 'we use Paxos' says little about actual behaviour"
+      ]
+    },
+    {
+      "option": "Depend on an external coordination service (ZooKeeper, etcd)",
+      "pros": [
+        "You get consensus without implementing it — the usual and usually correct answer in a design interview",
+        "One well-operated cluster serves leader election, locks and config for many services",
+        "Battle-tested failure handling, including the awkward cases like session expiry"
+      ],
+      "cons": [
+        "A new hard dependency: when the coordination cluster is unhealthy, everything that leases from it degrades",
+        "Adds an operational burden most teams underestimate — it is a stateful quorum system of its own",
+        "Tempting to store real application data in it, which is exactly what its small, quorum-replicated store is worst at"
+      ]
+    },
+    {
+      "option": "No consensus — leaderless with conflict resolution",
+      "pros": [
+        "Writes are accepted on both sides of a partition, so availability stays high (the AP choice)",
+        "No quorum round trip, so writes stay local and fast"
+      ],
+      "cons": [
+        "Conflicts are now the application's problem, and 'last write wins' silently discards one user's work",
+        "There is no single agreed answer to questions like 'who owns this shard', so you cannot build locks or leases on it"
+      ]
+    }
+  ],
+  "keyNumbers": [
+    {
+      "label": "Majority of a 3-node cluster",
+      "value": "2 nodes — tolerates 1 failure"
+    },
+    {
+      "label": "Majority of a 5-node cluster",
+      "value": "3 nodes — tolerates 2 failures"
+    },
+    {
+      "label": "Failures tolerated by N nodes",
+      "value": "floor((N − 1) / 2) — so 4 nodes tolerate the same 1 as 3"
+    },
+    {
+      "label": "Typical Raft election timeout",
+      "value": "randomised, ~150–300 ms; heartbeats roughly an order of magnitude more often"
+    },
+    {
+      "label": "Cost of a quorum write, same datacentre",
+      "value": "~1–5 ms — a majority round trip plus a durable write"
+    },
+    {
+      "label": "Cost of a quorum write, cross-continent",
+      "value": "~100 ms+ — bounded by the slowest link in the majority"
+    }
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "architecture",
+      "question": "Your 5-node etcd cluster is split by a network fault into a group of 3 and a group of 2. What happens?",
+      "options": [
+        "Both groups elect a leader and continue independently, merging when the partition heals",
+        "The group of 3 keeps or elects a leader and serves writes; the group of 2 cannot reach a majority, elects nobody and refuses writes",
+        "The whole cluster stops until an operator intervenes",
+        "The group of 2 serves reads and writes from a cached copy of the log"
+      ],
+      "answerIndex": 1,
+      "explanation": "A majority of 5 is 3. The larger side has one and makes progress; the minority side can campaign forever but can never collect 3 votes, so it never leads and never accepts writes. That refusal is the point — it is unavailable rather than wrong. If you answered the first option, you have described split brain, which is exactly what quorum exists to prevent."
+    },
+    {
+      "id": "q2",
+      "type": "mcq",
+      "question": "Why are consensus clusters almost always sized 3, 5 or 7 rather than 4 or 6?",
+      "options": [
+        "Odd numbers hash more evenly across the ring",
+        "An even cluster can split into two equal halves with no majority, and it tolerates no more failures than the odd size below it while costing more",
+        "Raft's implementation requires an odd node count",
+        "Even clusters double the election timeout"
+      ],
+      "answerIndex": 1,
+      "explanation": "Failures tolerated is floor((N−1)/2): both 3 and 4 tolerate 1, both 5 and 6 tolerate 2. The extra node in an even cluster buys nothing in fault tolerance, adds another machine that every write's majority may have to wait on, and introduces the clean even split where neither half has more than half."
+    },
+    {
+      "id": "q3",
+      "type": "architecture",
+      "question": "A team routes every user-facing write through their Raft cluster so that 'all data is strongly consistent'. Writes that took 2 ms now take 40 ms and throughput has collapsed. What is the design mistake?",
+      "options": [
+        "The cluster is too small — adding nodes will increase write throughput",
+        "They should switch from Raft to Paxos",
+        "Consensus is for metadata and coordination; bulk user data belongs in a replicated store, with consensus used only to agree on things like who the primary is",
+        "They need to increase the election timeout"
+      ],
+      "answerIndex": 2,
+      "explanation": "Every consensus write costs a round trip to a majority and funnels through one leader, so the leader is a hard throughput ceiling. Adding nodes makes it worse, not better — the majority grows and more machines must acknowledge. The standard shape is a small consensus cluster holding membership, leadership and configuration, while the data path uses ordinary replication and only consults the agreed answer about who the primary is."
+    }
+  ],
+  "related": [
+    "cap-theorem",
+    "replication",
+    "database",
+    "sharding",
+    "observability"
+  ]
+}

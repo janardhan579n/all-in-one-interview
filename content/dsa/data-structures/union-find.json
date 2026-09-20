@@ -1,0 +1,424 @@
+{
+  "id": "union-find",
+  "kind": "data-structure",
+  "title": "Union-Find (Disjoint Set Union)",
+  "group": "Graphs",
+  "level": 4,
+  "difficulty": "advanced",
+  "estimatedMinutes": 40,
+  "summary": "Keep a collection of disjoint groups under two operations — merge two groups, and ask whether two elements are already in the same group — in effectively constant time, by storing only a parent pointer per element and flattening it as you go.",
+  "prerequisites": [
+    "arrays",
+    "graphs",
+    "trees"
+  ],
+  "tags": [
+    "graph",
+    "disjoint-set",
+    "union-find",
+    "connectivity",
+    "cycle-detection",
+    "mst",
+    "level-4"
+  ],
+  "analogy": {
+    "beginner": "Every person in a room holds a card with one name on it: the person they report to. To find out which team you are on, you follow the chain of cards until you reach someone who reports to themselves — the team leader. Two people are on the same team exactly when they reach the same leader. Merging two teams is one card change: one leader now reports to the other. And each time you walk a chain, everyone you passed rewrites their card to name the leader directly, so the next walk is a single step.",
+    "interview": "A disjoint-set forest: each element stores a parent index, roots are self-parented, and set identity is the root. `union` links one root under the other (by rank or size, to bound depth) and `find` returns the root while compressing the path it walked. With both heuristics, m operations over n elements cost O(m · α(n)), where α is the inverse Ackermann function — below 5 for any n that fits in memory."
+  },
+  "intuition": "Start with a question you already know how to answer the slow way: *are these two accounts linked?*\n\nAccounts get merged over time — a phone number matches, a device fingerprint matches, a support agent joins two profiles by hand. Each merge is an edge. The question is connectivity: is account 7 reachable from account 2?\n\nThe reflex is BFS. And BFS answers it — by walking a path. But look at what you actually asked for. You did not ask *how* they are connected, or *which* merges connect them, or how far apart they are. You asked one bit: yes or no. BFS computes an entire path and then throws all of it away except that bit.\n\nSo do not store the graph. Store the *answer*.\n\nGive every element a label, and maintain the invariant that two elements share a label exactly when they are connected. Then a query is a label comparison — O(1). The only hard part is keeping the labels correct when a merge arrives.\n\nThe naive version of this is already instructive:\n\n```\nlabel = [0, 0, 1, 1, 2, 2]     // {0,1} {2,3} {4,5}\nunion(1, 2)  →  rewrite every 1 to 0\nlabel = [0, 0, 0, 0, 2, 2]     // {0,1,2,3} {4,5}\n```\n\nQueries are instant, but a union rewrites the whole array: O(n) each. That is the trade backwards — merges are the frequent operation.\n\nThe fix is not to store the label but a *pointer towards* it. Element i stores `parent[i]`. A root points at itself and stands for the whole group. Now a merge is **one** write — point one root at the other — and a query is two walks up to the roots plus a comparison.\n\nThat alone is not fast enough; repeated unions can grow a tree into a linked list, and then every walk is O(n). Two small habits fix it permanently:\n\n- **Union by rank** — always hang the shallower tree under the deeper one, so depth only grows when two equally deep trees meet.\n- **Path compression** — after walking from a node to its root, repoint every node you passed straight at the root. You already paid for the walk; making it cheaper for next time is free.\n\nEach heuristic alone gives O(log n). Together they give a bound so close to constant that the honest sentence is: *effectively constant for any n you will ever see.*",
+  "problemFirst": {
+    "motivatingProblem": "A fraud system receives a stream of 'these two accounts are the same person' merges. Between merges, it must answer 'are accounts a and b already linked?' — millions of times, on a graph that keeps changing.",
+    "bruteForce": {
+      "idea": "Keep the merges as an adjacency list. For each query, run BFS or DFS from a and see whether b is reached.",
+      "code": [
+        "boolean connected(Map<Integer, List<Integer>> graph, int a, int b) {",
+        "    Set<Integer> seen = new HashSet<>();",
+        "    Deque<Integer> queue = new ArrayDeque<>();",
+        "    queue.add(a);",
+        "    seen.add(a);",
+        "    while (!queue.isEmpty()) {",
+        "        int node = queue.poll();",
+        "        if (node == b) return true;",
+        "        for (int next : graph.getOrDefault(node, List.of())) {",
+        "            if (seen.add(next)) queue.add(next);   // whole component re-walked, every query",
+        "        }",
+        "    }",
+        "    return false;",
+        "}"
+      ],
+      "complexity": {
+        "time": "O(V + E) per query",
+        "space": "O(V) for the visited set"
+      },
+      "whySlow": "Every query re-walks the component from scratch — a million queries over a million-node component is 10^12 steps. Precomputing components once does not rescue it either, because each new merge invalidates the precomputation: the graph is not static, it is a stream."
+    },
+    "observation": "The BFS builds an entire path and then discards everything except one bit: same component or not. Nothing in the answer depends on the route, the distance, or the intermediate nodes.",
+    "leap": "Do not store the edges — store, for each element, a pointer that eventually leads to one representative of its group. Then 'connected' is 'same representative', a merge is one pointer write, and walking to the representative can be made near-free by flattening the path every time you walk it.",
+    "optimizedSketch": [
+      "int[] parent = new int[n];                  // parent[i] = i initially",
+      "",
+      "int find(int x) {",
+      "    while (parent[x] != x) {",
+      "        parent[x] = parent[parent[x]];      // halve the path as you climb",
+      "        x = parent[x];",
+      "    }",
+      "    return x;",
+      "}",
+      "",
+      "boolean connected(int a, int b) { return find(a) == find(b); }",
+      "void union(int a, int b)        { parent[find(a)] = find(b); }"
+    ]
+  },
+  "howItWorks": [
+    "**The parent array is the structure** — `parent[i]` is the only state. A node with `parent[i] == i` is a root, and the root's index *is* the group's name. The 'forest of trees' is a picture we draw to reason about it; the array is what exists.",
+    "**find(x)** — climb `parent` until you reach a self-pointing node. That node is the group representative. Two elements are in the same group exactly when their `find` results are equal — never compare `parent[a] == parent[b]`, which is a different and wrong question.",
+    "**union(a, b)** — `find` both roots. If they are equal, the two were already together and there is nothing to do. Otherwise, point one root at the other. One array write merges two groups of any size.",
+    "**Union by rank (or size)** — link the shallower tree under the deeper one. `rank` is an upper bound on height; it increases only when two trees of equal rank merge, which can happen at most log₂(n) times along any path. Union by size (attach the smaller *count* under the larger) gives the same bound and has the bonus of tracking component sizes for free.",
+    "**Path compression** — on the way back from a `find`, repoint every node you visited directly at the root. The walk was already paid for; the rewrite makes all future walks from those nodes one hop. The two-line iterative variant `parent[x] = parent[parent[x]]` (path halving) achieves the same asymptotics with no recursion and no second pass.",
+    "**Why it is effectively constant** — with both heuristics, m operations on n elements cost O(m · α(n)), where α is the inverse Ackermann function. α(n) ≤ 4 for every n below roughly 2^65536. It is not literally O(1), and saying so is wrong; the honest phrasing, and the one to use in an interview, is 'effectively constant for any n you will ever see'.",
+    "**Use 1 — cycle detection in an undirected graph** — process the edges. If `find(u) == find(v)` before you union them, u and v were already connected by some earlier path, so this edge closes a loop. The union that does nothing *is* the cycle. (This is for undirected graphs only; directed cycles need DFS colouring.)",
+    "**Use 2 — Kruskal's minimum spanning tree** — sort the edges by weight and take each one whose endpoints are in different components. Union-find is what makes 'different components?' cheap, and it is also the correctness check: it rejects exactly the edges that would form a cycle.",
+    "**Counting components** — start a counter at n and decrement on every union that actually merged. This is usually the answer the problem wants, and it costs nothing extra."
+  ],
+  "patternRecognition": {
+    "signals": [
+      "The question is **connectivity** — 'are these two connected?', 'how many groups?', 'is everything one group?'",
+      "Edges or merges **arrive over time** and the answer is needed between them (a stream, not a fixed graph)",
+      "'Redundant connection', 'account merge', 'friend circles', 'provinces', 'islands after each addLand'",
+      "Kruskal's MST, or any greedy that must ask 'would this edge close a cycle?'",
+      "Equations or equivalences to group: `a == b`, `b == c`, so `a == c`",
+      "You need only the *fact* of a connection, never the path itself"
+    ],
+    "antiSignals": [
+      "You need the actual path, the shortest path, or the distance → BFS or Dijkstra; union-find keeps no route",
+      "The graph is **directed** and you want cycles or an ordering → DFS colouring or Kahn's topological sort; union-find has no notion of direction",
+      "Edges can be **removed** → union-find cannot split a set; process the timeline backwards so deletions become additions, or use a link-cut tree",
+      "The graph is static and you traverse it once → one DFS pass labels every component just as cheaply",
+      "You need per-node data along the way (depth, parent in a traversal, colouring) → that is a traversal problem"
+    ]
+  },
+  "visualizations": [
+    {
+      "id": "union-find-merges",
+      "title": "Six elements, five operations — watch the parent array, not the trees",
+      "engine": "unionFind",
+      "input": {
+        "size": 6,
+        "operations": [
+          {
+            "op": "union",
+            "a": 0,
+            "b": 1
+          },
+          {
+            "op": "union",
+            "a": 2,
+            "b": 3
+          },
+          {
+            "op": "union",
+            "a": 1,
+            "b": 2
+          },
+          {
+            "op": "find",
+            "a": 3
+          },
+          {
+            "op": "union",
+            "a": 4,
+            "b": 5
+          }
+        ]
+      },
+      "code": [
+        "int[] parent = new int[n];   // parent[i] = i — every node starts as its own root",
+        "int[] rank   = new int[n];   // an upper bound on each tree's height",
+        "",
+        "int root = x; while (parent[root] != root) root = parent[root];          // climb to the root",
+        "while (parent[x] != root) { int next = parent[x]; parent[x] = root; x = next; }  // path compression",
+        "return root;                                                             // find(x)",
+        "",
+        "if (find(a) == find(b)) return false;   // already one set — in cycle detection this IS the cycle",
+        "int ra = find(a), rb = find(b); if (rank[ra] < rank[rb]) { int t = ra; ra = rb; rb = t; }",
+        "parent[rb] = ra; if (rank[ra] == rank[rb]) rank[ra]++;                   // union by rank"
+      ]
+    }
+  ],
+  "implementations": [
+    {
+      "label": "Simple",
+      "language": "java",
+      "explanation": "The whole idea in fifteen lines, with path compression only. Worth writing once to feel how little state there is: one array. Without union by rank the trees can still degenerate under an adversarial order of unions, but compression alone already keeps the amortised cost at O(log n), which is enough to pass most interviews if you say what is missing.",
+      "code": [
+        "/** Disjoint-set forest with path compression. O(log n) amortised per operation. */",
+        "public class SimpleDisjointSet {",
+        "    private final int[] parent;",
+        "",
+        "    public SimpleDisjointSet(int n) {",
+        "        parent = new int[n];",
+        "        for (int i = 0; i < n; i++) {",
+        "            parent[i] = i;              // every element is its own group",
+        "        }",
+        "    }",
+        "",
+        "    /** Representative of x's group, flattening the path on the way up. */",
+        "    public int find(int x) {",
+        "        if (parent[x] != x) {",
+        "            parent[x] = find(parent[x]);   // point x straight at the root",
+        "        }",
+        "        return parent[x];",
+        "    }",
+        "",
+        "    /** Returns false when a and b were already in the same group. */",
+        "    public boolean union(int a, int b) {",
+        "        int rootA = find(a);",
+        "        int rootB = find(b);",
+        "        if (rootA == rootB) {",
+        "            return false;",
+        "        }",
+        "        parent[rootB] = rootA;",
+        "        return true;",
+        "    }",
+        "",
+        "    public boolean connected(int a, int b) {",
+        "        return find(a) == find(b);",
+        "    }",
+        "}"
+      ]
+    },
+    {
+      "label": "Optimized",
+      "language": "java",
+      "explanation": "Union by rank plus iterative path compression, a live component count, and the two classic clients. Three things to say out loud in an interview: `union` returns a boolean so the caller can detect 'already connected' (that is the cycle test), `find` is iterative so a deep chain cannot overflow the stack, and the cost is effectively constant — O(α(n)) — not literally O(1).",
+      "code": [
+        "import java.util.Arrays;",
+        "",
+        "/**",
+        " * Disjoint Set Union with union by rank and path compression.",
+        " * m operations over n elements cost O(m · α(n)) — effectively constant.",
+        " */",
+        "public class DisjointSet {",
+        "    private final int[] parent;",
+        "    private final int[] rank;      // upper bound on tree height, not exact height",
+        "    private final int[] size;      // elements in the group rooted here",
+        "    private int components;",
+        "",
+        "    public DisjointSet(int n) {",
+        "        parent = new int[n];",
+        "        rank = new int[n];",
+        "        size = new int[n];",
+        "        for (int i = 0; i < n; i++) {",
+        "            parent[i] = i;",
+        "            size[i] = 1;",
+        "        }",
+        "        Arrays.fill(rank, 0);",
+        "        components = n;",
+        "    }",
+        "",
+        "    /** Iterative find with path halving — no recursion, so no stack overflow. */",
+        "    public int find(int x) {",
+        "        while (parent[x] != x) {",
+        "            parent[x] = parent[parent[x]];   // skip a level, flattening as we climb",
+        "            x = parent[x];",
+        "        }",
+        "        return x;",
+        "    }",
+        "",
+        "    /**",
+        "     * Merges the two groups. Returns false when they were already one —",
+        "     * which, when the pairs are edges of an undirected graph, means this",
+        "     * edge closes a cycle.",
+        "     */",
+        "    public boolean union(int a, int b) {",
+        "        int rootA = find(a);",
+        "        int rootB = find(b);",
+        "        if (rootA == rootB) {",
+        "            return false;",
+        "        }",
+        "        if (rank[rootA] < rank[rootB]) {     // hang the shallower tree underneath",
+        "            int swap = rootA;",
+        "            rootA = rootB;",
+        "            rootB = swap;",
+        "        }",
+        "        parent[rootB] = rootA;",
+        "        size[rootA] += size[rootB];",
+        "        if (rank[rootA] == rank[rootB]) {    // depth grows only on a tie",
+        "            rank[rootA]++;",
+        "        }",
+        "        components--;",
+        "        return true;",
+        "    }",
+        "",
+        "    public boolean connected(int a, int b) { return find(a) == find(b); }",
+        "",
+        "    public int componentCount() { return components; }",
+        "",
+        "    public int componentSize(int x) { return size[find(x)]; }",
+        "",
+        "    /** Use 1: an undirected graph has a cycle iff some edge joins two already-linked nodes. */",
+        "    public static boolean hasCycle(int n, int[][] edges) {",
+        "        DisjointSet dsu = new DisjointSet(n);",
+        "        for (int[] edge : edges) {",
+        "            if (!dsu.union(edge[0], edge[1])) {",
+        "                return true;      // the union that did nothing IS the cycle",
+        "            }",
+        "        }",
+        "        return false;",
+        "    }",
+        "",
+        "    /** Use 2: Kruskal's MST — cheapest edges first, skipping any that would close a cycle. */",
+        "    public static int minimumSpanningTreeWeight(int n, int[][] edges) {",
+        "        int[][] byWeight = edges.clone();",
+        "        Arrays.sort(byWeight, (x, y) -> Integer.compare(x[2], y[2]));   // O(E log E)",
+        "        DisjointSet dsu = new DisjointSet(n);",
+        "        int total = 0;",
+        "        int used = 0;",
+        "        for (int[] edge : byWeight) {",
+        "            if (dsu.union(edge[0], edge[1])) {   // endpoints were in different components",
+        "                total += edge[2];",
+        "                used++;",
+        "                if (used == n - 1) break;        // a spanning tree has exactly n-1 edges",
+        "            }",
+        "        }",
+        "        return dsu.componentCount() == 1 ? total : -1;   // -1: the graph is disconnected",
+        "    }",
+        "}"
+      ]
+    }
+  ],
+  "complexity": {
+    "time": "O(α(n)) amortised per find or union — effectively constant. O(n) to build, O(E · α(V)) to process E edges.",
+    "space": "O(n) — one parent entry per element, plus one rank and (optionally) one size entry.",
+    "why": "A single `find` costs the depth of the tree, so the entire argument is about keeping trees shallow. Union by rank alone bounds depth at log₂(n): a tree of rank r contains at least 2^r elements, because rank only rises when two trees of equal rank merge, doubling the count. Path compression alone also gives O(log n) amortised, by paying for each long walk with the flattening it performs. Together, Tarjan's analysis shows the amortised bound falls to the inverse Ackermann function α(n), which is ≤ 4 for any n below about 2^65536 — so every real input sits in the effectively-constant regime. The array cost is genuinely O(n): no adjacency lists, no visited sets, no queues, which is also why union-find is dramatically more cache-friendly than repeated BFS."
+  },
+  "commonMistakes": [
+    {
+      "mistake": "Comparing `parent[a] == parent[b]` instead of `find(a) == find(b)`",
+      "fix": "Two nodes can share a grandparent without sharing a parent. Only the root identifies the group, so always compare roots."
+    },
+    {
+      "mistake": "Unioning the elements rather than their roots — `parent[b] = a`",
+      "fix": "That severs b's old subtree from its root. Always write `parent[find(b)] = find(a)`."
+    },
+    {
+      "mistake": "Skipping union by rank and calling it O(α(n)) anyway",
+      "fix": "Compression alone is O(log n) amortised. Add rank or size, or state the weaker bound honestly."
+    },
+    {
+      "mistake": "Recursive `find` on a degenerate chain",
+      "fix": "A near-linear tree (before compression has run) can overflow the stack at 10^5+ nodes. The iterative path-halving loop has no such limit."
+    },
+    {
+      "mistake": "Forgetting that union-find cannot undo a merge",
+      "fix": "There is no `split`. If edges are removed over time, reverse the timeline so deletions become insertions, or reach for a different structure."
+    },
+    {
+      "mistake": "Using it for cycle detection in a *directed* graph",
+      "fix": "Union-find loses direction, so it reports `a → b` plus `a → c` as a cycle candidate that does not exist. Use DFS with white/grey/black colouring."
+    },
+    {
+      "mistake": "Mapping non-integer keys badly",
+      "fix": "For emails, names or coordinates, keep a `HashMap<String, Integer>` assigning each key an index on first sight — and reuse it, rather than creating a second index for the same key."
+    },
+    {
+      "mistake": "Not decrementing the component count only when the union succeeded",
+      "fix": "Decrement inside the branch that actually merged; a no-op union must leave the count alone."
+    }
+  ],
+  "realWorldUses": [
+    "Identity resolution: merging duplicate customer or account records as new matching signals arrive — the motivating problem of this lesson, and a real pipeline stage at any company with user accounts.",
+    "Kruskal's algorithm for minimum spanning trees, used in network design to lay the cheapest set of links that still connects every site.",
+    "Image processing: connected-component labelling, where adjacent pixels of the same colour are unioned into blobs in a single pass.",
+    "Compilers and type systems: Hindley-Milner type inference unifies type variables with exactly this structure.",
+    "Distributed systems and percolation models: 'is this cluster still one partition?' is a connectivity query over a changing edge set.",
+    "Game and maze generation: repeatedly knocking down a wall between two not-yet-connected cells builds a perfect maze — a spanning tree in disguise."
+  ],
+  "interviewNotes": [
+    "Say 'disjoint set union' or 'union-find' as soon as you hear connectivity over a stream of merges — recognising it is most of the credit.",
+    "State the complexity honestly: 'O(α(n)) amortised, which is effectively constant for any n you will ever see'. Claiming a flat O(1) invites a correction; claiming O(log n) undersells what you built.",
+    "Make `union` return a boolean. It costs nothing and it is exactly the cycle test, so one method serves both classic uses.",
+    "Mention both heuristics and why each exists: rank stops the tree becoming a list, compression makes repeated queries cheap. Implementing only one is a defensible choice if you say which bound you are giving up.",
+    "Common follow-ups: 'count the components', 'largest component size', 'can you undo a union?' (no — explain the reverse-timeline trick), 'what if the keys are strings?' (map them to indices first)."
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "identify-pattern",
+      "question": "'You are given n accounts and a stream of merge events. After each event, report how many distinct people remain.' Which structure fits best?",
+      "options": [
+        "Union-Find",
+        "Breadth-First Search from every node",
+        "A min-heap",
+        "Binary search over the events"
+      ],
+      "answerIndex": 0,
+      "explanation": "Connectivity questions answered between incremental merges, with no need for the path itself, is the exact shape union-find exists for. Start a counter at n and decrement on each union that actually merged."
+    },
+    {
+      "id": "q2",
+      "type": "complexity",
+      "question": "With both union by rank and path compression, what is the amortised cost of a single find or union?",
+      "options": [
+        "O(n)",
+        "O(log n)",
+        "O(α(n)) — effectively constant, since α(n) ≤ 4 for any realistic n",
+        "Exactly O(1) in the worst case"
+      ],
+      "answerIndex": 2,
+      "explanation": "Tarjan's bound is O(m · α(n)) for m operations, where α is the inverse Ackermann function. It is not literally constant — the last option is the classic overclaim — but α never exceeds 4 for inputs that fit in memory."
+    },
+    {
+      "id": "q3",
+      "type": "mcq",
+      "question": "While processing the edges of an undirected graph, `union(u, v)` returns false. What does that tell you?",
+      "options": [
+        "The edge is invalid input",
+        "u and v were already connected, so this edge closes a cycle",
+        "The graph is disconnected",
+        "Path compression failed"
+      ],
+      "answerIndex": 1,
+      "explanation": "A union that finds both endpoints under the same root does nothing, and the only way that happens is that an earlier path already joined them. That no-op is the cycle detector."
+    },
+    {
+      "id": "q4",
+      "type": "mcq",
+      "question": "Why hang the shallower tree under the deeper one rather than the other way round?",
+      "options": [
+        "It keeps the array sorted",
+        "It makes union O(1) instead of O(n)",
+        "Attaching the deeper tree would add a level to every node in it, so the trees degenerate towards a linked list",
+        "It is arbitrary; either direction performs the same"
+      ],
+      "answerIndex": 2,
+      "explanation": "Linking the deeper root under the shallower one increases the depth of every node in the deeper tree. By rank, the merged depth grows only when two trees of equal rank meet — at most log₂(n) times."
+    },
+    {
+      "id": "q5",
+      "type": "mcq",
+      "question": "Which problem is union-find the wrong tool for?",
+      "options": [
+        "Counting connected components after a stream of edges",
+        "Deciding whether adding an edge creates a cycle in an undirected graph",
+        "Finding the shortest path between two nodes",
+        "Kruskal's minimum spanning tree"
+      ],
+      "answerIndex": 2,
+      "explanation": "Union-find stores no route and no distance — only which representative an element reaches. Shortest paths need BFS on an unweighted graph or Dijkstra on a weighted one."
+    }
+  ],
+  "practiceProblems": [
+    "number-of-provinces",
+    "redundant-connection",
+    "number-of-operations-to-connect",
+    "satisfiability-equality-equations",
+    "accounts-merge"
+  ],
+  "related": [
+    "graphs",
+    "dfs",
+    "bfs",
+    "trees"
+  ]
+}

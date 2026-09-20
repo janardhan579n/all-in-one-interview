@@ -1,0 +1,24 @@
+# Caching and security headers.
+#
+# This lives in public/ — and therefore inside dist/ — on purpose. netlify.toml sits at the
+# repository root, where a *drag-and-drop* deploy never sees it: that deploy ships the contents
+# of dist/ and nothing else. Keeping headers here means they apply however the site is
+# published — dragged, CLI, or built from Git — and it keeps netlify.toml to the one thing that
+# genuinely cannot live in dist/, which is how to run the build.
+#
+# Cloudflare Pages reads this file too, with the same syntax.
+
+# Vite fingerprints everything in assets/, so the filename changes whenever the bytes do.
+# Those are safe to cache forever.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# index.html must never be cached. A stale copy keeps asking for JS chunks from a build that
+# no longer exists, and the site breaks for exactly the people who visited it before.
+/index.html
+  Cache-Control: public, max-age=0, must-revalidate
+
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Frame-Options: SAMEORIGIN

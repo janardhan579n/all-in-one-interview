@@ -1,0 +1,117 @@
+{
+  "id": "open-the-lock",
+  "title": "Open the Lock",
+  "patternId": "bfs",
+  "difficulty": "intermediate",
+  "tags": [
+    "bfs",
+    "implicit-graph",
+    "state-space",
+    "shortest-path"
+  ],
+  "statement": "A lock has four circular wheels, each showing a digit 0-9 and wrapping around ('9' turns to '0' and back). One move rotates one wheel one slot. The lock starts at \"0000\". Some codes are deadends: if the lock ever displays one, it jams and cannot be turned again. Given the deadends and a target code, return the minimum number of moves to reach the target, or -1 if it is impossible.",
+  "realWorld": "Configuration rollout: a system has several independent settings, you must move it from its current configuration to a desired one by changing one setting at a time, and certain intermediate combinations are known to be broken (a feature-flag pairing that crashes, a schema state no deployed version can read). 'Fewest safe steps between two configurations' is exactly this computation.",
+  "examples": [
+    {
+      "input": "deadends = [\"0201\",\"0101\",\"0102\",\"1212\",\"2002\"], target = \"0202\"",
+      "output": "6",
+      "explanation": "0000 -> 1000 -> 1100 -> 1200 -> 1201 -> 1202 -> 0202. The obvious four-move route 0000 -> 0001 -> 0002 -> 0102 -> 0202 is blocked because 0102 is a deadend."
+    },
+    {
+      "input": "deadends = [\"8888\"], target = \"0009\"",
+      "output": "1",
+      "explanation": "Turn the last wheel down from 0 to 9. Wheels wrap, so 0 and 9 are one slot apart."
+    },
+    {
+      "input": "deadends = [\"0000\"], target = \"8888\"",
+      "output": "-1",
+      "explanation": "The starting code is itself a deadend, so no move is ever possible. Worth handling before the search starts."
+    }
+  ],
+  "constraints": [
+    "1 <= deadends.length <= 500",
+    "deadends[i].length == 4 and target.length == 4",
+    "All strings consist of digits only",
+    "target is not in deadends"
+  ],
+  "bruteForce": {
+    "idea": "Search the move sequences directly: from the current code try all eight moves, recurse, and keep the shortest sequence that lands on the target. Cap the depth so the recursion terminates.",
+    "code": [
+      "int best = Integer.MAX_VALUE;",
+      "",
+      "void explore(String code, int moves, Set<String> dead, String target, int limit) {",
+      "    if (dead.contains(code) || moves > limit) return;",
+      "    if (code.equals(target)) { best = Math.min(best, moves); return; }",
+      "    for (int wheel = 0; wheel < 4; wheel++) {",
+      "        explore(turn(code, wheel, +1), moves + 1, dead, target, limit);",
+      "        explore(turn(code, wheel, -1), moves + 1, dead, target, limit);",
+      "    }",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(8^d) for depth limit d",
+      "space": "O(d) recursion depth"
+    },
+    "whySlow": "There are only 10,000 possible lock codes, but this explores 8^d move sequences — at depth 10 that is over a billion. The waste is that the lock does not remember how it got here: turning wheel 0 up then wheel 1 up lands on exactly the same code as wheel 1 then wheel 0, and the search explores both futures in full. Every code is re-derived through every permutation of the moves that reach it, so the same 10,000 states are visited millions of times."
+  },
+  "patternIdentification": "Count the states, not the sequences. There are 10^4 codes, each with eight neighbours — that is a graph with 10,000 nodes and 40,000 edges, and the deadends are simply nodes deleted from it. Nobody wrote the edge list down, but the rule 'turn one wheel one slot' generates it on demand, and that is all an adjacency list ever gives you. This is the general move: 'state space search' and 'graph traversal' are the same thing, and a visited set is what converts the exponential sequence search into a linear state search. Once framed that way, 'minimum number of moves with every move costing one' is BFS by definition.",
+  "optimized": {
+    "idea": "BFS over codes. Seed the queue with \"0000\" (unless it is a deadend), and expand a code into its eight neighbours by turning each wheel up and down with wraparound. A visited set — entered at enqueue time — guarantees each of the 10,000 codes is expanded at most once. Level by level, so the level counter is the move count. The deadend set is just a second reason to reject a neighbour, identical in effect to a wall in a grid.",
+    "code": [
+      "public static int openLock(String[] deadends, String target) {",
+      "    Set<String> dead = new HashSet<>(Arrays.asList(deadends));",
+      "    if (dead.contains(\"0000\")) return -1;",
+      "    if (target.equals(\"0000\")) return 0;",
+      "",
+      "    Queue<String> queue = new ArrayDeque<>();",
+      "    Set<String> visited = new HashSet<>();",
+      "    queue.offer(\"0000\");",
+      "    visited.add(\"0000\");",
+      "    int moves = 0;",
+      "",
+      "    while (!queue.isEmpty()) {",
+      "        int levelSize = queue.size();      // every code exactly `moves` turns from the start",
+      "        for (int i = 0; i < levelSize; i++) {",
+      "            String state = queue.poll();",
+      "            for (int wheel = 0; wheel < 4; wheel++) {",
+      "                for (int delta = -1; delta <= 1; delta += 2) {",
+      "                    char[] next = state.toCharArray();",
+      "                    next[wheel] = (char) ('0' + (next[wheel] - '0' + delta + 10) % 10);   // +10 keeps the modulus non-negative",
+      "                    String candidate = new String(next);",
+      "                    if (dead.contains(candidate) || !visited.add(candidate)) continue;",
+      "                    if (candidate.equals(target)) return moves + 1;",
+      "                    queue.offer(candidate);",
+      "                }",
+      "            }",
+      "        }",
+      "        moves++;",
+      "    }",
+      "    return -1;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(10^4 * 8 * 4) — bounded by the state space, not the input",
+      "space": "O(10^4) for the visited set and queue"
+    }
+  },
+  "commonMistakes": [
+    "Writing (digit - 1) % 10 without adding 10 first — Java's % keeps the sign, so turning a 0 down yields -1 and the character '/'. The code produced is not a lock code at all, so it matches nothing in the visited or deadend sets, and solvable inputs return -1.",
+    "Checking the deadend set only for the start code and not for each generated code — the search walks straight through a jammed state and reports a shorter answer than is really achievable; example 1 comes back as 4 instead of 6.",
+    "Forgetting the target == \"0000\" case when the target test happens at generation time — \"0000\" is already in the visited set and is never generated again, so the search exhausts the whole state space and returns -1 where the answer is 0."
+  ],
+  "similar": [
+    "word-ladder",
+    "shortest-path-binary-matrix",
+    "walls-and-gates",
+    "rotting-oranges"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 752,
+      "slug": "open-the-lock",
+      "title": "Open the Lock",
+      "url": "https://leetcode.com/problems/open-the-lock/",
+      "premium": false
+    }
+  }
+}

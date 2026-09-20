@@ -1,0 +1,194 @@
+{
+  "id": "number-of-operations-to-connect",
+  "title": "Number of Operations to Make Network Connected",
+  "patternId": "union-find",
+  "difficulty": "intermediate",
+  "tags": [
+    "union-find",
+    "graph",
+    "connectivity"
+  ],
+  "statement": "There are n computers numbered 0 to n-1 joined by ethernet cables. connections[i] = [a, b] means a cable runs directly between computer a and computer b. You may unplug any cable and plug it between any other pair of computers. Return the minimum number of such moves needed to make every computer reachable from every other one, or -1 if it cannot be done.",
+  "realWorld": "Re-patching a rack or re-wiring VPC peerings with the links you already own: you are not allowed to buy another cable, only to move one. The two questions the answer turns on - do I have enough links at all, and how many separate islands am I joining - are exactly the questions a network engineer asks before touching anything.",
+  "examples": [
+    {
+      "input": "n = 4, connections = [[0,1],[0,2],[1,2]]  (edge list, computers 0-indexed)",
+      "output": "1",
+      "explanation": "Computers 0, 1 and 2 form one island held together by three cables, so one of those three is doing no work. Computer 3 is alone. Move the spare cable to 3: two islands become one, in one move."
+    },
+    {
+      "input": "n = 6, connections = [[0,1],[0,2],[0,3],[1,2],[1,3]]",
+      "output": "2",
+      "explanation": "The islands are {0,1,2,3}, {4} and {5} - three of them, so two moves. Five cables hold four computers together, leaving two spares, which is exactly what the two moves need."
+    },
+    {
+      "input": "n = 6, connections = [[0,1],[0,2],[0,3],[1,2]]",
+      "output": "-1",
+      "explanation": "The same three islands as above, but only four cables. Connecting six computers needs at least five cables no matter how they are arranged, so no sequence of moves can succeed. The island count and the cable count are two independent facts and this input fails only the second."
+    }
+  ],
+  "constraints": [
+    "1 <= n <= 10^5",
+    "1 <= connections.length <= min(n * (n - 1) / 2, 10^5)",
+    "connections[i].length == 2",
+    "0 <= connections[i][0], connections[i][1] < n",
+    "connections[i][0] != connections[i][1], and there are no duplicate cables"
+  ],
+  "bruteForce": {
+    "idea": "Count the islands with a flood fill. Then decide how many cables are spare by removing each cable in turn and re-running the flood fill to see whether the island count changed. If there are at least as many spares as joins needed, the answer is islands - 1.",
+    "code": [
+      "public static int makeConnected(int n, int[][] connections) {",
+      "    int whole = countComponents(n, connections, new HashSet<>());",
+      "    Set<Integer> removed = new HashSet<>();",
+      "",
+      "    // Cables must be tested against what is LEFT, not against the original graph. A triangle",
+      "    // has three individually-redundant edges but only one spare: pull all three and the",
+      "    // triangle falls apart. Each cable found spare is therefore removed before testing the",
+      "    // next, which is also what makes this so wasteful — the whole graph is rebuilt every time.",
+      "    for (int i = 0; i < connections.length; i++) {",
+      "        removed.add(i);",
+      "        if (countComponents(n, connections, removed) != whole) removed.remove(i);",
+      "    }",
+      "    int spare = removed.size();",
+      "    return spare >= whole - 1 ? whole - 1 : -1;",
+      "}",
+      "private static int countComponents(int n, int[][] connections, Set<Integer> skip) {",
+      "    List<List<Integer>> adj = new ArrayList<>();",
+      "    for (int i = 0; i < n; i++) adj.add(new ArrayList<>());",
+      "    for (int i = 0; i < connections.length; i++) {",
+      "        if (skip.contains(i)) continue;",
+      "        adj.get(connections[i][0]).add(connections[i][1]);",
+      "        adj.get(connections[i][1]).add(connections[i][0]);",
+      "    }",
+      "    boolean[] seen = new boolean[n];",
+      "    int count = 0;",
+      "    for (int v = 0; v < n; v++) {",
+      "        if (seen[v]) continue;",
+      "        count++;",
+      "        Deque<Integer> stack = new ArrayDeque<>();",
+      "        stack.push(v);",
+      "        seen[v] = true;",
+      "        while (!stack.isEmpty()) {",
+      "            for (int w : adj.get(stack.pop())) {",
+      "                if (!seen[w]) { seen[w] = true; stack.push(w); }",
+      "            }",
+      "        }",
+      "    }",
+      "    return count;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(E * (V + E))",
+      "space": "O(V + E)"
+    },
+    "whySlow": "Testing one cable rebuilds every adjacency list and re-walks the entire graph, all to recover a single bit: were these two endpoints already in the same island before this cable existed? The traversal rediscovers the same islands from scratch once per cable, throwing away the grouping it just computed before the next cable asks the same question about a graph that has barely changed."
+  },
+  "patternIdentification": "Every question here is either \"are these two already in the same group?\" or \"how many groups are left?\", asked while edges arrive one at a time and are never taken away. That is precisely what union-find maintains: each cable is one union, a cable whose endpoints already share a root adds nothing, and the number of distinct roots at the end is the number of islands. Whenever connectivity is built up incrementally and never torn down, keep a disjoint-set structure instead of re-running a traversal per query.",
+  "optimized": {
+    "idea": "Two checks, and they are independent. First, a pure counting check made before any union: n computers can never be connected with fewer than n-1 cables, however they are arranged, so if connections.length < n - 1 the answer is -1 and nothing else matters. Second, union every cable; each union that joins two different roots drops the island count by one, and each cable whose endpoints already share a root is redundant - it is exactly one of the cables you are free to unplug and move. The answer is then islands - 1. The two checks meet exactly: a forest of c islands over n computers uses n - c cables in its spanning trees, so the number of spares is E - (n - c), and having at least c - 1 spares is algebraically the same statement as E >= n - 1. That is why the count can be tested first and why, once it passes, you never have to worry about running out of cables.",
+    "code": [
+      "public static int makeConnected(int n, int[][] connections) {",
+      "    if (connections.length < n - 1) return -1;   // too few cables for ANY arrangement",
+      "    int[] parent = new int[n];",
+      "    int[] rank = new int[n];",
+      "    for (int i = 0; i < n; i++) parent[i] = i;",
+      "    int components = n;",
+      "    for (int[] cable : connections) {",
+      "        int ra = find(parent, cable[0]), rb = find(parent, cable[1]);",
+      "        if (ra == rb) continue;                  // redundant: this is a cable we can move",
+      "        if (rank[ra] < rank[rb]) { int t = ra; ra = rb; rb = t; }",
+      "        parent[rb] = ra;",
+      "        if (rank[ra] == rank[rb]) rank[ra]++;",
+      "        components--;",
+      "    }",
+      "    return components - 1;",
+      "}",
+      "",
+      "private static int find(int[] parent, int x) {",
+      "    int root = x;",
+      "    while (parent[root] != root) root = parent[root];",
+      "    while (parent[x] != root) { int next = parent[x]; parent[x] = root; x = next; }",
+      "    return root;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(E * alpha(n)), effectively O(E)",
+      "space": "O(n)"
+    }
+  },
+  "visualization": {
+    "engine": "unionFind",
+    "title": "Example 2: six computers, five cables. Two of the unions find their endpoints already joined - those are the spare cables, and the three roots left at the end mean two moves.",
+    "input": {
+      "size": 6,
+      "operations": [
+        {
+          "op": "union",
+          "a": 0,
+          "b": 1
+        },
+        {
+          "op": "union",
+          "a": 0,
+          "b": 2
+        },
+        {
+          "op": "union",
+          "a": 0,
+          "b": 3
+        },
+        {
+          "op": "union",
+          "a": 1,
+          "b": 2
+        },
+        {
+          "op": "union",
+          "a": 1,
+          "b": 3
+        },
+        {
+          "op": "find",
+          "a": 4
+        }
+      ]
+    },
+    "code": [
+      "if (connections.length < n - 1) return -1;   // the counting check, BEFORE any union",
+      "int[] parent = new int[n];                   // every computer is its own island",
+      "int[] rank   = new int[n];                   // an upper bound on each tree height",
+      "",
+      "int root = x; while (parent[root] != root) root = parent[root];          // climb to the root",
+      "while (parent[x] != root) { int next = parent[x]; parent[x] = root; x = next; }  // path compression",
+      "return root;                                                             // find(x)",
+      "",
+      "if (find(a) == find(b)) continue;            // already joined: a SPARE cable",
+      "int ra = find(a), rb = find(b); if (rank[ra] < rank[rb]) { int t = ra; ra = rb; rb = t; }",
+      "parent[rb] = ra; if (rank[ra] == rank[rb]) rank[ra]++;",
+      "components--;                                // only a real merge changes the count",
+      "",
+      "return components - 1;                       // joining c islands takes c - 1 moves"
+    ]
+  },
+  "commonMistakes": [
+    "Skipping the cable count and returning components - 1 unconditionally - n = 6 with the four cables [[0,1],[0,2],[0,3],[1,2]] answers 2, a number that looks entirely reasonable, when the honest answer is -1 because only one cable is spare.",
+    "Decrementing the component count on every cable instead of only on a union that actually merged two roots - the triangle n = 4 with [[0,1],[0,2],[1,2]] reports 1 component instead of 2 and answers 0 moves, leaving computer 3 stranded.",
+    "Writing find without path compression and union without rank - correct on every small test, then the chain input [[0,1],[1,2],[2,3],...] at n = 10^5 builds a single 100000-deep parent chain and the submission times out with no wrong answer to debug."
+  ],
+  "similar": [
+    "number-of-provinces",
+    "redundant-connection",
+    "graph-valid-tree",
+    "satisfiability-equality-equations",
+    "accounts-merge"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 1319,
+      "slug": "number-of-operations-to-make-network-connected",
+      "title": "Number of Operations to Make Network Connected",
+      "url": "https://leetcode.com/problems/number-of-operations-to-make-network-connected/",
+      "premium": false
+    }
+  }
+}

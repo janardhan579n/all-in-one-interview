@@ -1,0 +1,135 @@
+{
+  "id": "path-sum",
+  "title": "Path Sum",
+  "patternId": "dfs",
+  "difficulty": "beginner",
+  "tags": [
+    "dfs",
+    "tree",
+    "recursion"
+  ],
+  "statement": "Given the root of a binary tree and an integer targetSum, return true if the tree has a root-to-leaf path whose node values add up to targetSum. A leaf is a node with no children. Node values may be negative.",
+  "realWorld": "Walking a nested decision structure where only a complete chain counts: a rules engine that accumulates a score down a branch and only acts when a terminal rule is reached, or a bill-of-materials tree where costs add up along a path and the question is whether any finished part hits a price point. In both, a partial chain that happens to reach the number is not an answer.",
+  "examples": [
+    {
+      "input": "root = [5,4,8,11,null,13,4,7,2,null,null,null,1], targetSum = 22  (level-order, null marks a missing child)",
+      "output": "true",
+      "explanation": "5 -> 4 -> 11 -> 2 sums to 22 and ends at the leaf 2."
+    },
+    {
+      "input": "root = [1,2,3], targetSum = 1",
+      "output": "false",
+      "explanation": "The running sum is 1 at the root, but the root is not a leaf. The only root-to-leaf sums are 1+2 = 3 and 1+3 = 4."
+    },
+    {
+      "input": "root = [1,-2,3], targetSum = -1",
+      "output": "true",
+      "explanation": "1 + (-2) = -1 at the leaf -2. Along the way the running sum was 1, which is already past the target — any code that prunes when the sum overshoots gets this wrong."
+    }
+  ],
+  "constraints": [
+    "The number of nodes is in the range [0, 5000]",
+    "-1000 <= Node.val <= 1000",
+    "-1000 <= targetSum <= 1000"
+  ],
+  "bruteForce": {
+    "idea": "Collect every root-to-leaf path into a list of lists, then sum each collected path and compare it with the target.",
+    "code": [
+      "List<List<Integer>> paths = new ArrayList<>();",
+      "collect(root, new ArrayList<>(), paths);      // every path, materialised",
+      "",
+      "for (List<Integer> path : paths) {",
+      "    int sum = 0;",
+      "    for (int value : path) sum += value;      // re-adds the shared prefix once per leaf",
+      "    if (sum == targetSum) return true;",
+      "}",
+      "return false;"
+    ],
+    "complexity": {
+      "time": "O(n * h) — n nodes, each copied into up to h paths",
+      "space": "O(n * h) to hold every path at once"
+    },
+    "whySlow": "Two kinds of waste, both from materialising the paths. The root's value is re-added once for every leaf in the tree, and so is every value near the top — a node at depth d is summed into as many totals as it has descendants that are leaves. And the search keeps building paths after a matching one already exists, holding the whole set in memory when it needs one number at a time. Nothing in the question ever asks which path it was."
+  },
+  "patternIdentification": "The only thing the recursion has to carry down a branch is a single number. Whenever a per-path fact can be folded into an accumulator, pass the accumulator as a parameter instead of reconstructing the path — the recursion's own call stack is already holding the path for you. Then note where the test belongs: the question is about root-to-leaf paths, so the comparison happens at a leaf and nowhere else. Getting that placement right is the whole problem; the traversal is ordinary DFS.",
+  "optimized": {
+    "idea": "Subtract as you descend, so each call receives what is left to make up, and check for zero only when the node has no children. Passing the remainder down rather than the running total means the test at the leaf is a single comparison with 0, and no value is ever added twice. Return true as soon as either subtree succeeds, so the || short-circuits and the search stops at the first match.",
+    "code": [
+      "// TreeNode is the usual { int val; TreeNode left; TreeNode right; }",
+      "public static boolean hasPathSum(TreeNode root, int targetSum) {",
+      "    if (root == null) return false;                // an empty tree has no root-to-leaf path at all",
+      "    int remaining = targetSum - root.val;",
+      "    if (root.left == null && root.right == null) {",
+      "        return remaining == 0;                     // the test belongs at a LEAF, not at every node",
+      "    }",
+      "    return hasPathSum(root.left, remaining) || hasPathSum(root.right, remaining);",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(h) recursion depth, which is O(n) for a degenerate tree"
+    }
+  },
+  "visualization": {
+    "engine": "treeTraversal",
+    "input": {
+      "order": "preorder",
+      "tree": {
+        "value": 5,
+        "left": {
+          "value": 4,
+          "left": {
+            "value": 11,
+            "left": {
+              "value": 7
+            },
+            "right": {
+              "value": 2
+            }
+          }
+        },
+        "right": {
+          "value": 8,
+          "left": {
+            "value": 13
+          },
+          "right": {
+            "value": 4,
+            "right": {
+              "value": 1
+            }
+          }
+        }
+      }
+    },
+    "code": [
+      "boolean hasPathSum(TreeNode root, int targetSum) {",
+      "    if (root == null) return false;",
+      "    int remaining = targetSum - root.val;",
+      "    if (root.left == null && root.right == null) return remaining == 0;",
+      "    return hasPathSum(root.left, remaining)",
+      "        || hasPathSum(root.right, remaining);",
+      "}"
+    ]
+  },
+  "commonMistakes": [
+    "Returning true the moment the running sum equals the target at any node — example 2 wrongly returns true, because 1 is the root's value and the root is not a leaf. The check has to be guarded by 'this node has no children'.",
+    "Testing for a leaf with root.left == null || root.right == null — a node with exactly one child is then treated as a leaf, so in example 1 the node 4 with only the child 1 is tested at sum 5+8+4 = 17 and targetSum 17 wrongly returns true.",
+    "Pruning the branch when the remaining sum goes negative — correct on every all-positive tree, so it passes example 1, and then example 3 returns false because the running sum overshoots at the root and the branch holding the answer is cut off."
+  ],
+  "similar": [
+    "max-depth-binary-tree",
+    "balanced-binary-tree",
+    "diameter-of-binary-tree",
+    "binary-tree-inorder-traversal"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 112,
+      "slug": "path-sum",
+      "title": "Path Sum",
+      "url": "https://leetcode.com/problems/path-sum/",
+      "premium": false
+    }
+  }
+}

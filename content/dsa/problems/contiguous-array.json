@@ -1,0 +1,125 @@
+{
+  "id": "contiguous-array",
+  "title": "Contiguous Array",
+  "patternId": "prefix-sum",
+  "difficulty": "intermediate",
+  "tags": [
+    "array",
+    "prefix-sum",
+    "hashing"
+  ],
+  "statement": "Given a binary array nums containing only 0s and 1s, return the maximum length of a contiguous subarray that contains an equal number of 0s and 1s.",
+  "realWorld": "Finding the longest stretch of a rollout in which successes and failures balanced out, or — in experiment analysis — the longest window of an event stream where two variants were served the same number of times. That window is the one you can compare directly without reweighting, and it has to be found in a single pass over a stream far too large to re-scan.",
+  "examples": [
+    {
+      "input": "nums = [0,1]",
+      "output": "2",
+      "explanation": "The whole array is balanced. It only counts if the running total is allowed to match its value before any element was read — that is, an empty prefix of 0."
+    },
+    {
+      "input": "nums = [0,1,0]",
+      "output": "2",
+      "explanation": "Two balanced subarrays of length 2 exist ([0,1] and [1,0]) and the whole array is not balanced, since it has two 0s and one 1."
+    },
+    {
+      "input": "nums = [0,1,1,1,0,0]",
+      "output": "6",
+      "explanation": "Three 0s and three 1s overall, so the answer is the entire array — the case that any solution keeping only the most recent occurrence of a prefix value gets wrong."
+    }
+  ],
+  "constraints": [
+    "1 <= nums.length <= 10^5",
+    "nums[i] is either 0 or 1",
+    "Return a length, not the subarray itself",
+    "Return 0 if no balanced subarray exists"
+  ],
+  "bruteForce": {
+    "idea": "Try every start index, extend the end one element at a time, keep running counts of 0s and 1s and record the length whenever they are equal.",
+    "code": [
+      "int best = 0;",
+      "for (int start = 0; start < nums.length; start++) {",
+      "    int zeros = 0, ones = 0;",
+      "    for (int end = start; end < nums.length; end++) {",
+      "        if (nums[end] == 0) zeros++; else ones++;",
+      "        if (zeros == ones) best = Math.max(best, end - start + 1);",
+      "    }",
+      "}",
+      "return best;"
+    ],
+    "complexity": {
+      "time": "O(n^2)",
+      "space": "O(1)"
+    },
+    "whySlow": "Each start index re-walks the entire suffix the previous start has just finished walking, recounting the same 0s and 1s one position later. The counts for the window starting at s + 1 differ from those for the window starting at s by a single element, yet they are rebuilt from zero n times. At n = 10^5 that is about 5 * 10^9 increments, every one of them re-deriving a count that a running total already held."
+  },
+  "patternIdentification": "Re-encode the condition before reaching for a data structure. Map 0 to -1 and 'equal numbers of 0s and 1s' becomes 'the values sum to zero', which becomes 'the running total at the end of the subarray equals the running total just before it started'. Once a constraint reads as 'the prefix returns to a value it has already taken', the machinery is identical to subarray-sum-equals-k: carry a running total and keep a hash map of the prefix values seen. The transferable move is the re-encoding — a balance condition turned into an arithmetic one — because only then does a hash map have anything to look up.",
+  "optimized": {
+    "idea": "Walk once, adding +1 for a 1 and -1 for a 0. Any subarray that is balanced sums to zero, so its running total at the end equals the running total before it began. Keep a map from each running value to the EARLIEST index at which it occurred: when the value comes round again, the stretch between the two positions is balanced, and pairing with the earliest occurrence gives the longest such stretch. Seeding the map with 0 mapped to -1 represents the empty prefix, which is what lets a balanced run starting at index 0 be measured.",
+    "code": [
+      "public static int findMaxLength(int[] nums) {",
+      "    Map<Integer, Integer> firstIndex = new HashMap<>();",
+      "    firstIndex.put(0, -1);   // the empty prefix, so a run starting at index 0 is measurable",
+      "    int running = 0;",
+      "    int best = 0;",
+      "    for (int i = 0; i < nums.length; i++) {",
+      "        running += nums[i] == 1 ? 1 : -1;",
+      "        if (firstIndex.containsKey(running)) {",
+      "            best = Math.max(best, i - firstIndex.get(running));",
+      "        } else {",
+      "            firstIndex.put(running, i);   // keep only the EARLIEST index: it yields the longest span",
+      "        }",
+      "    }",
+      "    return best;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(n)"
+    }
+  },
+  "visualization": {
+    "engine": "prefixSumHash",
+    "input": {
+      "array": [
+        -1,
+        1,
+        1,
+        1,
+        -1,
+        -1
+      ],
+      "k": 0
+    },
+    "code": [
+      "Map<Integer, Integer> firstIndex = new HashMap<>();",
+      "firstIndex.put(0, -1);                        // the empty prefix",
+      "int running = 0, best = 0;",
+      "for (int i = 0; i < nums.length; i++) {",
+      "    running += nums[i] == 1 ? 1 : -1;         // 0 counts as -1, so 'balanced' means 'sums to 0'",
+      "    if (firstIndex.containsKey(running)) best = Math.max(best, i - firstIndex.get(running));",
+      "    else firstIndex.put(running, i);          // earliest occurrence only",
+      "}",
+      "return best;"
+    ]
+  },
+  "commonMistakes": [
+    "Overwriting the map entry every time a running value recurs: each hit is then measured against the most recent occurrence rather than the first, so [0,1,0,1] returns 2 instead of 4. Only the earliest index can produce the longest span.",
+    "Omitting the seed firstIndex.put(0, -1): a balanced run that starts at index 0 is never detected, so [0,1] returns 0. Seeding with 0 mapped to 0 instead of -1 is the sibling bug and makes every such answer one too short.",
+    "Replacing the map with an int[] indexed by the running value to save memory, without offsetting by n: the running total goes negative the first time a 0 is read, and the array access throws ArrayIndexOutOfBoundsException on the very first element of [0,1]."
+  ],
+  "similar": [
+    "subarray-sum-equals-k",
+    "running-sum",
+    "pivot-index",
+    "max-consecutive-ones-iii"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 525,
+      "slug": "contiguous-array",
+      "title": "Contiguous Array",
+      "url": "https://leetcode.com/problems/contiguous-array/",
+      "premium": false
+    }
+  }
+}

@@ -1,0 +1,132 @@
+{
+  "id": "rotate-image",
+  "title": "Rotate Image",
+  "patternId": "matrix",
+  "difficulty": "intermediate",
+  "tags": [
+    "matrix",
+    "array",
+    "in-place",
+    "transpose"
+  ],
+  "statement": "Given an n × n matrix representing an image, rotate it by 90 degrees clockwise **in place**. You must modify the input directly and may not allocate another n × n matrix.",
+  "realWorld": "Rotating a photo on a phone, where a second full-size bitmap may not fit in memory; reorienting a sprite or tile in a game's framebuffer; turning a board 90° in a puzzle solver so one set of rules covers all four orientations.",
+  "examples": [
+    {
+      "input": "matrix = [[1,2,3],[4,5,6],[7,8,9]]",
+      "output": "[[7,4,1],[8,5,2],[9,6,3]]",
+      "explanation": "The first column read bottom-to-top (7,4,1) becomes the first row. The centre element 5 never moves."
+    },
+    {
+      "input": "matrix = [[1,2],[3,4]]",
+      "output": "[[3,1],[4,2]]",
+      "explanation": "Transpose gives [[1,3],[2,4]]; reversing each row gives [[3,1],[4,2]]."
+    },
+    {
+      "input": "matrix = [[5]]",
+      "output": "[[5]]",
+      "explanation": "A 1×1 matrix is unchanged — both the transpose and the row reversal are no-ops."
+    }
+  ],
+  "constraints": [
+    "n == matrix.length == matrix[i].length",
+    "1 <= n <= 20",
+    "-1000 <= matrix[i][j] <= 1000",
+    "You may not allocate a second n × n matrix"
+  ],
+  "bruteForce": {
+    "idea": "Allocate a fresh n × n matrix and copy each element to where it belongs: the element at (r, c) lands at (c, n-1-r) after a clockwise turn. Then copy the result back over the input.",
+    "code": [
+      "int n = matrix.length;",
+      "int[][] rotated = new int[n][n];",
+      "",
+      "for (int r = 0; r < n; r++) {",
+      "    for (int c = 0; c < n; c++) {",
+      "        rotated[c][n - 1 - r] = matrix[r][c];   // clockwise: (r,c) -> (c, n-1-r)",
+      "    }",
+      "}",
+      "",
+      "for (int r = 0; r < n; r++) {",
+      "    matrix[r] = Arrays.copyOf(rotated[r], n);   // copy back, since we must mutate the input",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n²)",
+      "space": "O(n²)"
+    },
+    "whySlow": "The time is optimal — every one of the n² pixels has to move. What fails is the constraint: it doubles the memory the image occupies, which for a large photo is exactly the allocation the problem forbids. The interview point is not speed but whether you can find the sequence of in-place swaps that achieves the same permutation."
+  },
+  "patternIdentification": "A rotation is a fixed index transform, so the whole problem is arithmetic on (row, col) — the matrix pattern's core skill. And since the target permutation is a bijection on the same cells, it can be reached by swaps alone, which means O(1) extra space is available if you can factor the permutation into simpler moves. Reflections are the natural building blocks, because each reflection is a set of independent two-element swaps.",
+  "optimized": {
+    "idea": "Rotate as two reflections: **transpose, then reverse each row**. Transposing reflects across the main diagonal, which is a clockwise rotation composed with a horizontal mirror; reversing each row cancels the mirror. Both steps are pure in-place swaps needing a single temporary. The inner transpose loop must start at `c = r + 1`, otherwise each pair is swapped twice and the matrix comes back unchanged.",
+    "code": [
+      "public static void rotate(int[][] matrix) {",
+      "    int n = matrix.length;",
+      "",
+      "    // Step 1: transpose — reflect across the main diagonal.",
+      "    // c starts at r + 1 so the upper triangle is visited once and no swap is undone.",
+      "    for (int r = 0; r < n; r++) {",
+      "        for (int c = r + 1; c < n; c++) {",
+      "            int tmp = matrix[r][c];",
+      "            matrix[r][c] = matrix[c][r];",
+      "            matrix[c][r] = tmp;",
+      "        }",
+      "    }",
+      "",
+      "    // Step 2: reverse each row — cancels the mirror the transpose introduced.",
+      "    for (int[] row : matrix) {",
+      "        for (int lo = 0, hi = n - 1; lo < hi; lo++, hi--) {",
+      "            int tmp = row[lo];",
+      "            row[lo] = row[hi];",
+      "            row[hi] = tmp;",
+      "        }",
+      "    }",
+      "}",
+      "",
+      "/** Anti-clockwise: the same transpose, then reverse each COLUMN instead. */",
+      "public static void rotateCounterClockwise(int[][] matrix) {",
+      "    int n = matrix.length;",
+      "    for (int r = 0; r < n; r++) {",
+      "        for (int c = r + 1; c < n; c++) {",
+      "            int tmp = matrix[r][c];",
+      "            matrix[r][c] = matrix[c][r];",
+      "            matrix[c][r] = tmp;",
+      "        }",
+      "    }",
+      "    for (int c = 0; c < n; c++) {",
+      "        for (int lo = 0, hi = n - 1; lo < hi; lo++, hi--) {",
+      "            int tmp = matrix[lo][c];",
+      "            matrix[lo][c] = matrix[hi][c];",
+      "            matrix[hi][c] = tmp;",
+      "        }",
+      "    }",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n²)",
+      "space": "O(1)"
+    }
+  },
+  "commonMistakes": [
+    "Starting the transpose's inner loop at `c = 0`. Every pair is then swapped twice and the matrix is returned unmodified — a bug that produces no error and passes a symmetric test input.",
+    "Reversing the rows first and then transposing. That is the anti-clockwise rotation; the order of the two reflections determines the direction.",
+    "Reassigning `matrix = rotated` inside the method. Java passes the reference by value, so the caller's array is untouched — the contents must be overwritten.",
+    "Writing the index transform as `(r, c) -> (n-1-c, r)`. That is the anti-clockwise map; clockwise is `(r, c) -> (c, n-1-r)`. Check it against a corner: (0,0) must end up at (0, n-1).",
+    "Assuming the four-way cyclic-swap solution (rotating rings four cells at a time) is required. It is O(1) space too and slightly fewer writes, but it has four index expressions to get right instead of one; transpose-then-reverse is far easier to defend at a whiteboard.",
+    "Forgetting that this only works for square matrices — an m × n rotation cannot be done in place, because the result has different dimensions."
+  ],
+  "similar": [
+    "spiral-matrix",
+    "set-matrix-zeroes",
+    "diagonal-traverse"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 48,
+      "slug": "rotate-image",
+      "title": "Rotate Image",
+      "url": "https://leetcode.com/problems/rotate-image/",
+      "premium": false
+    }
+  }
+}

@@ -1,0 +1,93 @@
+{
+  "id": "dp-or-not",
+  "title": "Is this Dynamic Programming?",
+  "start": "n1",
+  "nodes": {
+    "n1": {
+      "type": "question",
+      "text": "Are you asked for a count, a maximum/minimum, or whether something is achievable — rather than for the items themselves?",
+      "options": [
+        {
+          "label": "Yes",
+          "next": "n2"
+        },
+        {
+          "label": "No, I must list every solution",
+          "next": "r-backtrack"
+        }
+      ]
+    },
+    "n2": {
+      "type": "question",
+      "text": "Can you express the answer in terms of the answer to a smaller version of the same problem?",
+      "options": [
+        {
+          "label": "Yes",
+          "next": "n3"
+        },
+        {
+          "label": "No",
+          "next": "r-other"
+        }
+      ]
+    },
+    "n3": {
+      "type": "question",
+      "text": "Does the naive recursion solve the same subproblem repeatedly?",
+      "options": [
+        {
+          "label": "Yes",
+          "next": "n4"
+        },
+        {
+          "label": "No, each subproblem is distinct",
+          "next": "r-divide"
+        }
+      ]
+    },
+    "n4": {
+      "type": "question",
+      "text": "Is there a locally optimal choice you can PROVE is globally optimal?",
+      "options": [
+        {
+          "label": "Yes, and I can prove it",
+          "next": "r-greedy"
+        },
+        {
+          "label": "No",
+          "next": "r-dp"
+        }
+      ]
+    },
+    "r-dp": {
+      "type": "result",
+      "text": "Dynamic Programming",
+      "detail": "Write the recursion, add memoisation, then convert to a table if useful. Define the state in words first: 'dp[i] = …'.",
+      "lessonId": "dynamic-programming-basics"
+    },
+    "r-greedy": {
+      "type": "result",
+      "text": "Greedy — but prove it",
+      "detail": "Greedy is faster and simpler when it is correct. Coin change with [1,3,4] and amount 6 is the standard counterexample for unproven greed.",
+      "lessonId": "dynamic-programming-basics"
+    },
+    "r-backtrack": {
+      "type": "result",
+      "text": "Backtracking",
+      "detail": "Enumerating all solutions is exponential by nature, because the output is. Prune aggressively.",
+      "lessonId": "backtracking"
+    },
+    "r-divide": {
+      "type": "result",
+      "text": "Divide and conquer",
+      "detail": "Non-overlapping subproblems need no memo — merge sort and binary search are the archetypes.",
+      "lessonId": "recursion"
+    },
+    "r-other": {
+      "type": "result",
+      "text": "Look for another pattern",
+      "detail": "Re-read the problem for contiguity (sliding window), ordering (two pointers, binary search) or lookups (hashing).",
+      "lessonId": "big-o"
+    }
+  }
+}

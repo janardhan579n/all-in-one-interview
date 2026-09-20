@@ -1,0 +1,10 @@
+{
+  "id": "data-and-variables",
+  "title": "Data, Variables and Memory (డేటా, వేరియబుల్స్ మరియు మెమరీ)",
+  "summary": "Variable అంటే memory లో పేరు రాసి ఉన్న ఒక పెట్టె — ఆ label ే పేరు, పెట్టెలో ఒక value ఉంటుంది, ఆ పెట్టె పరిమాణం స్థిరంగా ఉంటుంది.",
+  "analogy": {
+    "beginner": "Memory అంటే 0 నుంచి పైకి numbers వేసి ఉన్న, ఒకేలా ఉండే lockers తో నిండిన చాలా పొడవైన వీధి. ప్రతి locker లో ఒక చిన్న వస్తువు పడుతుంది. Variable అంటే ఒక locker మీద అతికించిన, పేరు రాసి ఉన్న sticky note — దాంతో 'locker 140,213,905 లో 5 పెట్టు' అనే బదులు '`count` లో 5 పెట్టు' అని చెప్పొచ్చు. Computer మాత్రం ఇంకా ఆ number నే వాడుతుంది — పేరు మీ కోసం.",
+    "interview": "Memory అంటే byte-addressable అయిన ఒక linear array. Variable అంటే తెలిసిన width ఉన్న ఒక storage location కు compile-time లో bind అయిన పేరు; ఆ width ఎంత, అందులోని bit pattern ను ఎలా అర్థం చేసుకోవాలి అనేది type నిర్ణయిస్తుంది."
+  },
+  "intuition": "ఇక్కడ పని అంతా రెండు ఆలోచనలే చేస్తాయి.\n\n**మొదటిది: అన్నీ numbers ే.** Text, images, ధరలు, `true`/`false` — అన్నీ numbers గా, చివరికి bits గా store అవుతాయి. `'A'` అనేది 65 గా store అవుతుంది. ఒక pixel అంటే మూడు numbers. అక్కడ కనిపించే bits ను ఎలా అర్థం చేసుకోవాలో computer కు type చెబుతుంది.\n\n**రెండోది: location ముఖ్యం.** Locker 500 చదవడానికి, locker 501 చదవడానికి ఖర్చు ఒకటే. కానీ *వరుసగా ఉన్న వెయ్యి lockers* చదవడం, *వీధి అంతా చెల్లాచెదురుగా ఉన్న వెయ్యి lockers* చదవడం కంటే చాలా చాలా వేగం — ఎందుకంటే hardware ఒకేసారి పూర్తి blocks ను తెచ్చుకుంటుంది. ఈ ఒక్క భౌతిక వాస్తవం వల్లే arrays వేగంగా ఉంటాయి, linked lists వాటి Big-O సూచించే దానికంటే నెమ్మదిగా ఉంటాయి, database indexes ఆ ఆకారంలోనే ఉంటాయి."
+}

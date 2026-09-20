@@ -1,0 +1,10 @@
+{
+  "id": "what-is-an-algorithm",
+  "title": "What Is an Algorithm? (एल्गोरिदम क्या है?)",
+  "summary": "Algorithm ऐसे steps की एक finite सूची है जिनका कोई दोहरा मतलब नहीं होता, और जो एक input को उस जवाब में बदल देती है जो आपको चाहिए था।",
+  "analogy": {
+    "beginner": "एक recipe। 'दो कप पानी उबालिए। चावल डालिए। ढक दीजिए। 12 मिनट रुकिए।' जो भी इन steps को ठीक-ठीक follow करेगा उसे चावल मिल जाएँगे — उसका chef होना ज़रूरी नहीं, और यह समझना भी ज़रूरी नहीं कि यह काम क्यों करता है। Algorithm कंप्यूटर के लिए एक recipe है: सटीक steps, कोई अंदाज़ा नहीं, और वह हमेशा ख़त्म होती है।",
+    "interview": "Algorithm well-defined operations का एक finite, deterministic क्रम है जो input को output पर map करता है, जिसका termination सिद्ध किया जा सकता है और जिसका time और space में resource usage analyse किया जा सकता है।"
+  },
+  "intuition": "कंप्यूटर तेज़ हैं, पर literal हैं। वे यह अंदाज़ा नहीं लगाएँगे कि आपका मतलब क्या था। इसलिए एक programmer का पूरा काम यही है कि जिस चीज़ को इंसान धुँधले तौर पर समझता है — 'सबसे सस्ती flight ढूँढो', 'इन नामों को sort करो' — उसे इतने सटीक steps में दोबारा लिखा जाए कि बिना किसी समझ-बूझ वाली मशीन भी उन्हें follow कर सके।\n\nतीन गुण किसी algorithm को एक धुँधली योजना से अलग करते हैं:\n\n1. **Finite** — यह रुकती है। 'हमेशा 1 जोड़ते जाओ' कोई algorithm नहीं है।\n2. **Unambiguous** — हर step का ठीक एक ही मतलब होता है। 'चुटकी भर नमक डालिए' की इजाज़त नहीं है।\n3. **Effective** — हर step ऐसा है जिसे सचमुच किया जा सके।\n\nइस course की बाक़ी हर चीज़ — arrays, trees, dynamic programming, sharding — बस लोगों का बेहतर recipes ढूँढना है।"
+}

@@ -1,0 +1,130 @@
+{
+  "id": "sort-colors",
+  "title": "Sort Colors",
+  "patternId": "sorting",
+  "difficulty": "beginner",
+  "tags": [
+    "array",
+    "sorting",
+    "partition",
+    "two-pointers",
+    "in-place"
+  ],
+  "statement": "Given an array `nums` with n objects coloured red, white or blue — represented by the integers 0, 1 and 2 — sort them in place so that objects of the same colour are adjacent, in the order 0, 1, 2. You may not use the library sort function. Follow-up: can you do it in a single pass with O(1) extra space?",
+  "realWorld": "This is a three-way partition, and it is what a real quicksort implementation does when an array contains many duplicate keys — separating 'less than', 'equal to' and 'greater than' the pivot in one pass, instead of repeatedly re-partitioning a block of equal values. It is also the shape of any bucketing job where the number of categories is tiny and known: sorting log lines into ERROR / WARN / INFO, or triaging records into reject / review / accept without allocating three lists.",
+  "examples": [
+    {
+      "input": "nums = [2,0,2,1,1,0]",
+      "output": "[0,0,1,1,2,2]",
+      "explanation": "Two 0s, then two 1s, then two 2s."
+    },
+    {
+      "input": "nums = [2,0,1]",
+      "output": "[0,1,2]",
+      "explanation": "Every colour appears once."
+    },
+    {
+      "input": "nums = [1,1,1]",
+      "output": "[1,1,1]",
+      "explanation": "Already sorted. A correct one-pass solution must not loop forever here — the middle pointer simply advances through every element."
+    }
+  ],
+  "constraints": [
+    "1 <= nums.length <= 300",
+    "nums[i] is 0, 1 or 2",
+    "You must sort in place; the library sort is disallowed",
+    "Follow-up: one pass, O(1) extra space"
+  ],
+  "bruteForce": {
+    "idea": "Counting sort in two passes: tally how many 0s, 1s and 2s there are, then overwrite the array with that many of each in order. No comparison ever happens — the value is used directly as an index into the tally.",
+    "code": [
+      "public static void sortColors(int[] nums) {",
+      "    int[] counts = new int[3];",
+      "    for (int colour : nums) {",
+      "        counts[colour]++;                 // pass 1: tally",
+      "    }",
+      "",
+      "    int write = 0;",
+      "    for (int colour = 0; colour < 3; colour++) {",
+      "        while (counts[colour]-- > 0) {    // pass 2: write them back out",
+      "            nums[write++] = colour;",
+      "        }",
+      "    }",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(1)"
+    },
+    "whySlow": "It is not slow — O(n) time and O(1) space (the tally array is three ints regardless of n), and it beats any comparison sort because it never compares. The only thing it fails is the follow-up's 'one pass'. It reads the array twice, which matters in the setting this problem abstracts: a stream you can only consume once, or records too large to revisit. That constraint, not performance, is what pushes you to the Dutch national flag partition."
+  },
+  "patternIdentification": "Three tells fire together. The value range is tiny and known in advance (0, 1, 2), which is the counting-sort signal. The follow-up demands one pass with O(1) space, which rules out both counting and any comparison sort. And the desired output is three contiguous blocks — which is exactly what a partition produces. Whenever a problem asks for 'everything smaller, then equal, then larger' in place, you are being asked for a partition, the same operation that sits at the heart of quicksort.",
+  "optimized": {
+    "idea": "The Dutch national flag partition (Dijkstra). Maintain three regions with two boundary pointers and one cursor: everything before `low` is 0, everything after `high` is 2, and `[low, mid)` is 1. The cursor `mid` walks forward examining one element at a time.\n\nThe subtle part is what happens after each swap. Swapping a 0 forward pulls a value from `low`, which has already been examined and can only be a 1 — so it is safe to advance `mid` as well. Swapping a 2 backward pulls a value from `high`, which has **not** been examined yet — so `mid` must stay put and re-examine it. Getting that asymmetry right is the whole problem.",
+    "code": [
+      "/**",
+      " * Dutch national flag partition. One pass, O(1) space.",
+      " *",
+      " * Invariant, maintained at every step:",
+      " *   nums[0 .. low-1]    == 0",
+      " *   nums[low .. mid-1]  == 1",
+      " *   nums[mid .. high]   == unexamined",
+      " *   nums[high+1 .. n-1] == 2",
+      " */",
+      "public static void sortColors(int[] nums) {",
+      "    int low = 0;                      // next slot for a 0",
+      "    int mid = 0;                      // cursor: the element under inspection",
+      "    int high = nums.length - 1;       // next slot for a 2",
+      "",
+      "    while (mid <= high) {             // <= : high is still unexamined",
+      "        switch (nums[mid]) {",
+      "            case 0 -> {",
+      "                swap(nums, low, mid);",
+      "                low++;",
+      "                mid++;                // the value pulled from low was already seen (a 1)",
+      "            }",
+      "            case 1 -> mid++;          // already in its region",
+      "            case 2 -> {",
+      "                swap(nums, mid, high);",
+      "                high--;",
+      "                                      // do NOT advance mid: the value pulled from high is new",
+      "            }",
+      "            default -> throw new IllegalArgumentException(\"colour must be 0, 1 or 2\");",
+      "        }",
+      "    }",
+      "}",
+      "",
+      "private static void swap(int[] a, int i, int j) {",
+      "    int temp = a[i];",
+      "    a[i] = a[j];",
+      "    a[j] = temp;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(1)"
+    }
+  },
+  "commonMistakes": [
+    "Advancing `mid` after swapping a 2 to the back. The element that arrives from `high` has never been examined — it could itself be a 2 — so skipping it leaves an unsorted value stranded in the middle. This is the bug the problem is really testing.",
+    "Writing `while (mid < high)` instead of `while (mid <= high)`. When the two meet, the element at that index is still unexamined, so the loop must run once more; otherwise `[1,0]`-style tails come out wrong.",
+    "Advancing `low` without advancing `mid` in the 0 case. Since `low <= mid` always holds, the value swapped in from `low` is either the same element or a known 1 — it never needs re-inspection, and failing to advance `mid` costs an extra iteration (and, with a careless loop condition, spins forever).",
+    "Reaching for `Arrays.sort` — it is explicitly disallowed here, and at O(n log n) it is asymptotically worse than either solution on this problem, because three known values do not need comparing at all.",
+    "Assuming counting sort is disqualified because it is 'not a real sort'. It is a real sort and an excellent answer; it is ruled out only by the one-pass follow-up. Say that out loud rather than abandoning it silently."
+  ],
+  "similar": [
+    "merge-sorted-array",
+    "kth-largest-element",
+    "three-sum",
+    "container-with-most-water"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 75,
+      "slug": "sort-colors",
+      "title": "Sort Colors",
+      "url": "https://leetcode.com/problems/sort-colors/",
+      "premium": false
+    }
+  }
+}

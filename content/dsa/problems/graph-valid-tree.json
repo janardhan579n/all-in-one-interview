@@ -1,0 +1,148 @@
+{
+  "id": "graph-valid-tree",
+  "title": "Graph Valid Tree",
+  "patternId": "graphs",
+  "difficulty": "intermediate",
+  "tags": [
+    "graphs",
+    "union-find",
+    "dfs",
+    "cycle-detection"
+  ],
+  "statement": "You are given n nodes labelled 0 to n-1 and a list of undirected edges, each given as a pair [u, v]. Return true if these edges make the nodes a valid tree: the graph must be connected and contain no cycle.",
+  "realWorld": "Validating a declared hierarchy before trusting it. A service catalogue where every component names one parent, an org chart imported from a spreadsheet, or a spanning tree reported by a network protocol all claim to be trees, and all of them break in the same two ways: a cycle sneaks in through a mistyped parent, or the structure quietly splits into two disconnected pieces. This check catches both.",
+  "examples": [
+    {
+      "input": "n = 5, edges = [[0,1],[0,2],[0,3],[1,4]]  (each pair is one undirected edge)",
+      "output": "true",
+      "explanation": "Four edges for five nodes, all nodes connected, no cycle. A star with one extra level."
+    },
+    {
+      "input": "n = 5, edges = [[0,1],[1,2],[2,3],[1,3],[1,4]]",
+      "output": "false",
+      "explanation": "Five edges for five nodes. Any graph with n or more edges on n nodes must contain a cycle — here 1-2-3-1 — so this one is rejected on the count alone."
+    },
+    {
+      "input": "n = 4, edges = [[0,1],[2,3]]",
+      "output": "false",
+      "explanation": "No cycle anywhere, but only two edges for four nodes, so it is a forest of two components rather than a tree. The acyclic-only check passes this and is wrong."
+    }
+  ],
+  "constraints": [
+    "1 <= n <= 2000",
+    "0 <= edges.length <= 5000",
+    "edges[i].length == 2 and 0 <= u, v < n",
+    "There are no self-loops and no repeated edges"
+  ],
+  "bruteForce": {
+    "idea": "Check the definition clause by clause, the obvious way. For connectivity, start a traversal at every node and confirm it reaches all n. For acyclicity, run a separate DFS that looks for an edge back to an already-visited node that is not the one it came from.",
+    "code": [
+      "for (int start = 0; start < n; start++) {                // connectivity, checked from every node",
+      "    boolean[] seen = new boolean[n];",
+      "    dfs(adjacency, start, seen);",
+      "    for (boolean reached : seen) if (!reached) return false;",
+      "}",
+      "boolean[] seen = new boolean[n];",
+      "if (hasCycle(adjacency, 0, -1, seen)) return false;      // a second traversal for the cycle",
+      "return true;"
+    ],
+    "complexity": {
+      "time": "O(n * (n + E))",
+      "space": "O(n + E)"
+    },
+    "whySlow": "Connectivity is a property of the graph, not of the node you start from: in an undirected graph, if one traversal reaches all n nodes then every traversal does. The loop therefore runs n traversals to learn something the first one already established, and n-1 of them repeat the identical walk over the identical component. The second traversal for cycles is also avoidable once you count edges, so the code walks the graph n+1 times to answer a question that one walk settles."
+  },
+  "patternIdentification": "Use the counting identity in the definition. A tree on n nodes is exactly a graph that is connected, acyclic, and has n-1 edges — and those three conditions are not independent. Given exactly n-1 edges, connected and acyclic imply each other, because a connected graph needs at least n-1 edges and an acyclic one can have at most n-1. So check the edge count first, in O(1), and then verify only one of the other two. The general move is worth keeping: whenever a definition has several clauses, look for the counting relation that collapses them, because that usually turns a two-pass algorithm into a one-pass one.",
+  "optimized": {
+    "idea": "Reject immediately unless there are exactly n-1 edges, then check for a cycle. Two good ways to do that, and they trade off genuinely. Union-find, shown below, processes edges one at a time and rejects the first edge whose endpoints are already in the same set — it needs no adjacency list at all, runs in near-linear time, handles edges arriving as a stream, and is the version that extends directly to redundant-connection and to Kruskal's algorithm; against that, it is an extra data structure to write, and when it finishes you hold component membership but no traversal order, so if the caller then wants the tree's shape you have to build it anyway. DFS from node 0 with a parent pointer is the alternative: count the nodes it visits and compare with n, with no cycle check needed once the edge count is right. It reuses the traversal you already know, needs no new structure, and leaves you with the parent links and the depth of every node — useful if the next question is about the tree rather than about its validity. Its costs are the adjacency list you must build first, O(n + E) of memory before any work starts, and the parent-pointer detail, which is where the bugs live. Reach for union-find when edges arrive incrementally or the follow-up is about connectivity; reach for DFS when you will want the tree's structure afterwards.",
+    "code": [
+      "public static boolean validTree(int n, int[][] edges) {",
+      "    if (edges.length != n - 1) return false;   // with n-1 edges, connected and acyclic mean the same thing",
+      "",
+      "    int[] parent = new int[n];",
+      "    for (int i = 0; i < n; i++) parent[i] = i;",
+      "",
+      "    for (int[] edge : edges) {",
+      "        int a = find(parent, edge[0]);",
+      "        int b = find(parent, edge[1]);",
+      "        if (a == b) return false;              // both ends already joined, so this edge closes a cycle",
+      "        parent[a] = b;",
+      "    }",
+      "    return true;",
+      "}",
+      "",
+      "private static int find(int[] parent, int x) {",
+      "    while (parent[x] != x) {",
+      "        parent[x] = parent[parent[x]];   // path halving keeps the trees flat",
+      "        x = parent[x];",
+      "    }",
+      "    return x;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n + E * alpha(n)), effectively linear",
+      "space": "O(n) for the parent array"
+    }
+  },
+  "visualization": {
+    "engine": "connectedComponents",
+    "input": {
+      "nodes": [
+        "0",
+        "1",
+        "2",
+        "3",
+        "4"
+      ],
+      "edges": [
+        [
+          "0",
+          "1"
+        ],
+        [
+          "0",
+          "2"
+        ],
+        [
+          "0",
+          "3"
+        ],
+        [
+          "1",
+          "4"
+        ]
+      ]
+    },
+    "code": [
+      "for (String v : vertices) {          // every vertex gets its turn as a possible new root",
+      "    if (seen.contains(v)) {",
+      "        continue;                    // already absorbed by an earlier traversal",
+      "    }",
+      "    components++;                    // this start is a component nobody had reached",
+      "    dfs(adjacency, v, seen);         // absorb everything reachable from it",
+      "}",
+      "",
+      "return components;                   // for a tree this must be exactly 1"
+    ]
+  },
+  "commonMistakes": [
+    "Checking only for a cycle and never for connectivity — example 3 has no cycle anywhere and wrongly returns true, even though it is two separate pairs. Either the edge count or an explicit reachability sweep has to be there.",
+    "In the DFS version, skipping the parent by node value rather than by the specific edge — with a duplicate edge [0,1] appearing twice, the second copy is mistaken for the edge the search arrived on, so a genuine two-node cycle is never detected and the graph is reported as a tree.",
+    "Building the adjacency list with only one direction per undirected edge — the traversal then reaches only what lies downstream of node 0, so a perfectly valid tree given as edges [[1,0],[2,0],[3,0],[4,1]] is reported disconnected because node 0 has no outgoing entries at all."
+  ],
+  "similar": [
+    "number-of-provinces",
+    "redundant-connection",
+    "clone-graph",
+    "min-height-trees"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 261,
+      "slug": "graph-valid-tree",
+      "title": "Graph Valid Tree",
+      "url": "https://leetcode.com/problems/graph-valid-tree/",
+      "premium": true
+    }
+  }
+}

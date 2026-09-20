@@ -1,0 +1,42 @@
+{
+  "name": "dsa-system-design-frontend",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Interactive learning platform for DSA and System Design",
+  "scripts": {
+    "presync": "node --version",
+    "sync-content": "node scripts/sync-content.mjs",
+    "predev": "npm run sync-content",
+    "dev": "vite",
+    "prebuild": "npm run sync-content",
+    "build": "tsc -b && vite build",
+    "build:pages": "npm run build && cp dist/index.html dist/404.html",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -b --noEmit false --emitDeclarationOnly false && tsc --noEmit",
+    "validate:content": "node scripts/validate-content.mjs"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.26.2"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.5.0",
+    "@testing-library/react": "^16.0.1",
+    "@testing-library/user-event": "^14.5.2",
+    "@types/node": "^26.5.1",
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.2",
+    "autoprefixer": "^10.4.20",
+    "jsdom": "^25.0.1",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.13",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.9",
+    "vitest": "^2.1.3"
+  }
+}

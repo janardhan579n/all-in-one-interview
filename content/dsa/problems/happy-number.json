@@ -1,0 +1,124 @@
+{
+  "id": "happy-number",
+  "title": "Happy Number",
+  "patternId": "fast-slow-pointer",
+  "difficulty": "beginner",
+  "tags": [
+    "math",
+    "cycle-detection",
+    "fast-slow-pointer"
+  ],
+  "statement": "A number is happy if repeatedly replacing it with the sum of the squares of its digits eventually reaches 1. If the process never reaches 1 it loops forever in a cycle. Given a positive integer n, return true if it is happy. Solve it in O(1) extra space.",
+  "realWorld": "The shape — 'iterate this function from this starting state; does it terminate or does it loop?' — is what a fixed-point solver, a constraint propagator and a build system resolving rewrite rules all have to answer. Concretely, it is the same check as detecting an HTTP redirect loop, a symlink loop during a filesystem walk, or a state machine that will never reach an accepting state. In each case you are following a next-state function with no list to inspect.",
+  "examples": [
+    {
+      "input": "n = 19",
+      "output": "true",
+      "explanation": "19 -> 1+81 = 82 -> 64+4 = 68 -> 36+64 = 100 -> 1+0+0 = 1. Once at 1 the sequence stays at 1, which is a self-loop, so the two pointers meet there."
+    },
+    {
+      "input": "n = 2",
+      "output": "false",
+      "explanation": "2 -> 4 -> 16 -> 37 -> 58 -> 89 -> 145 -> 42 -> 20 -> 4, and 4 has already been seen. Running the tortoise and hare: slow reaches 4, 16, 37, 58, 89, 145, 42, 20 while fast reaches 16, 58, 145, 20, 16, 58, 145, 20 — they first coincide at 20, which is not 1, so the answer is false."
+    },
+    {
+      "input": "n = 1",
+      "output": "true",
+      "explanation": "The do/while body runs once: slow and fast both move to next(1) = 1, they are equal, and slow == 1. Because the body runs before the test, the trivially-equal starting position is not mistaken for a meeting."
+    }
+  ],
+  "constraints": [
+    "1 <= n <= 2^31 - 1",
+    "O(1) extra space — you may not record the values you have seen"
+  ],
+  "bruteForce": {
+    "idea": "Keep a HashSet of every value produced. Stop when you reach 1 (happy) or when a value repeats (a cycle, so not happy).",
+    "code": [
+      "Set<Integer> seen = new HashSet<>();",
+      "while (n != 1) {",
+      "    if (!seen.add(n)) return false;   // n has come round again",
+      "    n = next(n);",
+      "}",
+      "return true;"
+    ],
+    "complexity": {
+      "time": "O(log n) per step, a bounded number of steps",
+      "space": "O(number of distinct values visited)"
+    },
+    "whySlow": "The time is fine; the set is the waste. It exists only to answer 'have I been here before?', and it pays for that answer by storing every value on the path. But the path has a rho shape — a tail that is walked exactly once, then a loop that repeats forever — and no value on the tail can ever recur, so every entry the set holds for the tail is recorded and never matched. The loop itself can be detected by a second cursor moving at a different speed, which remembers nothing at all. We are buying memory to store facts that either never get used or can be re-derived for free."
+  },
+  "patternIdentification": "Strip the arithmetic away and look at the shape: there is a start value and a function producing the next value, and the question is whether iterating it reaches a particular value or falls into a cycle. That is not number theory, it is cycle detection on a sequence — a linked list whose next pointer is computed instead of stored. The state space here is finite and small (any number of four or more digits shrinks: the largest four-digit result is 9999 -> 324, so everything funnels below 243), so the sequence must eventually repeat. Whenever you can say 'the states are finite and the transition is deterministic', Floyd's tortoise and hare applies verbatim: it is the identical machinery as linked-list-cycle with node.next replaced by next(value).",
+  "optimized": {
+    "idea": "Run two cursors over the generated sequence, slow taking one step per iteration and fast taking two. Because the state space is finite the sequence must cycle, so the two are guaranteed to meet. The only remaining question is where: 1 maps to 1, a self-loop, so if they meet at 1 the number is happy, and if they meet anywhere else the meeting point lies inside the 4 -> 16 -> 37 -> 58 -> 89 -> 145 -> 42 -> 20 -> 4 cycle and it is not. The loop must be a do/while — both cursors start on n, so testing for equality before the first move would report a meeting immediately.",
+    "code": [
+      "public static boolean isHappy(int n) {",
+      "    int slow = n;",
+      "    int fast = n;",
+      "    do {",
+      "        slow = next(slow);",
+      "        fast = next(next(fast));",
+      "    } while (slow != fast);",
+      "    return slow == 1;   // 1 is a self-loop, so meeting AT 1 is what 'happy' means",
+      "}",
+      "",
+      "private static int next(int n) {",
+      "    int sum = 0;",
+      "    while (n > 0) {",
+      "        int digit = n % 10;",
+      "        sum += digit * digit;",
+      "        n /= 10;",
+      "    }",
+      "    return sum;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(log n)",
+      "space": "O(1)"
+    }
+  },
+  "visualization": {
+    "engine": "fastSlowPointer",
+    "input": {
+      "values": [
+        19,
+        82,
+        68,
+        100,
+        1
+      ],
+      "cycleAt": 4,
+      "mode": "cycle"
+    },
+    "code": [
+      "int slow = n, fast = n;",
+      "do {",
+      "    slow = next(slow);",
+      "    fast = next(next(fast));",
+      "    if (slow == fast) {",
+      "        return slow == 1;   // met: happy only if they met at 1",
+      "    }",
+      "} while (true);",
+      "// unreachable: a finite state space guarantees a meeting"
+    ]
+  },
+  "commonMistakes": [
+    "Using a plain while (slow != fast) loop with both cursors starting at n. The condition is false before either has moved, the body never runs, and the function returns n == 1 — so every number except 1 is reported unhappy while 1 itself passes.",
+    "Returning false as soon as the two cursors meet. 1 -> 1 is itself a cycle, so a happy number's cursors also meet — at 1 — and every happy number is reported unhappy. The answer is not 'did they meet' but 'what value did they meet at'.",
+    "Recursing as isHappy(next(n)) with no cycle guard at all. Happy inputs like 19 terminate and look correct; n = 2 recurses forever and dies with StackOverflowError instead of returning false."
+  ],
+  "similar": [
+    "linked-list-cycle",
+    "find-duplicate-number",
+    "middle-of-linked-list",
+    "palindrome-linked-list"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 202,
+      "slug": "happy-number",
+      "title": "Happy Number",
+      "url": "https://leetcode.com/problems/happy-number/",
+      "premium": false
+    }
+  }
+}

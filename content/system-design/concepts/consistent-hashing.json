@@ -1,0 +1,265 @@
+{
+  "id": "consistent-hashing",
+  "title": "Consistent Hashing",
+  "group": "Performance",
+  "level": 3,
+  "estimatedMinutes": 32,
+  "summary": "A way to map keys to servers so that adding or removing one server moves only its own share of the keys instead of nearly all of them. It buys you elastic capacity; it does not buy you an even load when one key is hot.",
+  "analogy": "A round table of people, each holding a labelled basket, and a spinner that lands somewhere on the rim. Whatever the spinner lands on goes to the next basket clockwise. Seat one more person at the table and only the guests between them and the person on their right change baskets — everyone else is undisturbed. But the table is not evenly spaced: if two people sit close together, one of them ends up holding almost nothing while the person across the gap holds far too much.",
+  "explanation": {
+    "beginner": "Suppose you have four cache servers and you decide which one holds a key with hash(key) % 4. Now you add a fifth. Every key is suddenly divided by 5 instead of 4, so almost every key is assigned to a different server than before — and every lookup misses. Consistent hashing fixes this by putting both the servers and the keys on an imaginary circle of numbers. A key belongs to the first server you meet walking clockwise from it. Adding a server only steals the keys sitting just behind it on the circle. Everything else stays exactly where it was.",
+    "interview": "Map keys and node identifiers into the same hash space (typically 2^32 or 2^64 points treated as a ring) and assign each key to the first node clockwise; lookup is a binary search over the sorted ring positions, O(log M) for M ring points. Under hash(key) % N, changing N remaps roughly (N-1)/N of all keys — 4 to 5 nodes moves about 80%. On the ring, adding a node to an N-node cluster moves about K/N keys and only from one successor. Naive placement is badly skewed because random points leave uneven gaps, so each physical node is hashed at V positions as virtual nodes; imbalance shrinks roughly as 1/sqrt(V), and a node's failure spreads over many successors rather than one. Failure modes: disagreement on ring membership between clients produces split routing, and a single hot key is still a single ring point, so it lands on one node no matter how you hash."
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "client",
+        "label": "Client",
+        "type": "client",
+        "x": 110,
+        "y": 300,
+        "note": "Asks for a key. It does not know or care which node holds it."
+      },
+      {
+        "id": "ring",
+        "label": "Hash ring router",
+        "type": "proxy",
+        "x": 390,
+        "y": 300,
+        "note": "Hashes the key, walks clockwise on the sorted ring of virtual node positions, and forwards to the owning node.",
+        "why": {
+          "without": [
+            "hash(key) % N: growing from 4 nodes to 5 reassigns about 80% of keys",
+            "Every reassigned key is a cache miss, so adding capacity briefly costs you nearly the whole cache and sends that traffic to the origin",
+            "Removing a failed node has the same effect in reverse — a single crash invalidates almost everything"
+          ],
+          "with": [
+            "Adding one node to an N-node ring moves about K/N keys: ~20% at 5 nodes, ~5% at 20",
+            "Only the new node's successor gives up keys; every other node is untouched",
+            "With virtual nodes, a lost node's share is redistributed across many survivors instead of doubling one neighbour"
+          ],
+          "conclusion": "The ring turns resizing a cluster from a full reshuffle into a local one — which is what makes elastic capacity affordable at all."
+        }
+      },
+      {
+        "id": "node-a",
+        "label": "Node A (vnodes)",
+        "type": "cache",
+        "x": 700,
+        "y": 120,
+        "note": "One physical machine occupying ~100-200 positions on the ring, not one."
+      },
+      {
+        "id": "node-b",
+        "label": "Node B (vnodes)",
+        "type": "cache",
+        "x": 700,
+        "y": 300,
+        "note": "Its many positions interleave with A's and C's, which is what evens the split."
+      },
+      {
+        "id": "node-c",
+        "label": "Node C (vnodes)",
+        "type": "cache",
+        "x": 700,
+        "y": 480,
+        "note": "If B dies, B's ranges fall to whichever positions follow them — spread across A and C, not dumped on one."
+      },
+      {
+        "id": "membership",
+        "label": "Ring membership",
+        "type": "monitor",
+        "x": 960,
+        "y": 300,
+        "note": "Every router must agree on who is on the ring. Disagreement means two clients route the same key to two different nodes."
+      }
+    ],
+    "edges": [
+      {
+        "from": "client",
+        "to": "ring",
+        "label": "get(key)"
+      },
+      {
+        "from": "ring",
+        "to": "node-a",
+        "label": "clockwise owner",
+        "dashed": true
+      },
+      {
+        "from": "ring",
+        "to": "node-b",
+        "label": "clockwise owner"
+      },
+      {
+        "from": "ring",
+        "to": "node-c",
+        "label": "clockwise owner",
+        "dashed": true
+      },
+      {
+        "from": "membership",
+        "to": "ring",
+        "label": "node join / leave",
+        "dashed": true
+      }
+    ]
+  },
+  "why": {
+    "without": [
+      "With hash(key) % N, going from 4 nodes to 5 leaves only keys where h%4 == h%5 in place — one in five — so roughly 80% of keys move",
+      "Those moved keys are all misses at once: a cache you added a machine to in order to relieve the database instead sends nearly 100% of traffic to the database for as long as it takes to refill",
+      "The same happens on any node loss, so the blast radius of one crashed machine is the whole keyspace",
+      "In a sharded data store rather than a cache, those keys are not merely cold — they are on the wrong machine, and the resize is a full data migration"
+    ],
+    "with": [
+      "Keys and nodes share one hash space; a key belongs to the first node clockwise from it",
+      "Adding an Nth node claims only the arc between it and its predecessor — about K/N keys, from exactly one node",
+      "Removing a node hands its arcs to its successors and disturbs nothing else",
+      "Virtual nodes give each machine many small arcs instead of one big one, so both the steady-state split and the failure redistribution are even"
+    ],
+    "conclusion": "Consistent hashing changes the cost of changing N from O(K) to O(K/N). That is the whole idea; virtual nodes are what make it work with a realistic number of machines."
+  },
+  "whenToUse": [
+    "A cache or data tier whose node count changes — autoscaling, rolling replacement, or occasional capacity additions",
+    "Sharded storage where reassigning a key means physically moving data, so you want the migration set to be small",
+    "Sticky routing: sending all requests for a given user or session to the same server without a central assignment table",
+    "Any client-side partitioner where clients must independently agree on key placement without asking a coordinator"
+  ],
+  "whenNotToUse": [
+    "The node count is genuinely fixed and always will be — plain modulo is a few lines, has no ring to keep in sync, and is exact",
+    "Your load problem is a hot key rather than an uneven key count: one scorching key hashes to one ring point and lands on one node, and no amount of virtual nodes helps. That needs replication of the key, a local in-process cache in front, or splitting the key",
+    "Your datastore already partitions for you (managed sharding, a routing tier with a lookup table) — building a second ring on top gives you two disagreeing sources of truth about placement",
+    "Range queries matter: hashing destroys key order, so 'all keys between X and Y' becomes a scatter-gather across every node",
+    "You cannot reliably distribute ring membership, for example a large fleet of thin clients with no coordination path — clients on different views of the ring will route the same key to different nodes"
+  ],
+  "tradeoffs": [
+    {
+      "option": "Modulo hashing, hash(key) % N",
+      "pros": [
+        "Trivial to implement and to reason about — no ring, no membership, no state",
+        "Perfectly even distribution for a good hash function",
+        "Lookup is one arithmetic operation, not a binary search"
+      ],
+      "cons": [
+        "Changing N remaps nearly every key: ~80% at 4 to 5 nodes, and ~(N-1)/N in general",
+        "A single node failure invalidates or misplaces the entire keyspace",
+        "Effectively forbids elastic scaling, which means you must over-provision for peak"
+      ]
+    },
+    {
+      "option": "Consistent hashing, one point per node",
+      "pros": [
+        "Adding or removing a node touches only about K/N keys",
+        "No central assignment table; any client with the ring can compute placement",
+        "Node loss affects only that node's arcs"
+      ],
+      "cons": [
+        "With few nodes, random ring points leave very uneven gaps and one node can hold several times the average share",
+        "A failed node dumps its whole arc on its single successor, which may then fall over too — a cascade",
+        "More code and a shared ring view to maintain than a modulo"
+      ]
+    },
+    {
+      "option": "Consistent hashing with virtual nodes",
+      "pros": [
+        "Each machine holds many small arcs, so the split is even to within a few percent at ~100-200 virtual nodes each",
+        "A failed machine's load is spread across all survivors rather than one neighbour",
+        "Weighting is natural: give a bigger machine more virtual nodes"
+      ],
+      "cons": [
+        "The ring is V times larger, so membership metadata and lookup structure grow with it",
+        "Rebalancing after a change touches many small ranges rather than one contiguous one, which is more bookkeeping for a data store that must actually move bytes",
+        "Still does nothing for a hot key — the imbalance it fixes is the one caused by geometry, not by traffic"
+      ]
+    },
+    {
+      "option": "Central lookup table (explicit shard map)",
+      "pros": [
+        "Placement can be tuned by hand or by a balancer that sees real load, including moving a hot range",
+        "Migrations can be scheduled and throttled range by range",
+        "Easy to answer 'where does this key live?' for debugging"
+      ],
+      "cons": [
+        "The table is a dependency on the read path and a thing that must be highly available",
+        "It grows with the number of ranges and must be distributed to every client anyway",
+        "Someone must operate the rebalancer; an unattended one is a source of surprise migrations"
+      ]
+    }
+  ],
+  "keyNumbers": [
+    {
+      "label": "Keys remapped, modulo hashing, 4 nodes to 5",
+      "value": "~80% (only h%4 == h%5 survive — 1 in 5)"
+    },
+    {
+      "label": "Keys remapped, modulo hashing, general N to N+1",
+      "value": "roughly (N-1)/N — it gets worse, not better, with scale"
+    },
+    {
+      "label": "Keys moved, consistent hashing, adding one of N nodes",
+      "value": "~K/N — about 20% at 5 nodes, ~5% at 20"
+    },
+    {
+      "label": "Virtual nodes per physical node in practice",
+      "value": "~100-200"
+    },
+    {
+      "label": "Effect of virtual nodes on load spread",
+      "value": "imbalance falls roughly as 1/sqrt(V)"
+    },
+    {
+      "label": "Ring lookup cost",
+      "value": "O(log M) binary search over M = N x V sorted positions"
+    }
+  ],
+  "interactive": "consistent-hashing-ring",
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "architecture",
+      "question": "You run 4 cache servers keyed by hash(key) % 4 and add a fifth at peak traffic. Hit rate collapses from 94% to near zero and the database falls over. What happened and what would have prevented it?",
+      "options": [
+        "The new server was cold; pre-warming it would have been enough",
+        "Changing the divisor from 4 to 5 remapped about 80% of all keys at once, so nearly every key missed. Consistent hashing would have moved only about 1/5 of keys and only from one node",
+        "A cache stampede on a hot key; single-flight locking would have prevented it",
+        "The new server had a different eviction policy"
+      ],
+      "answerIndex": 1,
+      "explanation": "Only keys where h%4 == h%5 keep their home — one in five. The other 80% are looked up on a machine that has never seen them, so they all miss simultaneously. Pre-warming one node does not help, because the damage is on the four existing nodes, not the new one: their keys moved too. On a hash ring the new node claims one arc and steals roughly K/5 keys from a single predecessor; the other nodes' keys never move."
+    },
+    {
+      "id": "q2",
+      "type": "mcq",
+      "question": "Why is each physical node placed at ~150 positions on the ring instead of one?",
+      "options": [
+        "It makes lookups faster, since there are more entries to binary search",
+        "It lets a single node serve more requests per second",
+        "Because a few randomly placed points leave very uneven gaps — one node ends up with several times the average share — and because one big arc means a failed node dumps all of its load on a single successor",
+        "It is required for replication: each virtual node holds one replica"
+      ],
+      "answerIndex": 2,
+      "explanation": "Virtual nodes solve two geometric problems at once. Many small arcs average out, so the steady-state split is even to within a few percent (imbalance falls roughly as 1/sqrt(V)). And when a machine dies, its many scattered arcs fall to many different successors, so the survivors each absorb a small slice rather than one neighbour absorbing double and cascading. Lookup gets slightly slower, not faster — the sorted ring is V times longer."
+    },
+    {
+      "id": "q3",
+      "type": "architecture",
+      "question": "Your cluster uses consistent hashing with 200 virtual nodes per machine, but one node is at 90% CPU while the rest sit at 25%. Traces show a single product id accounts for most of its requests. What is the fix?",
+      "options": [
+        "Increase virtual nodes from 200 to 2,000",
+        "Rebuild the ring with a better hash function",
+        "Nothing is wrong — this is expected variance with virtual nodes",
+        "Consistent hashing cannot help: one key is one ring point and always lands on one node. Replicate that key across several nodes, or put a small in-process cache in front so most requests for it never reach the ring"
+      ],
+      "answerIndex": 3,
+      "explanation": "Virtual nodes even out how many *keys* each machine owns; they do nothing about how much *traffic* a single key attracts. Any hash function, however good, sends one key to exactly one point. The treatments are different in kind: replicate the hot key to N nodes and pick one at random on read, add a per-process local cache with a short TTL in front of the ring, or split the value into sub-keys. Recognising that hot keys are a separate problem from key distribution is the point of the question."
+    }
+  ],
+  "related": [
+    "sharding",
+    "cache",
+    "load-balancer",
+    "replication",
+    "scaling"
+  ]
+}

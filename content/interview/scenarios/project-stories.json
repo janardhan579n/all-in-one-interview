@@ -1,0 +1,213 @@
+{
+  "id": "scenarios-project-stories",
+  "trackId": "scenarios",
+  "topic": "project-stories",
+  "title": "Project Stories & Behavioural",
+  "summary": "How to structure and choose your own real stories — the frame, the detail that counts, and what the interviewer is actually assessing.",
+  "questions": [
+    {
+      "id": "sps-01",
+      "level": "junior",
+      "type": "behavioural",
+      "question": "How do you structure a behavioural answer? (Read this one first.)",
+      "answer": "Use **STAR**, and keep the weight where it belongs.\n\n- **Situation** — 2 or 3 sentences. Enough context to make the rest legible: what the system was, what scale, what your role was. No more.\n- **Task** — one sentence. What specifically was *yours* to solve. This is where people lose credit by describing what the team did.\n- **Action** — **60 to 70% of your answer.** What *you* did, in sequence, with the reasoning behind each choice. Say \"I\" here, honestly and without apology. The alternatives you rejected and why belong in this section; that is where seniority shows.\n- **Result** — what changed, with a number if you have one, plus what you learned or would do differently.\n\n**Length**: two to three minutes. Longer and the interviewer stops tracking. If they want more they will ask, and their follow-up tells you what they cared about.\n\n**Preparation that works**: write down five or six real stories from your actual experience — a hard bug, a disagreement, a failure you caused, a delivery under pressure, something you improved without being asked. Most behavioural questions are one of those five with a different framing, so you are selecting rather than inventing under pressure.\n\n**What the interviewer is assessing**, which is rarely the story itself: can you communicate a technical situation to someone with no context, do you take ownership or distribute blame, did you reason or react, and would they want you in the room at 2am. A modest story told with clear reasoning beats a dramatic one told as a sequence of events.\n\n**The one rule with no exceptions**: the story has to be true. Interviewers ask follow-ups — what did the error say, why did you rule out the other cause, what did the other person argue — and invented stories fail at the second question. Every guidance note in this section is about shaping a real experience, never about manufacturing one.",
+      "keyPoints": [
+        "STAR, with Action taking 60-70% of the time",
+        "Say \"I\" in the Action section — the team's work is not evidence about you",
+        "Two to three minutes; let follow-ups pull out more",
+        "Prepare five or six real stories; most questions are a re-framing of one",
+        "Assessed on communication, ownership and reasoning — not drama",
+        "It must be true; follow-up questions expose anything invented"
+      ],
+      "followUps": [
+        {
+          "q": "What if I genuinely have no story for the question asked?",
+          "a": "Say so, and offer the nearest real thing: \"I have not had exactly that, but the closest was…\". That is a strong answer, not a weak one — it is honest and still gives them evidence. Inventing something is a much worse trade than admitting a gap."
+        }
+      ],
+      "redFlags": [
+        "Spending three minutes on Situation and thirty seconds on Action",
+        "Saying \"we\" throughout, so nothing is attributable to you",
+        "Having no Result, or no reflection on what you would change"
+      ]
+    },
+    {
+      "id": "sps-02",
+      "level": "mid",
+      "type": "behavioural",
+      "question": "Tell me about a production incident you caused.",
+      "answer": "**What they are assessing**: whether you own failure without either minimising it or collapsing into self-flagellation, and whether you turned it into a systemic improvement rather than a resolution to be more careful.\n\n**How to choose the story**: pick one with real consequences that you genuinely caused — a deploy that took something down, a migration run against the wrong environment, a config change with an unintended blast radius. Do not pick something trivial, and do not pick something where the fault was actually someone else's; both read as evasion. It should be old enough that you have perspective and recent enough to be relevant.\n\n**How to structure the Action section**, which is what distinguishes the answers:\n\n1. **How you noticed** — and be honest if a user noticed before your monitoring did, because that is itself a finding.\n2. **What you did first.** The right instinct is to stop the harm — roll back, disable the flag, stop the job — before understanding the cause. Saying that explicitly shows you know that diagnosis and mitigation are different phases.\n3. **How you communicated.** Who you told, how early, and what you told them. Senior engineers surface bad news fast; the instinct to fix it quietly before anyone notices is the thing being screened for.\n4. **The actual cause**, told precisely and technically.\n5. **What you changed so the class of failure cannot recur** — and 'class' is the key word. \"I added a confirmation prompt\" is weak; \"staging and production credentials can no longer both be present in one shell, and the migration tool now refuses to run against a database whose name does not match the target environment\" is a real fix.\n\n**The frame to avoid**: blaming the process, the tooling or the reviewer. You can note that the system made the mistake easy — that is a legitimate and mature observation — but only after owning the action.\n\n**On blamelessness**: if your organisation runs blameless postmortems, say so and describe what the writeup changed. If it does not, describing what you would have written still demonstrates the same thinking.",
+      "keyPoints": [
+        "Choose something with real consequences that was genuinely yours",
+        "Mitigate first, diagnose second — say that you knew the difference",
+        "Communicating early is the behaviour being screened for",
+        "Fix the class of failure, not the instance",
+        "Note systemic contributors only after owning your part"
+      ],
+      "followUps": [
+        {
+          "q": "How do I talk about it if I was junior and someone else fixed it?",
+          "a": "Tell it accurately and centre what you did do: how you escalated, what you learned from watching the response, what you changed afterwards. Claiming a fix that was not yours is exactly the kind of detail that unravels under follow-up, and being clear about your actual scope at the time reads as trustworthy."
+        }
+      ],
+      "redFlags": [
+        "A story with no real consequence — it reads as hiding",
+        "Blaming process or tooling before owning the action",
+        "\"I learned to be more careful\" as the only improvement"
+      ]
+    },
+    {
+      "id": "sps-03",
+      "level": "mid",
+      "type": "behavioural",
+      "question": "Tell me about a time you disagreed with a technical decision.",
+      "answer": "**What they are assessing**: whether you can hold a position on evidence, change it on evidence, and commit to a decision that went against you. Disagreement is cheap; what happens after is the signal.\n\n**Choosing the story**: pick one where you made a real case and the outcome was genuinely uncertain — not one where you were obviously right and everyone else was foolish, which reads as arrogance, and not one where you capitulated immediately, which reads as having no position.\n\n**The Action section should show a sequence**:\n\n1. **What your concern was, specifically and technically** — not \"I didn't think it would scale\" but \"the design put a synchronous call to the payment provider inside the request path, and their published p99 was 800ms\".\n2. **How you tested your own position before pushing it.** Did you build a spike, benchmark it, look for a case where you were wrong? This is the part most candidates omit and the part that most separates them. Arriving with evidence is different from arriving with an opinion.\n3. **How you raised it** — privately first or in the design review, in writing or in conversation, and why that choice suited the situation and the people.\n4. **What happened.** Three honest endings, all of which can be strong:\n   - **They were persuaded.** Say what specifically changed their mind; that is the transferable part.\n   - **You were persuaded.** What did you learn that you had not known? This is a *better* answer than the first if you tell it well, because it demonstrates the thing everyone claims and few show.\n   - **Neither, and the decision went the other way.** Then the ending that matters is: you committed fully, made it work, and — if you were right — what you did when the consequence arrived. \"I documented my concern, supported the decision, and when we hit the issue six months later we had the analysis ready\" is a senior answer.\n\n**The failure modes** interviewers are watching for: relitigating a decision after it was made, being unable to name anything you might have been wrong about, and describing the other person's position so weakly that it is clear you never understood it.",
+      "keyPoints": [
+        "Pick a genuine disagreement with an uncertain outcome",
+        "State the concern technically and specifically",
+        "Show that you tested your own position before pushing it",
+        "Being persuaded is a strong ending if you say what changed your mind",
+        "Disagree and commit — and say what you did when the decision went against you"
+      ],
+      "followUps": [
+        {
+          "q": "What if I still think I was right and it did go badly?",
+          "a": "You can say so, once, factually, without triumph — \"the issue we were concerned about did surface, and we handled it with X\". Then move to what you would do differently in how you made the case, because that is the part within your control and the part they can learn about you from. Being right is not the achievement; being persuasive with evidence is."
+        }
+      ],
+      "redFlags": [
+        "Portraying colleagues as obviously wrong",
+        "No evidence gathered before advocating",
+        "Continuing to relitigate after the decision"
+      ]
+    },
+    {
+      "id": "sps-04",
+      "level": "mid",
+      "type": "behavioural",
+      "question": "What is the hardest bug you have debugged?",
+      "answer": "**What they are assessing**: your debugging *method* under uncertainty. The bug is the vehicle; the reasoning is the content. A candidate who solved a hard bug by luck and a candidate who solved a medium one by systematic elimination are not equal, and the second interviews better.\n\n**Choosing well**: pick something that was hard for an interesting reason — non-deterministic, only in production, spanning a boundary, or where the evidence actively misled you. Avoid \"a typo that took ages to spot\": there is no method to show.\n\n**Structure the Action as the investigation, in the order it happened**, including the wrong turns:\n\n1. **The symptom, and what it ruled in and out.** This framing alone signals experience — a good debugger narrows the space before touching anything.\n2. **How you made it reproducible**, or what you did when you could not. Getting from \"sometimes in production\" to \"reliably with this input\" is usually the hardest and most valuable step, and worth dwelling on.\n3. **The hypotheses, and how each was tested or eliminated.** Say what evidence would have falsified each one. This is the core of the answer.\n4. **The wrong path you went down and what corrected you.** Including this makes the story credible and demonstrates that you notice when a hypothesis is not paying off — the failure mode of debugging is commitment to a theory past the evidence.\n5. **The actual cause**, explained precisely enough that the interviewer learns something.\n6. **How you verified the fix** — that it addressed the cause rather than perturbing the timing — and what you added so the next instance is visible: a log line, a metric, a test that fails without the fix.\n\n**Detail level**: name the real tools — the profiler, the thread dump, `tcpdump`, the query plan, bisecting the commit history. Specificity is what separates a real story from a reconstructed one, and it is also what gives the interviewer something to follow up on, which is what you want.",
+      "keyPoints": [
+        "The method is the content; the bug is the vehicle",
+        "Say what the symptom ruled in and out before any action",
+        "Making it reproducible is usually the hardest step — dwell on it",
+        "List the hypotheses and what would have falsified each",
+        "Include the wrong turn; it is what makes the story credible",
+        "Finish with verification and what makes the next instance visible"
+      ],
+      "followUps": [
+        {
+          "q": "What if the bug was in someone else's library or the platform?",
+          "a": "That is a good story, because proving the fault is outside your code requires real rigour — you have to eliminate your own code convincingly first. Describe the minimal reproduction you built, what you did while waiting for a fix, and whether you reported it upstream. Filing a good bug report against a dependency is itself a senior behaviour."
+        }
+      ],
+      "redFlags": [
+        "A story with no method — \"I stared at it until I saw it\"",
+        "No mention of how it was reproduced",
+        "Fixing by changing things until the symptom stopped"
+      ]
+    },
+    {
+      "id": "sps-05",
+      "level": "senior",
+      "type": "behavioural",
+      "question": "Tell me about a time you had to say no to a deadline.",
+      "answer": "**What they are assessing**: whether you can make scope, risk and time visible to non-engineers, and whether \"no\" arrives as a negotiation or as an obstruction. Senior engineers are trusted precisely because their estimates carry information.\n\n**Choosing the story**: one where the pressure was real and the consequence of saying yes would have been genuine — missing tests on a payment path, a migration with no rollback, a launch that would have degraded under known traffic. Avoid a story where you said no to something merely inconvenient.\n\n**The Action section should show three moves**:\n\n1. **You converted \"no\" into a choice.** The effective form is never a refusal; it is options with consequences attached. \"We can ship on the 14th with the manual reconciliation step and one engineer on call for a week, or on the 21st with it automated — here is what each costs.\" That hands the decision back to the person whose decision it actually is, with the information they were missing.\n2. **You made the risk concrete and legible.** Not \"it's risky\" but \"there is no rollback for this migration; if it fails we are restoring from backup, which is about four hours of downtime\". Business stakeholders make good decisions with specifics and bad ones with vague engineering unease.\n3. **You said it early.** A deadline concern raised three weeks out is planning; the same concern raised two days out is an emergency. Being able to say when you first knew, and that you said it then, is a large part of the credit.\n\n**Then what happened.** If the deadline held anyway, what did you cut, what did you flag, what did you do to make the risk survivable? \"I disagreed, we shipped anyway, and I made sure we had a rollback path and a dashboard\" is a strong ending.\n\n**The failure mode** being screened for is the engineer who either says yes to everything and misses silently, or says no without offering a path — both end with the business not trusting engineering estimates, which is a much bigger problem than any single deadline.",
+      "keyPoints": [
+        "Convert \"no\" into options with costs attached",
+        "Make the risk concrete: name the failure and its recovery time",
+        "Raise it early — timing is most of the credit",
+        "If it shipped anyway, say what you did to make the risk survivable",
+        "The screen is for silent misses and for unhelpful refusals alike"
+      ],
+      "followUps": [
+        {
+          "q": "What if I was overruled and it went fine?",
+          "a": "Say that plainly, and say what you took from it — most often that your estimate of the risk was higher than it turned out to be, and why. That is a genuinely strong answer: it shows you calibrate. Interviewers are wary of engineers whose risk assessments never update."
+        }
+      ],
+      "redFlags": [
+        "Saying no with no alternative offered",
+        "Raising the concern only when the deadline was imminent",
+        "Framing it as engineering versus the business"
+      ]
+    },
+    {
+      "id": "sps-06",
+      "level": "mid",
+      "type": "behavioural",
+      "question": "How do you get up to speed in an unfamiliar codebase?",
+      "answer": "**What they are assessing**: whether you have a method, and whether you can be productive before you understand everything — because at any real seniority you will never understand everything.\n\n**A method worth describing, roughly in order**:\n\n1. **Run it first.** Get it building and running locally, with a debugger attached, before reading much. Nothing teaches structure like stepping through a request end to end, and the setup friction you hit is itself information about the codebase's health.\n2. **Follow one request all the way through.** Entry point, controller, service, repository, database, response. One real path teaches more than a week of architecture diagrams, and it gives you a spine to hang everything else on.\n3. **Read the tests.** They document intended behaviour and, more usefully, the edge cases the team has already been burned by. Test names alone are a map of what matters.\n4. **Read the git history for the files you will touch.** `git log -p` on a file shows what keeps changing and why; a line touched in twelve bugfixes is telling you something. `git blame` plus the linked ticket often answers \"why on earth is this here\" faster than any person can.\n5. **Ship something small and real in the first few days** — a bug fix, a small feature. It exercises the whole loop: build, test, review, deploy. You find out what is actually painful, and you establish that you deliver.\n6. **Write down what confused you, and fix the docs.** A newcomer's confusion is a perishable asset; in three weeks you will have normalised it. Turning that into a corrected README is high-value and visible.\n\n**On asking questions**: timebox. Thirty to sixty minutes of genuine effort, then ask — with what you have already tried and what you think the answer might be. That respects the other person's time and demonstrates that you did the work.\n\n**The thing to say explicitly**: you do not need to understand the whole system to change part of it safely. Knowing where the boundaries are, and what you are not touching, is the actual skill.",
+      "keyPoints": [
+        "Run it and debug through one real request before reading broadly",
+        "Tests document intended behaviour and known edge cases",
+        "Git history and blame answer \"why is this here\" quickly",
+        "Ship something small early to exercise the whole loop",
+        "Timebox before asking, and bring what you tried",
+        "You do not need the whole system to change part of it safely"
+      ],
+      "followUps": [
+        {
+          "q": "What if there are no tests and no documentation?",
+          "a": "Then characterisation tests are the first thing you write: tests that capture what the code currently does, whether or not that is correct. They give you a safety net for any change and they force you to understand the behaviour. It is also the honest first step of the legacy-code playbook — you cannot refactor what you cannot verify."
+        }
+      ],
+      "redFlags": [
+        "\"I read all the code first\" — not a method, and not possible at scale",
+        "Never mentioning running or debugging it",
+        "Either asking immediately or never asking"
+      ]
+    },
+    {
+      "id": "sps-07",
+      "level": "senior",
+      "type": "behavioural",
+      "question": "Tell me about a technical decision you got wrong.",
+      "answer": "**What they are assessing**: calibration and intellectual honesty. An engineer who cannot name a wrong decision either has not made enough decisions, or is not examining them. Both are concerns at senior level.\n\n**Choosing the story**: a real architectural or technology choice with consequences you then lived with — a datastore that did not fit the access pattern, an abstraction built too early, a framework chosen for the wrong reason, a service split that should have stayed one. It must be a decision you *made or drove*, not one you inherited.\n\n**Structure the Action around the reasoning, not the outcome**:\n\n1. **What you decided and why — as it looked at the time, with the information you had.** Resist the urge to narrate it as obviously foolish. Hindsight makes bad decisions look stupid and good decisions look inevitable; neither is useful. The interviewer wants to know whether your reasoning process was sound even where the conclusion was not.\n2. **What you did not know, or weighted wrongly.** Was it missing information, an assumption about load or team size that did not hold, optimising for a future that never arrived, or following a pattern because it was fashionable? Naming the *category* of error is what makes it transferable.\n3. **When and how you recognised it.** What was the signal, and how long did it take you to accept it? The gap between the first evidence and your acknowledgement is worth being honest about, because everyone has one.\n4. **What you did about it.** Reversed it, contained it, lived with it deliberately? \"We decided the cost of reversing exceeded the cost of keeping it, and here is that arithmetic\" is a senior answer — not every wrong decision should be undone.\n5. **What you changed in how you decide.** \"I now write down the assumption a design depends on, so it is checkable later\" is concrete. \"I'm more careful now\" is not.\n\n**The strongest version** of this answer includes a decision where the reasoning was sound and the outcome was still bad, and you can articulate the difference. That distinction — between a bad decision and an unlucky one — is exactly what senior judgement is.",
+      "keyPoints": [
+        "Pick a decision you actually drove, with real consequences",
+        "Present the reasoning as it looked at the time, without hindsight contempt",
+        "Name the category of error, which is the transferable part",
+        "Be honest about the lag between evidence and acknowledgement",
+        "Not every wrong decision should be reversed — show the arithmetic",
+        "Distinguish a bad decision from an unlucky outcome"
+      ],
+      "followUps": [
+        {
+          "q": "Is it acceptable to pick something small?",
+          "a": "Only if the reasoning is interesting. A trivial example invites the read that you are managing the question rather than answering it. Pick something that cost real time or money — the willingness to discuss it is itself part of what is being assessed."
+        }
+      ],
+      "redFlags": [
+        "A disguised strength — \"I was too thorough\"",
+        "Blaming circumstances or other people for the outcome",
+        "No change to the decision-making process afterwards"
+      ]
+    },
+    {
+      "id": "sps-08",
+      "level": "mid",
+      "type": "behavioural",
+      "question": "What would you do differently on your last project?",
+      "answer": "**What they are assessing**: whether you reflect systematically or only when something breaks, and whether your critique is at the level of process and design rather than blame.\n\n**Pick two or three things, not one and not ten.** One reads as prepared; ten reads as either a disaster or a lack of judgement about what mattered. And choose across different categories, which demonstrates range:\n\n- **Something technical.** A design choice, a boundary drawn in the wrong place, a dependency, a piece of complexity added before it was needed. Be specific about what you would build instead and why.\n- **Something about process or collaboration.** How work was broken down, when you involved others, how decisions got recorded, how much was in one person's head. This is often where the real answer is, and it is the category candidates skip.\n- **Something about what you learned too late.** A measurement you wish you had taken at the start, a user assumption you did not test, a constraint you discovered in month four that would have changed month one. \"I would have instrumented it before optimising\" is a very common and very honest version.\n\n**Frame each as a decision rather than a regret.** \"We chose X; given what we know now, Y would have been better because Z\" — reasoning, not lament.\n\n**Include one thing you would keep.** It shows judgement rather than indiscriminate self-criticism, and it tells the interviewer what you value.\n\n**Two things to avoid.** Do not make it about other people's shortcomings, however true — it reads as blame and you cannot change them anyway. And do not make it all about time pressure; every project is under time pressure, so that is a description of software, not a reflection.\n\n**If the project went well**, the answer is still available and is arguably more interesting: what would you do differently *given that it worked* — where were you lucky, what would not survive ten times the scale, what did you not measure that you should have?",
+      "keyPoints": [
+        "Two or three items, spread across technical, process, and learned-too-late",
+        "Frame as decisions with reasoning, not regrets",
+        "Include one thing you would keep — it shows judgement",
+        "Avoid blaming people and avoid \"we needed more time\"",
+        "If it went well, talk about where you were lucky and what would not scale"
+      ],
+      "followUps": [
+        {
+          "q": "How do I answer if the project is still ongoing?",
+          "a": "Better — you can describe what you have already changed mid-flight and what that cost. Adjusting course on a live project is stronger evidence than a retrospective observation, because it shows the reflection actually produced an action."
+        }
+      ],
+      "redFlags": [
+        "\"Nothing, it went well\"",
+        "Only criticising other people or the organisation",
+        "\"We needed more time\" as the entire answer"
+      ]
+    }
+  ]
+}

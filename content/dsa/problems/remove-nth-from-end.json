@@ -1,0 +1,130 @@
+{
+  "id": "remove-nth-from-end",
+  "title": "Remove Nth Node From End of List",
+  "patternId": "linked-list",
+  "difficulty": "intermediate",
+  "tags": [
+    "linked-list",
+    "two-pointers",
+    "dummy-head"
+  ],
+  "statement": "Given the head of a linked list, remove the nth node counting from the end and return the head of the modified list. Do it in a single pass over the list.",
+  "realWorld": "Trimming a bounded history: a chat client that keeps only the last 100 messages, a log buffer that drops the oldest entry past a limit, an undo stack with a cap. The position is always expressed relative to the newest entry, and on a stream you often cannot walk the structure twice — the end has not arrived yet when you start.",
+  "examples": [
+    {
+      "input": "head = [1,2,3,4,5], n = 2",
+      "output": "[1,2,3,5]",
+      "explanation": "fast opens a gap of 3 (dummy -> 1 -> 2 -> 3), then both cursors advance until fast is null; slow ends on node 3, the predecessor of the node to delete."
+    },
+    {
+      "input": "head = [1], n = 1",
+      "output": "[]",
+      "explanation": "The node removed is the head itself. fast advances twice and is already null, so the second loop never runs; slow is still the dummy, and dummy.next = dummy.next.next sets it to null. No special case was needed."
+    },
+    {
+      "input": "head = [1,2], n = 2",
+      "output": "[2]",
+      "explanation": "n equals the length, so the first node goes. Returning head here would hand back the node that was just unlinked."
+    }
+  ],
+  "constraints": [
+    "1 <= number of nodes <= 30",
+    "1 <= n <= number of nodes",
+    "-100 <= Node.val <= 100",
+    "exactly one pass over the list"
+  ],
+  "bruteForce": {
+    "idea": "Walk the list once to measure its length, then walk it again to the (length - n - 1)th node and unlink its successor.",
+    "code": [
+      "int length = 0;",
+      "for (Node p = head; p != null; p = p.next) {",
+      "    length++;",
+      "}",
+      "if (length == n) return head.next;   // the head itself is the target",
+      "Node prev = head;",
+      "for (int i = 0; i < length - n - 1; i++) {",
+      "    prev = prev.next;",
+      "}",
+      "prev.next = prev.next.next;",
+      "return head;"
+    ],
+    "complexity": {
+      "time": "O(L)",
+      "space": "O(1)"
+    },
+    "whySlow": "Both passes walk the same nodes, and the first one exists solely to convert 'nth from the end' into 'the (L-n)th from the front'. That offset is already encoded in the list as a distance; measuring the whole structure to recover a number we can carry as the gap between two cursors is the wasted work. It also costs correctness surface: because the front-counting index is only valid once L is known, the head case has to be special-cased separately, which is the line most people get wrong. And on an input you can only consume once — a socket, an iterator — the second pass is not merely wasteful, it is impossible."
+  },
+  "patternIdentification": "A position defined relative to an end you have not reached yet, over a structure you can only walk forwards. The transferable move is a fixed-width gap: place two cursors k apart and advance them together, so that when the leading cursor falls off the end the trailing one is exactly k from it. The second idea here transfers even more widely — the dummy head. Whenever an algorithm might modify the first element of a linked structure, prepend a sentinel node so that the real first element has a predecessor just like every other node. Every 'but what if it is the head?' branch then disappears, and you return sentinel.next rather than the original head. Use it for insertion, deletion, partitioning and merging alike.",
+  "optimized": {
+    "idea": "Hang a dummy node in front of the list and start both cursors on it. Advance fast by n+1 steps — one more than the gap you want — so that when fast finally becomes null, slow is sitting on the node immediately before the target rather than on the target itself. You need the predecessor, because unlinking in a singly linked list means writing predecessor.next, and the dummy guarantees a predecessor exists even when the target is the original head. Then unlink with one assignment and return dummy.next.",
+    "code": [
+      "public static Node removeNthFromEnd(Node head, int n) {",
+      "    Node dummy = new Node(0);",
+      "    dummy.next = head;",
+      "    Node fast = dummy;",
+      "    Node slow = dummy;",
+      "    for (int i = 0; i <= n; i++) {   // gap of n+1 so slow lands on the node BEFORE the target",
+      "        fast = fast.next;",
+      "    }",
+      "    while (fast != null) {",
+      "        fast = fast.next;",
+      "        slow = slow.next;",
+      "    }",
+      "    slow.next = slow.next.next;",
+      "    return dummy.next;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(L)",
+      "space": "O(1)"
+    }
+  },
+  "visualization": {
+    "engine": "linkedListOps",
+    "input": {
+      "values": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "operations": [
+        {
+          "op": "traverse"
+        },
+        {
+          "op": "deleteAt",
+          "index": 3
+        }
+      ]
+    },
+    "code": [
+      "for (Node p = head; p != null; p = p.next) { }  // the walk the two-pass version pays for twice",
+      "// two cursors n+1 apart make one walk do both jobs",
+      "// when fast is null, slow sits on the node BEFORE the target",
+      "slow.next = slow.next.next;   // unlink: O(1), but only because we hold the predecessor",
+      "return dummy.next;            // not head — head may be the node we just removed"
+    ]
+  },
+  "commonMistakes": [
+    "Opening a gap of n instead of n+1. slow then lands on the target node itself, and with no predecessor you cannot unlink it; the usual patch is to copy the successor's value into it and delete the successor, which throws NullPointerException the moment the target is the last node.",
+    "Returning head instead of dummy.next. Everything is correct until n equals the list length — then head is the node that was just unlinked, and the caller receives the original, unmodified list.",
+    "Advancing fast without checking it for null, so an n larger than the list throws NullPointerException inside the gap loop instead of leaving the list untouched. The sample inputs all have n within range, so this survives every test that does not probe the boundary."
+  ],
+  "similar": [
+    "reverse-linked-list",
+    "middle-of-linked-list",
+    "linked-list-cycle",
+    "reorder-list"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 19,
+      "slug": "remove-nth-node-from-end-of-list",
+      "title": "Remove Nth Node From End of List",
+      "url": "https://leetcode.com/problems/remove-nth-node-from-end-of-list/",
+      "premium": false
+    }
+  }
+}

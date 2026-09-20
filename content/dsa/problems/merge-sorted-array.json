@@ -1,0 +1,133 @@
+{
+  "id": "merge-sorted-array",
+  "title": "Merge Sorted Array",
+  "patternId": "sorting",
+  "difficulty": "beginner",
+  "tags": [
+    "array",
+    "sorting",
+    "merge",
+    "two-pointers",
+    "in-place"
+  ],
+  "statement": "You are given two integer arrays `nums1` and `nums2`, both sorted in non-decreasing order, and two integers `m` and `n` giving the number of real elements in each. `nums1` has length m + n: its first m slots hold its elements and the final n slots are zeros reserved for the merge. Merge `nums2` into `nums1` so that `nums1` ends up sorted. Do not return anything — modify `nums1` in place.",
+  "realWorld": "This is the merge step of merge sort, isolated. It is also how databases and search engines combine sorted runs: an external sort spills sorted chunks to disk and then merges them, and an LSM-tree storage engine (Cassandra, RocksDB, LevelDB) compacts by merging sorted SSTables. In all of those, the reason merging is cheap is exactly the reason it is cheap here — each input is already ordered, so one pass with a cursor per input suffices.",
+  "examples": [
+    {
+      "input": "nums1 = [1,2,3,0,0,0], m = 3, nums2 = [2,5,6], n = 3",
+      "output": "[1,2,2,3,5,6]",
+      "explanation": "The three trailing zeros are placeholders, not data — they are the room reserved for nums2's elements."
+    },
+    {
+      "input": "nums1 = [1], m = 1, nums2 = [], n = 0",
+      "output": "[1]",
+      "explanation": "Nothing to merge. A correct solution must leave nums1 untouched rather than overwriting it with zeros."
+    },
+    {
+      "input": "nums1 = [0], m = 0, nums2 = [1], n = 1",
+      "output": "[1]",
+      "explanation": "nums1 has no real elements — its single slot is reserved space. The lone 0 is a placeholder and must be overwritten."
+    }
+  ],
+  "constraints": [
+    "nums1.length == m + n",
+    "nums2.length == n",
+    "0 <= m, n <= 200 and 1 <= m + n <= 200",
+    "-10^9 <= nums1[i], nums2[j] <= 10^9",
+    "Both inputs are already sorted in non-decreasing order",
+    "Follow-up: O(m + n) time with O(1) extra space"
+  ],
+  "bruteForce": {
+    "idea": "Copy `nums2` into the reserved tail of `nums1` and sort the whole thing. Correct, two lines, and it throws away the fact that both inputs were already sorted.",
+    "code": [
+      "public static void merge(int[] nums1, int m, int[] nums2, int n) {",
+      "    System.arraycopy(nums2, 0, nums1, m, n);   // paste nums2 into the reserved tail",
+      "    Arrays.sort(nums1);                        // ...and re-sort everything",
+      "}"
+    ],
+    "complexity": {
+      "time": "O((m + n) log (m + n))",
+      "space": "O(1) auxiliary, plus the sort's own stack"
+    },
+    "whySlow": "The log factor is bought with information you were handed for free. Sorting has to establish an order the inputs already have; a merge only has to *interleave* two existing orders, which is one comparison per output element. On 200 elements nobody would notice, but this operation is the inner loop of external sorts and LSM compactions running over billions of records, where the difference between O(N) and O(N log N) per merge is the difference between a working storage engine and an unusable one."
+  },
+  "patternIdentification": "'Two sorted inputs, one sorted output' is the merge step of merge sort, and it should trigger the two-cursor template immediately: compare the two front elements, emit the smaller, advance that cursor. The twist that makes this version interesting is the in-place requirement. Merging front-to-back would overwrite elements of `nums1` that have not been read yet — so look at where the free space is. It is at the **end**, which means you should fill from the end, largest first. 'Write into the free space, and the free space is at the back' is a reusable move whenever an in-place merge is demanded.",
+  "optimized": {
+    "idea": "Merge backwards. Keep three cursors: `i` at the last real element of `nums1`, `j` at the last element of `nums2`, and `write` at the very last slot of `nums1`. Repeatedly take the larger of `nums1[i]` and `nums2[j]` and place it at `write`, moving inwards.\n\nThis is safe because `write` is always at least as far right as `i`: every slot you overwrite has either already been copied or was reserved space to begin with, so no unread element is ever destroyed. Only `nums2`'s leftovers need draining at the end — if `nums1` still has elements left, they are already sitting in the correct positions.",
+    "code": [
+      "/**",
+      " * In-place merge, filling from the back. O(m + n) time, O(1) space.",
+      " *",
+      " * Why writing backwards is safe: write >= i at every step, so the slot being",
+      " * written has already been consumed or was reserved padding to begin with.",
+      " */",
+      "public static void merge(int[] nums1, int m, int[] nums2, int n) {",
+      "    int i = m - 1;               // last real element of nums1",
+      "    int j = n - 1;               // last element of nums2",
+      "    int write = m + n - 1;       // last slot overall",
+      "",
+      "    while (j >= 0) {             // only nums2 can still be owed a slot",
+      "        if (i >= 0 && nums1[i] > nums2[j]) {",
+      "            nums1[write--] = nums1[i--];",
+      "        } else {",
+      "            nums1[write--] = nums2[j--];   // on a tie take nums2 first: written to the",
+      "                                           // right, it leaves nums1's equal element to",
+      "                                           // its left — the stable order",
+      "        }",
+      "    }",
+      "    // No drain loop for nums1: anything left in nums1[0..i] is already in place.",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(m + n)",
+      "space": "O(1)"
+    }
+  },
+  "visualization": {
+    "engine": "mergeSortSteps",
+    "input": {
+      "array": [
+        1,
+        2,
+        3,
+        2,
+        5,
+        6
+      ]
+    },
+    "code": [
+      "void mergeSort(int[] a, int from, int to) {",
+      "    if (from >= to) return;          // one element: already sorted",
+      "",
+      "    int middle = (from + to) >>> 1;  // split at the midpoint",
+      "    mergeSort(a, from, middle);      // sort the left half",
+      "    mergeSort(a, middle + 1, to);    // sort the right half",
+      "",
+      "    merge(a, from, middle, to);      // <-- THIS line is the whole problem",
+      "}"
+    ]
+  },
+  "commonMistakes": [
+    "Merging front-to-back in place. Writing to `nums1[0]` destroys the element you have not read yet, and the array silently fills with duplicates. Front-to-back is only correct with a separate output buffer.",
+    "Looping while `i >= 0 && j >= 0` and then draining both arrays. Draining `nums2` is required; draining `nums1` is a no-op that wastes a loop, because its remaining elements are already at the right indices. Looping on `j >= 0` alone removes the case entirely.",
+    "Forgetting the `i >= 0` guard inside the comparison. Once `nums1` is exhausted, `nums1[-1]` throws — the guard makes 'nums1 is empty' fall through to taking from `nums2`.",
+    "Treating `nums1.length` as the count of real elements. It is m + n; the real count is `m`, and the difference is the trailing placeholder zeros. Reading them as data is the classic wrong answer on the `nums1 = [0], m = 0` case.",
+    "Returning a new array. The signature is `void` and the grader inspects `nums1` itself — building and returning a fresh array passes your own test and fails the real one."
+  ],
+  "similar": [
+    "sort-colors",
+    "merge-k-sorted-lists",
+    "two-sum-sorted",
+    "kth-largest-element",
+    "median-two-sorted-arrays"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 88,
+      "slug": "merge-sorted-array",
+      "title": "Merge Sorted Array",
+      "url": "https://leetcode.com/problems/merge-sorted-array/",
+      "premium": false
+    }
+  }
+}

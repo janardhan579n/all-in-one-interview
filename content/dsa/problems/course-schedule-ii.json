@@ -1,0 +1,193 @@
+{
+  "id": "course-schedule-ii",
+  "title": "Course Schedule II",
+  "patternId": "topological-sort",
+  "difficulty": "intermediate",
+  "tags": [
+    "graph",
+    "topological-sort",
+    "kahn",
+    "dag"
+  ],
+  "statement": "There are numCourses courses labelled 0..numCourses-1 and prerequisite pairs [a, b] meaning b must be taken before a. Return any valid order in which all courses can be taken, or an empty array if no such order exists.",
+  "realWorld": "The compile order a build tool actually emits, not just its yes/no dependency check. Gradle prints the task execution order, npm decides which packages to install first, and a migration runner produces the sequence of scripts to apply.",
+  "examples": [
+    {
+      "input": "numCourses = 2, prerequisites = [[1,0]]",
+      "output": "[0,1]",
+      "explanation": "0 has no prerequisites, so it goes first."
+    },
+    {
+      "input": "numCourses = 4, prerequisites = [[1,0],[2,0],[3,1],[3,2]]",
+      "output": "[0,1,2,3]",
+      "explanation": "[0,2,1,3] is equally valid — 1 and 2 do not depend on each other, so their relative order is free. Any output that respects every edge is accepted."
+    },
+    {
+      "input": "numCourses = 2, prerequisites = [[1,0],[0,1]]",
+      "output": "[]",
+      "explanation": "The two courses require each other, so no ordering exists."
+    }
+  ],
+  "constraints": [
+    "1 <= numCourses <= 2000",
+    "0 <= prerequisites.length <= numCourses * (numCourses - 1)",
+    "prerequisites[i].length == 2",
+    "All prerequisite pairs are distinct"
+  ],
+  "bruteForce": {
+    "idea": "Try orderings. Pick any course whose prerequisites are already placed, recurse, and backtrack if the branch dead-ends.",
+    "code": [
+      "boolean build(List<Integer> placed, boolean[] used, int[][] prereqs, int n) {",
+      "    if (placed.size() == n) return true;",
+      "    for (int course = 0; course < n; course++) {",
+      "        if (used[course] || !prerequisitesPlaced(course, placed, prereqs)) continue;",
+      "        used[course] = true;",
+      "        placed.add(course);",
+      "        if (build(placed, used, prereqs, n)) return true;",
+      "        placed.remove(placed.size() - 1);   // backtrack",
+      "        used[course] = false;",
+      "    }",
+      "    return false;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n! * E)",
+      "space": "O(n) recursion depth"
+    },
+    "whySlow": "It searches the space of permutations. Worse, the backtracking is pointless: if a course is placeable now, placing it can never make another course unplaceable later, so no branch it rules out was ever needed. Twelve courses already exceed 479 million orderings."
+  },
+  "patternIdentification": "Dependency pairs plus 'return any valid order, or empty if impossible' is the exact signature of a topological sort with cycle detection. This is Course Schedule with the order kept instead of discarded — same loop, different return value.",
+  "optimized": {
+    "idea": "Kahn's algorithm. Count how many prerequisites each course still owes, start with all the zeros, and every time a course is emitted decrement its dependents — enqueuing any whose counter reaches zero. The emitted list is the answer; if it is shorter than numCourses the leftovers form a cycle and no order exists.",
+    "code": [
+      "public static int[] findOrder(int numCourses, int[][] prerequisites) {",
+      "    List<List<Integer>> dependents = new ArrayList<>();",
+      "    for (int i = 0; i < numCourses; i++) dependents.add(new ArrayList<>());",
+      "    int[] indegree = new int[numCourses];",
+      "",
+      "    for (int[] pair : prerequisites) {",
+      "        int course = pair[0], prereq = pair[1];",
+      "        dependents.get(prereq).add(course);   // prereq must come first",
+      "        indegree[course]++;",
+      "    }",
+      "",
+      "    Deque<Integer> ready = new ArrayDeque<>();",
+      "    for (int i = 0; i < numCourses; i++) {",
+      "        if (indegree[i] == 0) ready.offer(i);",
+      "    }",
+      "",
+      "    int[] order = new int[numCourses];",
+      "    int taken = 0;",
+      "    while (!ready.isEmpty()) {",
+      "        int course = ready.poll();",
+      "        order[taken++] = course;",
+      "        for (int next : dependents.get(course)) {",
+      "            if (--indegree[next] == 0) ready.offer(next);",
+      "        }",
+      "    }",
+      "",
+      "    // Fewer than numCourses placed: the rest block each other. No order exists.",
+      "    return taken == numCourses ? order : new int[0];",
+      "}",
+      "",
+      "// Follow-up: for the lexicographically smallest valid order, swap the",
+      "// ArrayDeque for a PriorityQueue<Integer>. Cost rises to O(V log V + E).",
+      "// Follow-up: to group courses into semesters, process the ready queue one",
+      "// full level at a time, exactly like level-order BFS."
+    ],
+    "complexity": {
+      "time": "O(V + E)",
+      "space": "O(V + E)"
+    }
+  },
+  "visualization": {
+    "engine": "topologicalSort",
+    "input": {
+      "graph": {
+        "nodes": [
+          {
+            "id": "0",
+            "x": 70,
+            "y": 100
+          },
+          {
+            "id": "1",
+            "x": 210,
+            "y": 40
+          },
+          {
+            "id": "2",
+            "x": 210,
+            "y": 160
+          },
+          {
+            "id": "3",
+            "x": 350,
+            "y": 100
+          },
+          {
+            "id": "4",
+            "x": 500,
+            "y": 100
+          }
+        ],
+        "edges": [
+          {
+            "from": "0",
+            "to": "1"
+          },
+          {
+            "from": "0",
+            "to": "2"
+          },
+          {
+            "from": "1",
+            "to": "3"
+          },
+          {
+            "from": "2",
+            "to": "3"
+          },
+          {
+            "from": "3",
+            "to": "4"
+          }
+        ]
+      }
+    },
+    "code": [
+      "int[] indegree = new int[n];   Queue<Integer> ready = new ArrayDeque<>();",
+      "for (int[] p : prerequisites) indegree[p[0]]++;  // count prerequisites",
+      "for (int v = 0; v < n; v++) if (indegree[v] == 0) ready.offer(v);",
+      "while (!ready.isEmpty()) {",
+      "    int course = ready.poll();  order[taken++] = course;",
+      "    for (int next : dependents.get(course)) {",
+      "        if (--indegree[next] > 0) continue;      // still waiting on others",
+      "        ready.offer(next);                       // last prerequisite cleared",
+      "    }",
+      "}",
+      "return taken == n ? order : new int[0];          // short means a cycle"
+    ]
+  },
+  "commonMistakes": [
+    "Reversing the edge. [a, b] means b -> a; building a -> b produces a plausible but exactly backwards order.",
+    "Returning the partial order when a cycle is found. The contract is an empty array — a partial list looks like a valid answer to the caller.",
+    "Assuming the expected output is unique and comparing against one specific array. Any order respecting every edge is correct; check the edges, not the sequence.",
+    "Seeding the queue with only one root, which silently drops every other component of a disconnected dependency graph.",
+    "Sizing the result array with the number of prerequisites instead of numCourses."
+  ],
+  "similar": [
+    "course-schedule",
+    "alien-dictionary",
+    "binary-tree-level-order"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 210,
+      "slug": "course-schedule-ii",
+      "title": "Course Schedule II",
+      "url": "https://leetcode.com/problems/course-schedule-ii/",
+      "premium": false
+    }
+  }
+}

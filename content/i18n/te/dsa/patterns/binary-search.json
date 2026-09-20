@@ -1,0 +1,10 @@
+{
+  "id": "binary-search",
+  "title": "Binary Search (బైనరీ సెర్చ్)",
+  "summary": "Monotonic అయిన ఒక అవును/కాదు test వాడి search space ను మళ్లీ మళ్లీ సగం చేయడం — ఆ answer space తప్పనిసరిగా array అయి ఉండాల్సిన అవసరం లేదు.",
+  "analogy": {
+    "beginner": "Phone book లో 'Krishnan' వెతకడం. మీరు పేజీ 1 నుంచి మొదలుపెట్టరు. మధ్యలో తెరుస్తారు, 'M' కనిపిస్తుంది, ఒక్క కదలికలో రెండో సగం మొత్తాన్ని పారేస్తారు. తర్వాత మిగిలిన దానికి మధ్యలో, మళ్లీ అదే. వెయ్యి పేజీలకు సుమారు పదిసార్లు తెరిస్తే సరిపోతుంది. పది లక్షల పేజీలకు ఇరవై సార్లు.",
+    "interview": "Binary search కు కావాల్సింది ఒక ordered search space మీద monotonic predicate: ఆ space లో మొదటి కొంత భాగం (prefix) false అని చెబుతుంది, మిగిలిన భాగం (suffix) true అని చెబుతుంది (లేదా దానికి విరుద్ధంగా). ప్రతి iteration candidate range ను సగం చేస్తుంది, అంటే O(log n) probes. Array అనేది సాధారణంగా వచ్చే సందర్భం మాత్రమే, అదే నిర్వచనం కాదు."
+  },
+  "intuition": "Binary search ను అందరూ 'sorted array లో ఒక number కనుక్కోవడం' అని నేర్చుకుంటారు. ఆ చట్రం దాని శక్తిలో చాలా భాగాన్ని దాచేస్తుంది.\n\nనిజంగా కావాల్సింది ఒక **monotonic predicate**: ఒక candidate value గురించిన అవును/కాదు ప్రశ్న — దాని సమాధానం ఒకసారి తిరిగాక మళ్లీ ఎప్పటికీ వెనక్కి తిరగదు.\n\n```\ncandidates:  1   2   3   4   5   6   7   8\npredicate:   N   N   N   N   Y   Y   Y   Y\n                             ^ find this boundary\n```\n\nఆ చిత్రాన్ని మీరు గీయగలిగితే, మీరు binary search చేయగలరు — array indices మీద అవును, కానీ అలాగే *సమాధానాల* మీద కూడా. 'Koko అరటిపండ్లను సమయానికి తినేయాలంటే కావాల్సిన అతి తక్కువ తినే వేగం ఎంత?' అనే దాంట్లో ఎక్కడా sorted array లేదు, కానీ `canFinish(speed)` నెమ్మది వేగాలకు false, ఎక్కువ వేగాలకు true, మరియు అది ఎప్పుడూ వెనక్కి తిరగదు. కాబట్టి speed ను 1 నుంచి max వరకు binary search చేస్తారు, ప్రతి probe ఆ పరిస్థితిని simulate చేస్తుంది. ఈ కొత్త కోణం — **binary search on the answer** — interview preparation లో అత్యంత ఫలితమిచ్చే ఆలోచనల్లో ఒకటి.\n\nlog₂ పెరుగుదలకు ఒక క్షణం గౌరవం ఇవ్వాలి: వంద కోట్ల items కు 30 probes చాలు. Data రెట్టింపైతే సరిగ్గా ఒక్క step పెరుగుతుంది."
+}

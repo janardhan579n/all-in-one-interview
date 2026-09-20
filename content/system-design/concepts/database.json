@@ -1,0 +1,205 @@
+{
+  "id": "database",
+  "title": "Databases — SQL and NoSQL",
+  "group": "Data",
+  "level": 1,
+  "estimatedMinutes": 30,
+  "summary": "Durable, queryable, concurrent storage. The real choice is not 'which is better' but 'which access patterns and guarantees do I need'.",
+  "analogy": "A filing system for an office. A relational database is a set of ruled ledgers with strict columns, cross-references between books, and a rule that a transfer is written in both books or neither. A document store is a drawer of folders: each folder holds everything about one customer in whatever shape suits them, which is fast to fetch whole and awkward to query across.",
+  "explanation": {
+    "beginner": "A database stores data so it survives restarts, can be searched quickly, and can be used safely by many people at once. Relational databases (Postgres, MySQL) keep data in tables with fixed columns and can guarantee that a group of changes either all happen or none do — essential for money. NoSQL databases relax some of those rules to make it easier to spread data across many machines or to store records with varying shapes.",
+    "interview": "Relational systems provide ACID transactions, a declarative query language, and referential integrity via a normalised schema, with B-tree indexes making point and range queries O(log n). NoSQL is an umbrella: document, key-value, wide-column, and graph stores, each trading some of relational's guarantees or query flexibility for horizontal scalability or a better fit to a specific access pattern. The decisive questions are the consistency requirement, the query shapes, and whether the working set exceeds one machine."
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "app",
+        "label": "Application",
+        "type": "server",
+        "x": 140,
+        "y": 300
+      },
+      {
+        "id": "sql",
+        "label": "Relational\\n(Postgres / MySQL)",
+        "type": "db",
+        "x": 480,
+        "y": 170,
+        "note": "Tables, joins, transactions, constraints. Strong consistency by default.",
+        "why": {
+          "without": [
+            "Invariants like 'balance never goes negative' must be enforced in application code across many services"
+          ],
+          "with": [
+            "The database enforces them for every writer, including the ones you forgot about"
+          ],
+          "conclusion": "Constraints in the schema outlive the code that wrote them."
+        }
+      },
+      {
+        "id": "doc",
+        "label": "Document store\\n(MongoDB)",
+        "type": "db",
+        "x": 480,
+        "y": 300,
+        "note": "Nested documents, flexible schema, easy horizontal partitioning. Weaker cross-document guarantees."
+      },
+      {
+        "id": "kv",
+        "label": "Key-value\\n(Redis / DynamoDB)",
+        "type": "db",
+        "x": 480,
+        "y": 430,
+        "note": "O(1) access by key, enormous throughput, minimal query ability."
+      },
+      {
+        "id": "index",
+        "label": "Index (B-tree)",
+        "type": "search",
+        "x": 810,
+        "y": 170,
+        "note": "Turns an O(n) table scan into an O(log n) descent — at the cost of slower writes and more storage."
+      }
+    ],
+    "edges": [
+      {
+        "from": "app",
+        "to": "sql"
+      },
+      {
+        "from": "app",
+        "to": "doc"
+      },
+      {
+        "from": "app",
+        "to": "kv"
+      },
+      {
+        "from": "sql",
+        "to": "index",
+        "dashed": true
+      }
+    ]
+  },
+  "why": {
+    "without": [
+      "Data vanishes on restart",
+      "Concurrent writers overwrite each other",
+      "Every query is a full scan of a file"
+    ],
+    "with": [
+      "Durability, indexing, concurrency control and a query language you do not have to write"
+    ],
+    "conclusion": "You are not going to out-engineer forty years of database work. Choose one and learn its failure modes."
+  },
+  "whenToUse": [
+    "Relational: transactions, relationships, ad-hoc queries, reporting, anything involving money or inventory",
+    "Document: records that are read and written as a whole and vary in shape — product catalogues, user profiles, event payloads",
+    "Key-value: caching, sessions, counters, feature flags, anything looked up by a single known key",
+    "Wide-column (Cassandra): write-heavy time-series at very large scale with known query patterns",
+    "Graph: relationship traversal is the primary query — recommendations, fraud rings, social graphs"
+  ],
+  "whenNotToUse": [
+    "Do not choose NoSQL for 'scale' before you have measured; a single Postgres instance handles far more than most people assume",
+    "Do not use a relational database as a queue or a cache — dedicated tools do both far better",
+    "Do not pick a graph database because your data has a few foreign keys"
+  ],
+  "tradeoffs": [
+    {
+      "option": "SQL (relational)",
+      "pros": [
+        "ACID transactions across rows and tables",
+        "Joins and ad-hoc queries without pre-planning",
+        "Constraints enforce invariants centrally",
+        "Mature tooling, well-understood operations"
+      ],
+      "cons": [
+        "Horizontal scaling of writes is genuinely hard",
+        "Schema migrations need planning on large tables",
+        "Object-relational mapping friction"
+      ]
+    },
+    {
+      "option": "NoSQL (document / wide-column)",
+      "pros": [
+        "Partitioning built in, near-linear write scaling",
+        "Flexible schema suits varying record shapes",
+        "Optimised for known access patterns"
+      ],
+      "cons": [
+        "Limited or no joins — you denormalise instead",
+        "Weaker cross-record guarantees, often eventual consistency",
+        "A query pattern you did not design for can be impossible or catastrophically slow"
+      ]
+    }
+  ],
+  "keyNumbers": [
+    {
+      "label": "Indexed point read",
+      "value": "~1 ms"
+    },
+    {
+      "label": "Unindexed scan of 1M rows",
+      "value": "hundreds of ms to seconds"
+    },
+    {
+      "label": "Single-node Postgres writes",
+      "value": "thousands per second"
+    },
+    {
+      "label": "Redis operations",
+      "value": "100k+ per second per node"
+    },
+    {
+      "label": "ACID",
+      "value": "Atomicity · Consistency · Isolation · Durability"
+    }
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "architecture",
+      "question": "You are designing payments. Which storage guarantee matters most?",
+      "options": [
+        "Eventual consistency for speed",
+        "ACID transactions, so a debit and the matching credit either both happen or neither does",
+        "Schema flexibility",
+        "Horizontal write scaling"
+      ],
+      "answerIndex": 1,
+      "explanation": "Money demands atomicity and isolation. Financial systems are the clearest case where a relational database's guarantees are the requirement, not a preference."
+    },
+    {
+      "id": "q2",
+      "type": "architecture",
+      "question": "An unindexed query over 10 million rows takes 8 seconds. What is the first thing to try?",
+      "options": [
+        "Switch to NoSQL",
+        "Add an index on the filtered column, turning the scan into a B-tree lookup",
+        "Add more app servers",
+        "Add a cache"
+      ],
+      "answerIndex": 1,
+      "explanation": "A missing index is by far the most common cause of a slow query. Caching hides the problem for repeated reads; switching databases is an expensive way to avoid running CREATE INDEX."
+    },
+    {
+      "id": "q3",
+      "type": "mcq",
+      "question": "What does adding an index cost you?",
+      "options": [
+        "Nothing",
+        "Slower writes (every insert and update maintains the index too) and additional storage",
+        "Slower reads",
+        "Loss of transactions"
+      ],
+      "answerIndex": 1,
+      "explanation": "Indexes are a read-write trade. A table with ten indexes does ten extra structure updates per insert, which is why write-heavy tables are indexed sparingly."
+    }
+  ],
+  "related": [
+    "indexing",
+    "replication",
+    "sharding",
+    "cache"
+  ]
+}

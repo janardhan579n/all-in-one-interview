@@ -1,0 +1,111 @@
+{
+  "id": "valid-palindrome",
+  "title": "Valid Palindrome",
+  "patternId": "two-pointers",
+  "difficulty": "beginner",
+  "tags": [
+    "string",
+    "two-pointers",
+    "in-place"
+  ],
+  "statement": "Given a string s, return true if it reads the same forwards and backwards once you consider only alphanumeric characters and ignore case. An empty string, or one with no alphanumeric characters at all, counts as a palindrome.",
+  "realWorld": "Normalise-then-compare is the shape of every canonical-form check: matching a user-typed account number against a stored one after stripping spaces and dashes, or verifying that a record survived a serialise/deserialise round trip. Doing the comparison without materialising the normalised copy is what keeps such a check cheap inside a hot validation path.",
+  "examples": [
+    {
+      "input": "s = \"A man, a plan, a canal: Panama\"",
+      "output": "true",
+      "explanation": "Filtered and lower-cased it is \"amanaplanacanalpanama\", which is symmetric. Note the comparison has to skip the commas, the colon and the spaces from both ends."
+    },
+    {
+      "input": "s = \"race a car\"",
+      "output": "false",
+      "explanation": "Filtered it is \"raceacar\". The first three pairs match, then 'e' meets 'a' and the answer is settled — four comparisons out of eight characters."
+    },
+    {
+      "input": "s = \"0P\"",
+      "output": "false",
+      "explanation": "Digits are alphanumeric, so '0' and 'P' must be compared with each other. Any filter written with isLetter instead of isLetterOrDigit throws the '0' away and wrongly reports true."
+    }
+  ],
+  "constraints": [
+    "1 <= s.length <= 2 * 10^5",
+    "s consists of printable ASCII characters",
+    "Only alphanumeric characters are compared; case is ignored"
+  ],
+  "bruteForce": {
+    "idea": "Build a filtered, lower-cased copy of the string, reverse that copy, and compare the two.",
+    "code": [
+      "StringBuilder cleaned = new StringBuilder();",
+      "for (char c : s.toCharArray()) {",
+      "    if (Character.isLetterOrDigit(c)) cleaned.append(Character.toLowerCase(c));",
+      "}",
+      "String forward = cleaned.toString();",
+      "String backward = cleaned.reverse().toString();",
+      "return forward.equals(backward);"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(n)"
+    },
+    "whySlow": "Three full passes and two whole-string allocations happen before a single pair of characters is compared. The reversal is unconditional, so \"race a car\" — which is settled by its fourth comparison — still pays to filter, copy and reverse every character first. And the copy exists only so that position i of one string can be lined up against position n-1-i of the other, which is arithmetic the original string already supports with two indices."
+  },
+  "patternIdentification": "A palindrome is defined by pairs that face each other across a centre, so there is always an obvious pair to examine: the outermost one. When a property is stated symmetrically about a middle, read from both ends inwards — and when an equality test can fail early, never materialise the transformed input first. The same converging-pointer shape covers any check of the form 'element i must agree with element n-1-i'.",
+  "optimized": {
+    "idea": "Two indices, one at each end. Advance each one past characters that are not alphanumeric, then compare the two characters it lands on, case-folded. A mismatch settles the answer immediately; a match lets both pointers step inwards. The string is never copied, and the loop stops as soon as the pointers meet.",
+    "code": [
+      "public static boolean isPalindrome(String s) {",
+      "    int left = 0;",
+      "    int right = s.length() - 1;",
+      "    while (left < right) {",
+      "        while (left < right && !Character.isLetterOrDigit(s.charAt(left))) left++;",
+      "        while (left < right && !Character.isLetterOrDigit(s.charAt(right))) right--;",
+      "        if (Character.toLowerCase(s.charAt(left)) != Character.toLowerCase(s.charAt(right))) {",
+      "            return false;   // one mismatched pair is enough; nothing inside it can save the string",
+      "        }",
+      "        left++;",
+      "        right--;",
+      "    }",
+      "    return true;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(1)"
+    }
+  },
+  "visualization": {
+    "engine": "twoPointersPalindrome",
+    "input": {
+      "text": "raceacar"
+    },
+    "code": [
+      "int left = 0, right = s.length() - 1;   // s here is already filtered and lower-cased",
+      "while (left < right) {",
+      "    if (s.charAt(left) != s.charAt(right)) return false;",
+      "",
+      "    left++;  right--;",
+      "}",
+      "return true;"
+    ]
+  },
+  "commonMistakes": [
+    "Dropping the left < right guard from the inner skip loops: a string made only of punctuation, such as \".,\", runs left past the last index and throws StringIndexOutOfBoundsException. The guard is what makes 'nothing alphanumeric at all' return true instead of crashing.",
+    "Filtering but not case-folding: \"Aa\" returns false while \"aa\" passes, so the bug survives every test whose input happens to be written in one case.",
+    "Using Character.isLetter instead of isLetterOrDigit: digits are discarded as if they were punctuation, so \"0P\" throws both characters away, the loop never runs, and the method wrongly returns true."
+  ],
+  "similar": [
+    "squares-of-sorted-array",
+    "remove-duplicates-sorted",
+    "valid-anagram",
+    "palindrome-linked-list"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 125,
+      "slug": "valid-palindrome",
+      "title": "Valid Palindrome",
+      "url": "https://leetcode.com/problems/valid-palindrome/",
+      "premium": false
+    }
+  }
+}

@@ -1,0 +1,126 @@
+{
+  "id": "search-2d-matrix",
+  "title": "Search a 2D Matrix",
+  "patternId": "binary-search",
+  "difficulty": "intermediate",
+  "tags": [
+    "binary-search",
+    "matrix",
+    "index-arithmetic"
+  ],
+  "statement": "You are given an m x n matrix with two properties: each row is sorted ascending left to right, and the first integer of every row is greater than the last integer of the previous row. Return true if a target value is present. Aim for O(log(m*n)).",
+  "realWorld": "Paged storage. A B-tree leaf page or a column-store block holds a fixed number of sorted keys per page, and the pages themselves are ordered, so the whole file is one sorted key space split across fixed-width rows. Looking up a key means exactly this: translate a global position into (page, offset) with a division and a modulo, and binary search the global positions.",
+  "examples": [
+    {
+      "input": "matrix = [[1,3,5,7],[10,11,16,20],[23,30,34,60]], target = 3",
+      "output": "true",
+      "explanation": "cols = 4, so the flat index 1 maps to row 1/4 = 0, col 1%4 = 1, which holds 3."
+    },
+    {
+      "input": "matrix = [[1,3,5,7],[10,11,16,20],[23,30,34,60]], target = 13",
+      "output": "false",
+      "explanation": "13 falls between rows: it is greater than 11 and less than 16. The search narrows to a single cell and then reports absence, which is the case a row-scanning solution often gets wrong."
+    },
+    {
+      "input": "matrix = [[5]], target = 5",
+      "output": "true",
+      "explanation": "One cell. low = high = 0, mid = 0, and 0/1 = 0, 0%1 = 0. The degenerate case that catches an off-by-one in `high = rows * cols - 1`."
+    }
+  ],
+  "constraints": [
+    "1 <= m, n <= 100",
+    "-10^4 <= matrix[i][j], target <= 10^4",
+    "Each row is sorted ascending",
+    "matrix[i][0] > matrix[i-1][n-1] for every i > 0 — the whole matrix is one ascending sequence"
+  ],
+  "bruteForce": {
+    "idea": "Walk every cell and compare.",
+    "code": [
+      "for (int r = 0; r < matrix.length; r++) {",
+      "    for (int c = 0; c < matrix[0].length; c++) {",
+      "        if (matrix[r][c] == target) return true;",
+      "    }",
+      "}",
+      "return false;"
+    ],
+    "complexity": {
+      "time": "O(m*n)",
+      "space": "O(1)"
+    },
+    "whySlow": "The second property of the matrix — every row starts above where the previous row ended — says the m*n cells form one ascending sequence. The nested scan reads that sequence from the front, discarding one cell per comparison, when a single comparison at the middle cell rules out half the matrix. On a 100x100 matrix that is 10,000 reads to learn something 14 reads settle. The two-dimensional shape is presentation, not structure; the scan is paying for a dimension that is not really there."
+  },
+  "patternIdentification": "Read the constraints, not the shape. 'Each row sorted' plus 'first of each row beats last of the previous' is a sorted array written on several lines, and a sorted array means binary search — you just need index arithmetic to convert a position in the flat sequence to a (row, col) pair: row = index / cols, col = index % cols.\n\nThe distinction worth carrying away is what happens when the second property is dropped. If rows are sorted and columns are sorted but a row can start below where the previous ended (the 'Search a 2D Matrix II' variant), the matrix is no longer one ascending sequence and the flattening is invalid — the flat array is not sorted, so binary search on it returns wrong answers. There you start at the top-right corner and walk: the value there is the largest in its row and the smallest in its column, so target < value means the whole column is too big (move left) and target > value means the whole row is too small (move down). That staircase is O(m + n), not O(log(m*n)), and the reason it is slower is exactly the property the first version has and the second lacks. Interviewers ask this pair together precisely to see whether you noticed which property you were using.",
+  "optimized": {
+    "idea": "Binary search the half-open range of flat indices [0, rows*cols - 1] as if the matrix were a one-dimensional sorted array, and translate each midpoint back into coordinates on the fly with row = mid / cols and col = mid % cols. Nothing is copied or flattened in memory — the arithmetic is the flattening.",
+    "code": [
+      "public static boolean searchMatrix(int[][] matrix, int target) {",
+      "    int rows = matrix.length, cols = matrix[0].length;",
+      "    int low = 0, high = rows * cols - 1;",
+      "    while (low <= high) {",
+      "        int mid = low + (high - low) / 2;",
+      "        int value = matrix[mid / cols][mid % cols];   // one flat index, two coordinates — divide by the COLUMN count",
+      "        if (value == target) return true;",
+      "        if (value < target) low = mid + 1;",
+      "        else high = mid - 1;",
+      "    }",
+      "    return false;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(log(m*n))",
+      "space": "O(1)"
+    }
+  },
+  "visualization": {
+    "engine": "binarySearch",
+    "input": {
+      "array": [
+        1,
+        3,
+        5,
+        7,
+        10,
+        11,
+        16,
+        20,
+        23,
+        30,
+        34,
+        60
+      ],
+      "target": 16
+    },
+    "code": [
+      "int low = 0, high = rows * cols - 1;",
+      "while (low <= high) {",
+      "    int mid = low + (high - low) / 2;",
+      "    int value = matrix[mid / cols][mid % cols];",
+      "    if (value == target) return true;",
+      "    if (value < target) low = mid + 1;",
+      "    else high = mid - 1;",
+      "}",
+      "return false;"
+    ]
+  },
+  "commonMistakes": [
+    "Dividing by the row count: `matrix[mid / rows][mid % rows]`. On a square matrix the two are identical and every test passes; on a 3x4 matrix the index lands in the wrong cell or throws ArrayIndexOutOfBoundsException. The symptom is a solution that is correct on the sample and fails only on non-square input.",
+    "Setting `high = rows * cols` instead of `rows * cols - 1` while keeping `while (low <= high)`. The first probe on a full-range search reads one cell past the end — an ArrayIndexOutOfBoundsException that only fires when the target is larger than everything in the matrix.",
+    "Reaching for the top-right staircase walk here because the matrix 'looks like' Search a 2D Matrix II. It gives the right answer but in O(m + n) instead of O(log(m*n)), which an interviewer reads as not having used the stated constraint — and the reverse mistake, flattening a matrix that only has sorted rows and columns, silently returns false for values that are present."
+  ],
+  "similar": [
+    "binary-search-basic",
+    "first-bad-version",
+    "search-rotated-array",
+    "spiral-matrix",
+    "median-two-sorted-arrays"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 74,
+      "slug": "search-a-2d-matrix",
+      "title": "Search a 2D Matrix",
+      "url": "https://leetcode.com/problems/search-a-2d-matrix/",
+      "premium": false
+    }
+  }
+}

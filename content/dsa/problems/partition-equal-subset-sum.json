@@ -1,0 +1,105 @@
+{
+  "id": "partition-equal-subset-sum",
+  "title": "Partition Equal Subset Sum",
+  "patternId": "dp-patterns",
+  "difficulty": "advanced",
+  "tags": [
+    "array",
+    "dynamic-programming",
+    "knapsack"
+  ],
+  "statement": "Given an array of positive integers, decide whether it can be split into two groups whose sums are equal. Every element must go into exactly one of the two groups.",
+  "realWorld": "Two-way load balancing: dividing a batch of jobs between two workers so both finish at the same moment, or splitting a set of invoice lines into two payments of equal value. The decision version is the classic NP-complete partition problem; the DP below is pseudo-polynomial, which is what makes it practical whenever the totals are small.",
+  "examples": [
+    {
+      "input": "nums = [1,5,11,5]",
+      "output": "true",
+      "explanation": "Total is 22, so each side must reach 11: [11] against [1,5,5]."
+    },
+    {
+      "input": "nums = [1,2,3,5]",
+      "output": "false",
+      "explanation": "Total is 11, an odd number, so no split can halve it. One test rules the whole input out before any table is built."
+    },
+    {
+      "input": "nums = [2,2,3,5]",
+      "output": "false",
+      "explanation": "Total is 12 and each side would need 6, but no subset sums to 6 — the reachable sums are 2, 3, 4, 5, 7, 8, 9, 10 and 12. An even total is necessary and not sufficient, which is the case a parity-only check gets wrong."
+    }
+  ],
+  "constraints": [
+    "1 <= nums.length <= 200",
+    "1 <= nums[i] <= 100",
+    "Each element belongs to exactly one group",
+    "sum(nums) <= 20000, which is what makes the pseudo-polynomial table feasible"
+  ],
+  "bruteForce": {
+    "idea": "Enumerate every subset, add it up, and check whether it equals half the total.",
+    "code": [
+      "public static boolean canPartition(int[] nums) {",
+      "    int total = 0;",
+      "    for (int num : nums) total += num;",
+      "    if (total % 2 != 0) return false;",
+      "    int n = nums.length;",
+      "    for (int mask = 0; mask < (1 << n); mask++) {",
+      "        int sum = 0;",
+      "        for (int i = 0; i < n; i++) {",
+      "            if ((mask & (1 << i)) != 0) sum += nums[i];",
+      "        }",
+      "        if (sum * 2 == total) return true;",
+      "    }",
+      "    return false;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n * 2^n)",
+      "space": "O(1)"
+    },
+    "whySlow": "2^n subsets: a million at n = 20, a billion at n = 30, and the array may hold 200 numbers. The repeated work is the question 'can the remaining items make up what is still missing?' — its answer depends only on how much is still missing, not on which items produced the running total. With values up to 100 and 200 items there are at most a few thousand distinct 'amount still missing' values, yet the enumeration re-answers each of them for every one of the exponentially many item combinations that reach it."
+  },
+  "patternIdentification": "Items taken at most once, and a question about which totals are reachable — that is 0/1 knapsack with the value dimension deleted, leaving only feasibility. Two things follow immediately. First, an odd total can never split evenly, so return false before allocating anything; the halving is only meaningful when total is even. Second, the state is dp[s] = 'can some subset of the items processed so far sum to exactly s', the recurrence per item is dp[s] = dp[s] || dp[s - num] (leave the item, or take it and cover the rest with the earlier items), and the base case is dp[0] = true because the empty subset makes zero. The detail that decides whether the code is right is the loop direction when the 2-D table is flattened to one array: the capacity loop must run DOWNWARDS. dp[s - num] must still describe the world before this item was offered; sweeping upwards reads a cell this same item has already written, which silently allows one item to be used twice. That single rule is the most-missed detail in every knapsack variant, counting or feasibility alike.",
+  "optimized": {
+    "idea": "After the odd-total exit, run a feasibility knapsack with capacity half the total. One boolean array, items in the outer loop, capacity descending in the inner loop. The moment dp[half] turns true the answer is settled, so the loop can stop early.",
+    "code": [
+      "public static boolean canPartition(int[] nums) {",
+      "    int total = 0;",
+      "    for (int num : nums) total += num;",
+      "    if ((total & 1) == 1) return false;   // an odd total cannot be halved — exit before any work",
+      "    int half = total / 2;",
+      "    boolean[] dp = new boolean[half + 1];   // index 0..half inclusive",
+      "    dp[0] = true;   // the empty subset reaches 0",
+      "    for (int num : nums) {",
+      "        for (int s = half; s >= num; s--) {   // DOWNWARDS: dp[s - num] must predate this item",
+      "            dp[s] |= dp[s - num];",
+      "        }",
+      "        if (dp[half]) return true;",
+      "    }",
+      "    return dp[half];",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n * sum)",
+      "space": "O(sum)"
+    }
+  },
+  "commonMistakes": [
+    "Sweeping the capacity loop upwards (for s = num; s <= half; s++). dp[s - num] already includes the current item, so one item can be spent twice: [3,3,2] reaches 4 by using the 2 twice and the function returns true where the correct answer is false.",
+    "Dropping the odd-total early exit and relying on half = total / 2 with integer division. On [1,2,3,5] the total of 11 becomes a half of 5, a subset summing to 5 exists ({5} or {2,3}), and the function returns true instead of false.",
+    "Allocating boolean[half] instead of boolean[half + 1]. The capacity axis runs from 0 to half inclusive, so the one cell that holds the answer is missing — [1,5,11,5] throws ArrayIndexOutOfBoundsException at s = 11 on the very first item."
+  ],
+  "similar": [
+    "target-sum",
+    "coin-change",
+    "subsets",
+    "longest-common-subsequence"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 416,
+      "slug": "partition-equal-subset-sum",
+      "title": "Partition Equal Subset Sum",
+      "url": "https://leetcode.com/problems/partition-equal-subset-sum/",
+      "premium": false
+    }
+  }
+}

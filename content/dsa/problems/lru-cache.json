@@ -1,0 +1,194 @@
+{
+  "id": "lru-cache",
+  "title": "LRU Cache",
+  "patternId": "linked-list",
+  "difficulty": "advanced",
+  "tags": [
+    "linked-list",
+    "doubly-linked-list",
+    "hashing",
+    "design"
+  ],
+  "statement": "Design a fixed-capacity cache supporting two operations. get(key) returns the stored value, or -1 if the key is absent. put(key, value) inserts or updates the key; if inserting would exceed the capacity, the least recently used key is evicted first. Both a get and a put count as a use of that key. Both operations must run in O(1) average time.",
+  "realWorld": "A database buffer pool, a CPU page cache, an HTTP proxy cache and Redis's allkeys-lru eviction policy are all exactly this structure. In every one of them the cache sits on the hot path of every single request, which is why the O(1) requirement is not academic: an eviction that scanned the cache would make a large cache slower than a small one, and slower than the storage it was added to avoid.",
+  "examples": [
+    {
+      "input": "LRUCache(2); put(1,1); put(2,2); get(1); put(3,3); get(2); get(3)",
+      "output": "1, -1, 3",
+      "explanation": "get(1) returns 1 and also promotes key 1 to most-recent, so when put(3,3) overflows the capacity the victim is key 2, not key 1. get(2) is therefore a miss."
+    },
+    {
+      "input": "LRUCache(2); put(2,1); put(2,2); get(2)",
+      "output": "2",
+      "explanation": "The second put is an update, not an insert: key 2 already exists, so its value is overwritten, its node is moved to the front, and the size never changes. No eviction may happen here even though the cache is at capacity."
+    },
+    {
+      "input": "LRUCache(1); put(2,1); get(2); put(3,2); get(2); get(3)",
+      "output": "1, -1, 2",
+      "explanation": "Capacity 1. Inserting key 3 must evict key 2 even though key 2 was used a moment earlier — there is simply no room. This is the case where the sentinel nodes earn their keep: the victim is tail.prev, and the list is never empty from the code's point of view."
+    }
+  ],
+  "constraints": [
+    "1 <= capacity <= 3000",
+    "0 <= key <= 10^4, 0 <= value <= 10^5",
+    "up to 2 * 10^5 calls to get and put combined",
+    "both get and put must be O(1) average time"
+  ],
+  "bruteForce": {
+    "idea": "Keep the values in a HashMap and, alongside it, the time of each key's last use. Lookup and update are O(1); eviction scans the timestamps for the smallest one.",
+    "code": [
+      "private final Map<Integer, Integer> values = new HashMap<>();",
+      "private final Map<Integer, Integer> usedAt = new HashMap<>();",
+      "private int clock = 0;",
+      "",
+      "public int get(int key) {",
+      "    if (!values.containsKey(key)) return -1;",
+      "    usedAt.put(key, clock++);",
+      "    return values.get(key);",
+      "}",
+      "",
+      "public void put(int key, int value) {",
+      "    if (!values.containsKey(key) && values.size() == capacity) {",
+      "        int oldest = -1;",
+      "        int best = Integer.MAX_VALUE;",
+      "        for (Map.Entry<Integer, Integer> e : usedAt.entrySet()) {   // the scan",
+      "            if (e.getValue() < best) { best = e.getValue(); oldest = e.getKey(); }",
+      "        }",
+      "        values.remove(oldest);",
+      "        usedAt.remove(oldest);",
+      "    }",
+      "    values.put(key, value);",
+      "    usedAt.put(key, clock++);",
+      "}"
+    ],
+    "complexity": {
+      "time": "get O(1), put O(n) when it evicts",
+      "space": "O(n)"
+    },
+    "whySlow": "Every eviction rescans all n keys to find the minimum timestamp — and it is rediscovering an ordering that the sequence of accesses already determined. We knew which key was least recently used at the moment it became least recently used; throwing that knowledge away and recomputing it from n timestamps is the waste. The consequence is perverse: on a full cache with a miss-heavy workload the scan runs on almost every request, so the cache's cost per request grows with its own capacity, and making the cache bigger makes the system slower."
+  },
+  "patternIdentification": "Two different access patterns are demanded at once — 'find this key' and 'find the oldest entry' — and both must be O(1). No single container offers both: a hash map has no notion of order, an ordered list has no lookup. The transferable move is to run two structures over the same nodes, with the map's value being a pointer into the other structure rather than a copy of the data; each structure then covers the other's blind spot and the node is the shared identity that keeps them consistent. The follow-on constraint is the one people miss. Once you must remove a node from the middle of that ordering in O(1), the list has to be doubly linked: unlinking node x means writing x's predecessor's next field, and in a singly linked list the only way to find a predecessor is to walk from the head, which is O(n). The prev field is not decoration — it is precisely the price of O(1) removal.",
+  "optimized": {
+    "idea": "A HashMap<Integer, Node> for lookup, plus a doubly linked list holding the same nodes in recency order, most recent first. Two sentinel nodes (head and tail) sit permanently at the ends so that no insert or remove ever has to test a pointer for null — the list always has at least two nodes from the code's point of view. Every use of a key unlinks its node and pushes it in behind head, so the node immediately before tail is always the least recently used entry and eviction finds it in O(1) with no search at all. The map stores the node itself rather than the value, so get reaches the node directly and the move-to-front is four pointer assignments. Each node carries its own key as well as its value, because eviction starts from the node and must be able to name the map entry to delete.",
+    "code": [
+      "class LRUCache {",
+      "",
+      "    private static class Node {",
+      "        int key;",
+      "        int value;",
+      "        Node prev;   // the field that makes O(1) removal possible",
+      "        Node next;",
+      "",
+      "        Node(int key, int value) {",
+      "            this.key = key;",
+      "            this.value = value;",
+      "        }",
+      "    }",
+      "",
+      "    private final int capacity;",
+      "    private final Map<Integer, Node> map = new HashMap<>();",
+      "    private final Node head = new Node(0, 0);   // sentinels: never removed, so no null checks",
+      "    private final Node tail = new Node(0, 0);",
+      "",
+      "    public LRUCache(int capacity) {",
+      "        this.capacity = capacity;",
+      "        head.next = tail;",
+      "        tail.prev = head;",
+      "    }",
+      "",
+      "    private void unlink(Node node) {",
+      "        node.prev.next = node.next;",
+      "        node.next.prev = node.prev;",
+      "    }",
+      "",
+      "    private void pushFront(Node node) {",
+      "        node.next = head.next;",
+      "        node.prev = head;",
+      "        head.next.prev = node;",
+      "        head.next = node;",
+      "    }",
+      "",
+      "    public int get(int key) {",
+      "        Node node = map.get(key);",
+      "        if (node == null) return -1;",
+      "        unlink(node);",
+      "        pushFront(node);",
+      "        return node.value;",
+      "    }",
+      "",
+      "    public void put(int key, int value) {",
+      "        Node node = map.get(key);",
+      "        if (node != null) {          // update, not insert: size does not change",
+      "            node.value = value;",
+      "            unlink(node);",
+      "            pushFront(node);",
+      "            return;",
+      "        }",
+      "        if (map.size() == capacity) {",
+      "            Node victim = tail.prev;   // the LRU entry, found without a search",
+      "            unlink(victim);",
+      "            map.remove(victim.key);",
+      "        }",
+      "        Node fresh = new Node(key, value);",
+      "        map.put(key, fresh);",
+      "        pushFront(fresh);",
+      "    }",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(1) average for both get and put",
+      "space": "O(capacity)"
+    }
+  },
+  "visualization": {
+    "engine": "linkedListOps",
+    "input": {
+      "values": [
+        4,
+        3,
+        2,
+        1
+      ],
+      "operations": [
+        {
+          "op": "traverse"
+        },
+        {
+          "op": "insertHead",
+          "value": 5
+        },
+        {
+          "op": "deleteAt",
+          "index": 4
+        }
+      ]
+    },
+    "code": [
+      "for (Node c = head; c != null; c = c.next) { }  // searching the list per access: what we must NOT do",
+      "node.next = head.next;               // move-to-front, 1 of 2",
+      "head.next = node;                    // move-to-front, 2 of 2",
+      "victim.prev.next = victim.next;      // evict: needs prev — hence DOUBLY linked",
+      "pushFront(node);                     // every use becomes the most recent"
+    ]
+  },
+  "commonMistakes": [
+    "Storing the value in the map (Map<Integer,Integer>) and searching the list for the matching node on each use. The lookup stays O(1) but the move-to-front becomes an O(n) walk, so the design silently degrades back to the brute force it replaced — and the regression appears only under load, when the cache is full.",
+    "Not storing the key inside the node. On eviction you hold the victim node but have nothing to pass to map.remove, and the usual fix — iterating the map to find the entry whose value is that node — reintroduces the O(n) scan. Symptom: the list stays at capacity while the map grows without bound, so hit rates look normal and memory climbs until the process is killed.",
+    "Treating put on an existing key as an insert. The capacity check fires, a live entry is evicted for no reason, and the cache permanently holds capacity - 1 useful entries; every test that never updates the same key twice passes."
+  ],
+  "similar": [
+    "min-stack",
+    "design-circular-queue",
+    "implement-queue-using-stacks",
+    "reverse-linked-list"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 146,
+      "slug": "lru-cache",
+      "title": "LRU Cache",
+      "url": "https://leetcode.com/problems/lru-cache/",
+      "premium": false
+    }
+  }
+}

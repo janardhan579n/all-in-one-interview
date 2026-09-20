@@ -1,0 +1,63 @@
+[
+  {
+    "id": "java",
+    "title": "Java & Spring Boot",
+    "shortTitle": "Java",
+    "icon": "☕",
+    "summary": "Core Java through to production Spring Boot services — the questions that actually decide a backend interview.",
+    "audience": "Backend engineers interviewing for Java roles, from first job to tech lead.",
+    "topics": [
+      "core-language",
+      "collections",
+      "concurrency",
+      "jvm-memory",
+      "spring-core",
+      "spring-boot",
+      "jpa-hibernate",
+      "rest-api",
+      "testing",
+      "microservices"
+    ]
+  },
+  {
+    "id": "sql",
+    "title": "SQL & Databases",
+    "shortTitle": "SQL",
+    "icon": "🗄️",
+    "summary": "Writing queries, making them fast, and understanding what the database is actually doing underneath.",
+    "audience": "Anyone whose service talks to a relational database — which is almost everyone.",
+    "topics": [
+      "querying",
+      "indexing",
+      "transactions",
+      "performance"
+    ]
+  },
+  {
+    "id": "dotnet",
+    "title": ".NET & C#",
+    "shortTitle": ".NET",
+    "icon": "🟦",
+    "summary": "C# language mechanics, ASP.NET Core request handling, EF Core, and the async and memory model.",
+    "audience": "Engineers interviewing for .NET roles, and Java engineers crossing over.",
+    "topics": [
+      "csharp-language",
+      "aspnet-core",
+      "ef-core",
+      "async-memory"
+    ]
+  },
+  {
+    "id": "scenarios",
+    "title": "Production Scenarios & Behavioural",
+    "shortTitle": "Scenarios",
+    "icon": "🔥",
+    "summary": "The rounds that separate mid from senior: a real incident to debug out loud, a design to review, and your own project stories told well.",
+    "audience": "Mid-level and above, where 'have you actually run this in production' is the real question.",
+    "topics": [
+      "production-incidents",
+      "design-review",
+      "project-stories"
+    ]
+  }
+]

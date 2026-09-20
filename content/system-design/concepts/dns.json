@@ -1,0 +1,261 @@
+{
+  "id": "dns",
+  "title": "DNS",
+  "group": "Foundations",
+  "level": 0,
+  "estimatedMinutes": 18,
+  "summary": "The system that turns a name people can remember into an address a machine can dial. It is a cache at every hop, which is what makes it fast — and what makes changing an answer slow.",
+  "analogy": "A phone book that everyone copies pages out of. You ask a friend for the plumber's number, they ask the operator, the operator looks it up, and now three people have it written on a sticky note. When the plumber moves, the printed book is corrected immediately — but the sticky notes are not, and you have no way to reach into someone's desk drawer and tear one up.",
+  "explanation": {
+    "beginner": "Computers talk to each other using numeric addresses, but people type names like example.com. DNS is the lookup service in between. Your machine asks a resolver — usually one run by your internet provider — and that resolver walks a chain of servers until it finds the machine that is authoritative for the name, meaning the one that officially owns the answer. Every server along the way keeps a copy of the answer for a while, so the next person who asks gets it instantly. How long they keep it is set by a number attached to the record, called the TTL.",
+    "interview": "A hierarchical, cache-heavy distributed lookup. The stub resolver in the OS asks a recursive resolver; on a miss the recursive resolver queries a root server for the TLD's name servers, the TLD server for the zone's name servers, and finally the authoritative server for the record. Queries are usually UDP, so responses larger than 512 bytes need EDNS0 or fall back to TCP. TTL controls how long each cache may keep the answer, but it is advisory: browsers pin their own DNS cache, some resolvers clamp low TTLs upward, and connection pools hold open sockets to an IP long after the record changed. That is why DNS-based failover is measured in minutes even with a 60-second TTL, and why round-robin A records distribute name lookups, not load."
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "client",
+        "label": "Client (stub)",
+        "type": "client",
+        "x": 80,
+        "y": 300,
+        "note": "The OS stub resolver. It has its own small cache, and the browser above it often has another."
+      },
+      {
+        "id": "resolver",
+        "label": "Recursive resolver",
+        "type": "dns",
+        "x": 340,
+        "y": 300,
+        "note": "Does the walking and keeps the answer for the TTL. Almost every lookup stops here.",
+        "why": {
+          "without": [
+            "Every connection needs an IP address typed or hard-coded by hand",
+            "Moving a service to new hardware means editing every client that talks to it",
+            "One name can only ever mean one machine"
+          ],
+          "with": [
+            "Clients hold a stable name; the address behind it can change without touching them",
+            "A cached answer costs well under a millisecond instead of a 20–120 ms full walk",
+            "One name can return several addresses, or a different address per region"
+          ],
+          "conclusion": "Names buy you indirection and caching — but the same caching means an answer you changed is still in use somewhere for a while after you changed it."
+        }
+      },
+      {
+        "id": "root",
+        "label": "Root server",
+        "type": "dns",
+        "x": 620,
+        "y": 110,
+        "note": "Knows nothing about example.com. Only points at the servers for .com."
+      },
+      {
+        "id": "tld",
+        "label": "TLD server (.com)",
+        "type": "dns",
+        "x": 620,
+        "y": 300,
+        "note": "Returns the NS records naming the authoritative servers for the zone."
+      },
+      {
+        "id": "auth",
+        "label": "Authoritative server",
+        "type": "dns",
+        "x": 620,
+        "y": 490,
+        "note": "Owns the zone file. This is where A, AAAA, CNAME and MX records actually live, with their TTLs."
+      },
+      {
+        "id": "origin",
+        "label": "Origin server",
+        "type": "server",
+        "x": 890,
+        "y": 300,
+        "note": "The address the whole walk existed to find. DNS is finished before the first byte of HTTP is sent."
+      }
+    ],
+    "edges": [
+      {
+        "from": "client",
+        "to": "resolver",
+        "label": "1. example.com?"
+      },
+      {
+        "from": "resolver",
+        "to": "root",
+        "label": "2. who serves .com?",
+        "dashed": true
+      },
+      {
+        "from": "resolver",
+        "to": "tld",
+        "label": "3. who serves the zone?",
+        "dashed": true
+      },
+      {
+        "from": "resolver",
+        "to": "auth",
+        "label": "4. A record?",
+        "dashed": true
+      },
+      {
+        "from": "resolver",
+        "to": "client",
+        "label": "5. address + TTL"
+      },
+      {
+        "from": "client",
+        "to": "origin",
+        "label": "6. TCP connect"
+      }
+    ]
+  },
+  "why": {
+    "without": [
+      "Clients hold raw IP addresses, so replacing a server means a coordinated change to every client that ever contacted it",
+      "You cannot move a service between machines, providers or regions without downtime you schedule and announce",
+      "Nothing can send a European user to a European endpoint and an Asian user to an Asian one, because there is only one address to hand out"
+    ],
+    "with": [
+      "Clients hold a name; the mapping behind it is yours to change",
+      "Answers are cached at the browser, the OS, and the recursive resolver, so the common case is a memory lookup, not a network walk",
+      "The same name can answer with several addresses, or with a different address depending on where the asker is"
+    ],
+    "conclusion": "DNS is the indirection layer the whole internet is built on, and it is fast because it caches aggressively. Treat its caching as a feature for lookups and a hazard for anything you need to change quickly."
+  },
+  "whenToUse": [
+    "Anything clients reach by name rather than by a fixed address — which is essentially every public service",
+    "Planned migrations, where you can lower the TTL days ahead and cut over during a window",
+    "Coarse geographic steering (GeoDNS), sending a user toward a nearby region or CDN edge",
+    "Splitting traffic across environments or providers at a granularity of hours, not seconds"
+  ],
+  "whenNotToUse": [
+    "Fast failover. Clients, browsers and intermediate resolvers ignore or clamp TTLs, and open connections do not re-resolve at all — budget minutes, not seconds, and use a load balancer or anycast VIP when you need seconds",
+    "Fine-grained load balancing. Round-robin A records spread name lookups, not requests: one cached answer can pin a whole office or mobile carrier to a single server for the TTL, so weights and 'least connections' are impossible here",
+    "Health-aware routing on its own. The authoritative server has no idea a returned address stopped answering, and the record keeps being served until you notice and edit it",
+    "Anything that needs a routing decision per request — path-based routing, session affinity, canary percentages — because DNS answers a name, not a request",
+    "Chasing latency by cutting resolution time when the answer is already cached almost everywhere; you would be optimising a sub-millisecond step"
+  ],
+  "tradeoffs": [
+    {
+      "option": "Low TTL (30–60 s)",
+      "pros": [
+        "Changes propagate in minutes rather than hours",
+        "Makes planned cutovers and emergency address changes practical"
+      ],
+      "cons": [
+        "Many more queries reach your authoritative servers, which you pay for and must keep up",
+        "Some resolvers clamp very low TTLs upward, so you pay the query cost without getting the agility you budgeted for",
+        "Every client pays resolution latency far more often"
+      ]
+    },
+    {
+      "option": "High TTL (hours to a day)",
+      "pros": [
+        "Near-total cache hit rate; authoritative load and cost drop sharply",
+        "Resilient if your authoritative servers have an outage — cached answers keep working"
+      ],
+      "cons": [
+        "A wrong or dead address stays in circulation for the full TTL",
+        "Emergency changes require you to have lowered the TTL in advance, which means predicting the emergency"
+      ]
+    },
+    {
+      "option": "Round-robin A records",
+      "pros": [
+        "Free, needs no infrastructure, spreads traffic across several origins",
+        "Gives a client more than one address to try if the first refuses a connection"
+      ],
+      "cons": [
+        "Distribution is per cached lookup, not per request, so load is lumpy and unweighted",
+        "A dead address keeps being handed out until someone edits the zone",
+        "Client retry behaviour on a bad address is inconsistent and outside your control"
+      ]
+    },
+    {
+      "option": "CNAME to a managed endpoint",
+      "pros": [
+        "The provider behind the name can change addresses freely without you touching your zone",
+        "The usual way to point at a CDN or load balancer"
+      ],
+      "cons": [
+        "Adds a second resolution step, so the first uncached lookup is slower",
+        "A CNAME cannot coexist with other records at the same name, which is why the bare apex of a domain usually cannot be a plain CNAME"
+      ]
+    }
+  ],
+  "keyNumbers": [
+    {
+      "label": "Cached lookup (OS or browser cache)",
+      "value": "well under 1 ms"
+    },
+    {
+      "label": "Full uncached recursive walk",
+      "value": "~20–120 ms, depending on distance to each hop"
+    },
+    {
+      "label": "Typical A record TTL in practice",
+      "value": "300 s for things you may move, 3600 s+ for things you will not"
+    },
+    {
+      "label": "Realistic DNS failover time with a 60 s TTL",
+      "value": "minutes — often 5–30 — once stale caches and open connections are counted"
+    },
+    {
+      "label": "Root name server addresses",
+      "value": "13 (A–M), each anycast to many physical sites"
+    },
+    {
+      "label": "UDP DNS response size before EDNS0 or TCP fallback",
+      "value": "512 bytes"
+    }
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "architecture",
+      "question": "Your primary region goes down. You set the A record's TTL to 60 seconds months ago, so you repoint the record at the standby region and expect traffic to move within a minute. Twenty minutes later a noticeable share of requests is still arriving at the dead address. What is the most accurate explanation?",
+      "options": [
+        "The authoritative server is still serving the old record; the zone edit did not commit",
+        "TTL is advisory — browser and OS caches, resolvers that clamp low TTLs, and already-open connections that never re-resolve all keep the old address alive well past 60 seconds",
+        "The standby region's A record has a longer TTL, which overrides the primary's",
+        "Round-robin is splitting traffic 50/50 between the two addresses"
+      ],
+      "answerIndex": 1,
+      "explanation": "The TTL is a request, not a guarantee. Browsers pin their own DNS cache regardless of TTL, some recursive resolvers enforce a minimum, and a client with an established TCP connection or a warm connection pool does not perform a lookup at all until that connection ends. This is the core reason DNS is a blunt failover tool: when you need seconds, the decision has to live somewhere that sees every request — a load balancer, or an anycast address you can withdraw."
+    },
+    {
+      "id": "q2",
+      "type": "mcq",
+      "question": "In the resolution chain, what does a root name server actually return for a query about shop.example.com?",
+      "options": [
+        "The IP address of shop.example.com",
+        "The addresses of the name servers for .com",
+        "The addresses of the name servers for example.com",
+        "A cached answer from whoever asked most recently"
+      ],
+      "answerIndex": 1,
+      "explanation": "Each level of the hierarchy only knows the level below it. The root delegates to the TLD (.com), the TLD delegates to the zone's authoritative servers via NS records, and only the authoritative server holds the A record. Getting this wrong usually means picturing DNS as one big database rather than a chain of delegations — and the chain is exactly why each hop can be cached independently."
+    },
+    {
+      "id": "q3",
+      "type": "mcq",
+      "question": "You want www.example.com to point at a managed CDN endpoint whose own addresses change without warning. Which record type is the right tool, and what is the main cost?",
+      "options": [
+        "An A record, updated by a cron job that re-resolves the CDN hourly",
+        "A CNAME to the CDN's hostname; the cost is an extra resolution step and the fact that a CNAME cannot sit alongside other records at the same name",
+        "An NS record delegating www to the CDN; the cost is losing control of the zone",
+        "An MX record, since the CDN handles delivery"
+      ],
+      "answerIndex": 1,
+      "explanation": "A CNAME is an alias: resolvers follow it and resolve the target instead, so the CDN can change its addresses freely. The costs are real — one more lookup on a cold cache, and the rule that a name with a CNAME can hold no other records, which is why the bare apex (example.com, which must also carry NS and often MX) normally needs an A record or a provider-specific alias record instead."
+    }
+  ],
+  "related": [
+    "cdn",
+    "http",
+    "load-balancer",
+    "proxy",
+    "client-server"
+  ]
+}

@@ -1,0 +1,274 @@
+{
+  "id": "microservices",
+  "title": "Monolith vs Microservices",
+  "group": "Architecture",
+  "level": 2,
+  "estimatedMinutes": 30,
+  "summary": "Microservices are not a better architecture — they are a different set of problems, bought deliberately to get independent deployment, independent scaling and team autonomy. The monolith is the correct starting point, and the interesting question is which specific pain justifies which specific split.",
+  "analogy": "One kitchen where every cook shares the same stove, the same pantry and the same order ticket: fast to coordinate, nobody has to phone anyone, and the head chef can see the whole line at a glance. Once forty cooks are in that kitchen they spend more time stepping around each other than cooking, so you open separate kitchens — and immediately discover that now the dessert kitchen has to phone the main kitchen, the phone line sometimes rings out, and nobody can see the whole line any more.",
+  "explanation": {
+    "beginner": "A monolith is one program containing all your features. You build it once, deploy it once, and everything inside it talks by ordinary function calls — which are instant and never fail halfway. Microservices split that program into separate services that run on their own machines and talk over the network. The benefit is that each team can release its own service without waiting for anyone else, and a part that needs more machines can get more machines on its own. The cost is that a function call has become a network call: it can now be slow, fail, or half-succeed, and you have to handle all three.",
+    "interview": "A monolith gives you in-process calls (~100 ns), ACID transactions across the whole request, a stack trace that spans every layer, and refactoring the compiler verifies. Splitting trades all four away for independent deployability, independent scaling, fault isolation and team autonomy — Conway's law is the real driver, since one codebase with fifty committers becomes a coordination problem long before it becomes a performance problem. The price is concrete: network calls (~0.5-1 ms and fallible), no distributed transaction so you need sagas with compensating actions, distributed tracing instead of stack traces, N pipelines and N on-call rotations, and permanent API versioning work between teams. Availability multiplies: ten services at 99.9% in series give ~99.0%. The dominant failure mode is the distributed monolith — services that share a database or must deploy together, paying every cost and collecting no benefit. The defensible answer is a modular monolith first, split at a named pain."
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "client",
+        "label": "Client",
+        "type": "client",
+        "x": 100,
+        "y": 300,
+        "note": "Sees one API. Should never need to know how many services are behind it."
+      },
+      {
+        "id": "gw",
+        "label": "API gateway",
+        "type": "proxy",
+        "x": 350,
+        "y": 300,
+        "note": "The seam that hides the split. Without it, every client learns your service topology."
+      },
+      {
+        "id": "orders",
+        "label": "Orders service",
+        "type": "server",
+        "x": 620,
+        "y": 160,
+        "note": "Owns its data and its deploy schedule. If it cannot be deployed alone, it is not really a service.",
+        "why": {
+          "without": [
+            "One codebase, one pipeline: an unrelated team's failing test blocks the orders release",
+            "Orders traffic spikes 10x at checkout, so the whole application is scaled 10x — including the parts that were idle",
+            "A memory leak in report generation takes down order intake with it"
+          ],
+          "with": [
+            "Orders deploys on its own schedule, several times a day if it wants",
+            "Only the orders tier is scaled for the spike",
+            "A crash in reporting degrades reporting, not checkout"
+          ],
+          "conclusion": "You are buying independent deployment, targeted scaling and blast-radius containment — and paying for them with network calls, no cross-service transaction, and one more pipeline and on-call rotation."
+        }
+      },
+      {
+        "id": "payments",
+        "label": "Payments service",
+        "type": "server",
+        "x": 620,
+        "y": 440,
+        "note": "A separate team, a separate release, a separate failure. Orders must tolerate it being down."
+      },
+      {
+        "id": "ordersdb",
+        "label": "Orders DB",
+        "type": "db",
+        "x": 880,
+        "y": 160,
+        "note": "Private to Orders. The moment another service reads this directly, you have a distributed monolith."
+      },
+      {
+        "id": "paymentsdb",
+        "label": "Payments DB",
+        "type": "db",
+        "x": 880,
+        "y": 440,
+        "note": "Private to Payments. Two databases means no transaction spans both — see saga."
+      }
+    ],
+    "edges": [
+      {
+        "from": "client",
+        "to": "gw",
+        "label": "1. one API"
+      },
+      {
+        "from": "gw",
+        "to": "orders",
+        "label": "2. route"
+      },
+      {
+        "from": "gw",
+        "to": "payments",
+        "label": "3. route"
+      },
+      {
+        "from": "orders",
+        "to": "ordersdb",
+        "label": "owns"
+      },
+      {
+        "from": "payments",
+        "to": "paymentsdb",
+        "label": "owns"
+      },
+      {
+        "from": "orders",
+        "to": "payments",
+        "label": "4. was a function call — can now time out",
+        "dashed": true
+      }
+    ]
+  },
+  "why": {
+    "without": [
+      "Every release is a whole-application release: one team's unfinished migration holds five other teams' finished work in the queue",
+      "Scaling is all-or-nothing — the component needing ten times the hardware drags the nine that do not along with it",
+      "One runaway thread pool or memory leak takes down every feature in the process, because they share it",
+      "Past roughly fifty engineers in one codebase, merge conflicts, shared-module ownership fights and test-suite runtime become the bottleneck, not the machines"
+    ],
+    "with": [
+      "Each service ships on its own cadence, so release frequency stops being set by the slowest team",
+      "The hot component is scaled independently, and only it gets the extra hardware",
+      "A failure is contained to one service, and callers can degrade rather than die",
+      "A team owns a service end to end and can change its internals without a cross-team negotiation"
+    ],
+    "conclusion": "Splitting converts an organisational and scaling problem into a distributed-systems problem. That is a good trade only once the organisational problem is real — which is why the honest answer is 'start with a monolith with clean module boundaries, and split when a specific pain names a specific split'."
+  },
+  "whenToUse": [
+    "One team's release genuinely blocks several others, and the delay is measurable in days",
+    "One component needs roughly an order of magnitude more hardware than the rest, and scaling the whole application for it is wasteful",
+    "A component's failures must not take the core path down — payment retries should not kill order intake",
+    "Enough engineers that one codebase has too many hands in it, and the boundaries in the code already match the boundaries between teams",
+    "A component has a genuinely different profile: a different runtime, a different compliance boundary, or wildly different latency requirements"
+  ],
+  "whenNotToUse": [
+    "A small team — with five engineers you get N pipelines, N dashboards and N on-call surfaces, and the deployment coupling you were escaping never existed",
+    "An early product whose domain boundaries are still moving weekly: a wrong boundary in a monolith is a refactor the compiler checks, and across services it is a coordinated migration of two databases and an API version",
+    "You cannot yet identify which data each proposed service would own — splitting behaviour while sharing one database produces a distributed monolith, which pays every cost and collects no benefit",
+    "The real problem is a slow test suite, a tangled module or an unindexed query — splitting the process does not fix any of those, it just spreads them over a network",
+    "The workflow needs strong cross-entity transactions (moving money between two accounts) and the business cannot tolerate an intermediate state"
+  ],
+  "tradeoffs": [
+    {
+      "option": "Monolith (single deployable)",
+      "pros": [
+        "In-process calls: no serialisation, no timeouts, no partial failure",
+        "Real ACID transactions across the whole request",
+        "One stack trace spans the entire request; one log stream, one debugger",
+        "Refactoring across boundaries is a compiler-checked rename, not a migration",
+        "One pipeline, one runtime to patch, one thing to be on call for"
+      ],
+      "cons": [
+        "Every deploy is the whole application, so releases queue behind the slowest change",
+        "Scaling is uniform, so the hot path forces you to over-provision everything else",
+        "One process means shared fate: a leak or a saturated pool takes all features down",
+        "With enough committers, module boundaries erode unless something enforces them",
+        "One technology stack for everything, whether or not it fits"
+      ]
+    },
+    {
+      "option": "Modular monolith (one deployable, enforced internal boundaries)",
+      "pros": [
+        "Keeps transactions, stack traces and compiler-checked refactoring",
+        "Modules own their tables and talk through explicit interfaces, so a later split has a seam to cut along",
+        "Boundary mistakes are cheap to correct while the domain is still moving",
+        "Enforceable in the build with module/package rules, so erosion is a failed build not a code-review argument"
+      ],
+      "cons": [
+        "Deployment and scaling are still all-or-nothing",
+        "Discipline is required forever — one 'temporary' cross-module table join undoes it",
+        "Shared fate remains: one module can still exhaust the process's memory or threads",
+        "Team autonomy is bounded by a shared pipeline and shared release calendar"
+      ]
+    },
+    {
+      "option": "Microservices (many deployables, private data per service)",
+      "pros": [
+        "Independent deployment: release cadence is per team",
+        "Independent scaling: the expensive component gets hardware, the rest does not",
+        "Fault isolation, when callers actually implement timeouts and fallbacks",
+        "Per-service technology choices where they genuinely differ",
+        "Clear ownership: one team, one service, one pager"
+      ],
+      "cons": [
+        "Every former function call can now be slow, fail, or partially succeed",
+        "No cross-service transaction — multi-step workflows need sagas and compensating actions",
+        "Debugging needs distributed tracing and correlated logs; a stack trace no longer spans the request",
+        "Availability multiplies: ten dependencies at 99.9% in series is about 99.0%",
+        "N pipelines, N runtimes to patch, N on-call surfaces, and permanent API versioning work between teams"
+      ]
+    },
+    {
+      "option": "Distributed monolith (split processes, shared database or lockstep deploys)",
+      "pros": [
+        "Looks modern on an architecture diagram",
+        "Occasionally a real transitional state during a careful extraction, if it is time-boxed and tracked"
+      ],
+      "cons": [
+        "Services must be released together, so you lost independent deployment — the main prize",
+        "A shared database means one schema change breaks several services at once",
+        "You pay network latency, partial failure and operational multiplication anyway",
+        "Debugging is monolith-hard plus distributed-hard at the same time"
+      ]
+    }
+  ],
+  "keyNumbers": [
+    {
+      "label": "In-process function call",
+      "value": "~100 ns"
+    },
+    {
+      "label": "Same-datacenter service call (HTTP/gRPC)",
+      "value": "~0.5-1 ms — roughly 10,000x the in-process cost"
+    },
+    {
+      "label": "Availability of 10 services at 99.9% each, in series",
+      "value": "0.999^10 ≈ 99.0% — about 3.5 days of downtime a year"
+    },
+    {
+      "label": "Team size a single service comfortably supports",
+      "value": "roughly 5-9 engineers"
+    },
+    {
+      "label": "Operational surface per service",
+      "value": "1 pipeline + 1 runtime to patch + 1 on-call rotation, multiplied by N"
+    }
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "architecture",
+      "question": "A team splits its application into eight services, but all eight still read and write the same database, and a schema change requires releasing all eight together. What have they built, and what did it cost them?",
+      "options": [
+        "A service mesh; it costs extra sidecar latency",
+        "A distributed monolith; they pay network latency, partial failure and eight pipelines while still having no independent deployment",
+        "A modular monolith; it costs nothing, this is the recommended end state",
+        "Microservices; the shared database is a normal optimisation"
+      ],
+      "answerIndex": 1,
+      "explanation": "The defining property of a service is that it owns its data and can be deployed alone. Sharing a schema couples the release calendars of all eight, so independent deployability — the main prize — is gone, while every distributed cost is still being paid. The fix is not more services; it is to decide which service owns which tables and let the others ask through an API."
+    },
+    {
+      "id": "q2",
+      "type": "architecture",
+      "question": "A request in your new microservice architecture must call ten services in sequence. Each service is independently available 99.9% of the time. Roughly what availability does the request see?",
+      "options": [
+        "99.9% — the weakest link sets the number",
+        "99.99% — redundancy improves it",
+        "About 99.0% — the probabilities multiply",
+        "It cannot be estimated without latency figures"
+      ],
+      "answerIndex": 2,
+      "explanation": "Dependencies in series multiply: 0.999^10 ≈ 0.990, which is roughly 3.5 days of unavailability a year rather than 9 hours. This is why splitting forces you to add timeouts, retries with backoff, circuit breakers and fallbacks — and why a call chain that deep is usually a sign the boundaries were drawn in the wrong place."
+    },
+    {
+      "id": "q3",
+      "type": "mcq",
+      "question": "A five-person team is building a new product whose domain model is still changing every week. What is the defensible architecture recommendation?",
+      "options": [
+        "Start with microservices so you never have to migrate later",
+        "Start with a monolith with clean internal module boundaries, and split only when a specific pain names a specific split",
+        "Start with a distributed monolith and separate the databases later",
+        "Start with one service per database table"
+      ],
+      "answerIndex": 1,
+      "explanation": "With five engineers, none of the benefits exist yet: nobody's release is blocking anyone, nothing needs a different scale, and there are no team boundaries to respect. Meanwhile the costs are immediate and permanent. And when boundaries are still moving, a wrong one inside a monolith is a refactor a compiler checks, while a wrong one across services is a coordinated data migration plus an API version. Keep the modules clean so the seam exists when you need it."
+    }
+  ],
+  "related": [
+    "api-gateway",
+    "saga",
+    "observability",
+    "message-queue",
+    "circuit-breaker"
+  ]
+}

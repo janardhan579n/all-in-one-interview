@@ -1,0 +1,95 @@
+{
+  "id": "best-time-to-buy-sell-stock",
+  "title": "Best Time to Buy and Sell Stock",
+  "patternId": "arrays",
+  "difficulty": "beginner",
+  "tags": [
+    "array",
+    "single-pass",
+    "running-extremum"
+  ],
+  "statement": "You are given an array where prices[i] is the price of a stock on day i. Choose one day to buy and a strictly later day to sell. Return the largest profit you can make, or 0 if no profitable pair of days exists.",
+  "realWorld": "Backtesting the simplest possible strategy over a price series, and — the same arithmetic — finding the worst regression in a metrics time series: the largest rise from a trough to a later peak in a latency graph is exactly this computation, and it must run over millions of samples without a second pass.",
+  "examples": [
+    {
+      "input": "prices = [7,1,5,3,6,4]",
+      "output": "5",
+      "explanation": "Buy on day 1 at 1 and sell on day 4 at 6. Note that buying at 1 and selling at 5 (profit 4) is worse, and the global maximum 7 is useless because it comes before the low."
+    },
+    {
+      "input": "prices = [7,6,4,3,1]",
+      "output": "0",
+      "explanation": "Prices only fall, so every sell after every buy loses money. The answer is 0, not a negative number: doing nothing is allowed."
+    },
+    {
+      "input": "prices = [2,4,1]",
+      "output": "2",
+      "explanation": "The best pair is days 0 and 1. The later low of 1 has no day after it, which is why the sell must come strictly after the buy."
+    }
+  ],
+  "constraints": [
+    "1 <= prices.length <= 10^5",
+    "0 <= prices[i] <= 10^4",
+    "The sell day must be strictly after the buy day",
+    "At most one buy and one sell"
+  ],
+  "bruteForce": {
+    "idea": "Try every ordered pair of days: buy on i, sell on j > i, and keep the largest difference.",
+    "code": [
+      "int best = 0;",
+      "for (int i = 0; i < prices.length; i++) {",
+      "    for (int j = i + 1; j < prices.length; j++) {",
+      "        best = Math.max(best, prices[j] - prices[i]);",
+      "    }",
+      "}",
+      "return best;"
+    ],
+    "complexity": {
+      "time": "O(n^2)",
+      "space": "O(1)"
+    },
+    "whySlow": "Read the loops the other way round and the waste is obvious: for each sell day j the code re-scans all of prices[0..j-1] looking for the cheapest buy, and for day j + 1 it scans that same stretch again with one element added. The cheapest price in a prefix cannot change when you extend the prefix by one day except by a single comparison, yet it is recomputed from scratch for every one of the n days."
+  },
+  "patternIdentification": "The inner loop recomputes an aggregate over a prefix that only grows by one element per step. Any aggregate that can be updated in O(1) from its own previous value — minimum, maximum, sum, count — belongs in a carried variable, not in a nested loop. The tell is 'for each i, something about everything before i'.",
+  "optimized": {
+    "idea": "Walk the days once, carrying the cheapest price seen so far. At each day, the best profit that could end today is today's price minus that running minimum, so the answer is the largest such value over the whole walk. The minimum is maintained with one comparison per day instead of a rescan.",
+    "code": [
+      "public static int maxProfit(int[] prices) {",
+      "    int cheapest = Integer.MAX_VALUE;",
+      "    int best = 0;",
+      "    for (int price : prices) {",
+      "        if (price < cheapest) {",
+      "            cheapest = price;   // a new low can only ever help a LATER sell, never an earlier one",
+      "        } else if (price - cheapest > best) {",
+      "            best = price - cheapest;",
+      "        }",
+      "    }",
+      "    return best;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(1)"
+    }
+  },
+  "commonMistakes": [
+    "Returning max(prices) - min(prices) without checking the order of the two days — on [7,6,4,3,1] that reports 6 (sell at 7 after buying at 1, which is time travel) instead of 0, and on [7,1,5,3,6,4] it reports 6 instead of 5.",
+    "Initialising cheapest to 0 instead of Integer.MAX_VALUE: every price then looks like a profit against a free purchase, and the symptom is an answer equal to the highest price in the array — 7 rather than 5 on [7,1,5,3,6,4].",
+    "Initialising best to Integer.MIN_VALUE or to prices[1] - prices[0] and letting it stay negative — on a strictly falling series the method returns -6 rather than 0, forgetting that the problem permits making no trade at all."
+  ],
+  "similar": [
+    "product-of-array-except-self",
+    "max-sum-subarray-k",
+    "jump-game",
+    "best-time-buy-sell-cooldown"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 121,
+      "slug": "best-time-to-buy-and-sell-stock",
+      "title": "Best Time to Buy and Sell Stock",
+      "url": "https://leetcode.com/problems/best-time-to-buy-and-sell-stock/",
+      "premium": false
+    }
+  }
+}

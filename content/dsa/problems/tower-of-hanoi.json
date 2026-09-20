@@ -1,0 +1,98 @@
+{
+  "id": "tower-of-hanoi",
+  "title": "Tower of Hanoi",
+  "patternId": "recursion",
+  "difficulty": "intermediate",
+  "tags": [
+    "recursion",
+    "divide-and-conquer"
+  ],
+  "statement": "Three pegs, A, B and C. Peg A holds n disks of decreasing size, largest at the bottom. Move all n to peg C, one disk at a time, never placing a larger disk on top of a smaller one. Return the sequence of moves.",
+  "realWorld": "Be honest about this one: it is a teaching problem, not an interview problem. Nobody has ever needed to move a stack of disks in production. It earns its place because the recursive formulation is essentially impossible to find by imagining the moves and completely obvious once you allow yourself to assume the smaller case is already solved — which makes it the clearest demonstration of the recursive leap of faith there is. Its one genuine descendant is the Tower of Hanoi tape rotation, a backup schedule that uses this move sequence to decide which tape to overwrite so that older snapshots survive longer.",
+  "examples": [
+    {
+      "input": "n = 1",
+      "output": "[A->C]",
+      "explanation": "One disk, one move. This is the whole of the non-recursive work in the entire algorithm: every other move in every larger instance is ultimately one of these."
+    },
+    {
+      "input": "n = 3",
+      "output": "[A->C, A->B, C->B, A->C, B->A, B->C, A->C]",
+      "explanation": "Seven moves. Read it as three chunks: the first three moves shift the top two disks from A to B (using C as scratch), the fourth move puts the largest disk onto its final home, and the last three shift those same two disks from B to C (using A as scratch). Nobody plans this sequence; it falls out of the recursion."
+    },
+    {
+      "input": "n = 20",
+      "output": "1048575 moves",
+      "explanation": "2^n - 1. The 64-disk version of the legend needs 1.8 x 10^19 moves, which at one move per second is around 585 billion years. The recursion stays four lines long regardless; it is the output that explodes."
+    }
+  ],
+  "constraints": [
+    "1 <= n <= 20 if you actually materialise the move list — 2^20 - 1 strings is already about a million",
+    "The disks start on A in decreasing size and must end on C in the same order",
+    "A move is legal only if the disk being moved is smaller than whatever it lands on"
+  ],
+  "bruteForce": {
+    "idea": "Treat it as a search problem. A configuration is 'which peg each disk is on'; from any configuration enumerate the legal moves and breadth-first search until every disk is on C.",
+    "code": [
+      "Queue<int[]> queue = new ArrayDeque<>();",
+      "Set<String> seen = new HashSet<>();",
+      "queue.add(new int[n]);                       // all n disks start on peg 0",
+      "while (!queue.isEmpty()) {",
+      "    int[] state = queue.poll();",
+      "    if (allOnPeg(state, 2)) return pathTo(state);",
+      "    for (int[] next : legalMoves(state)) {",
+      "        if (seen.add(Arrays.toString(next))) queue.add(next);",
+      "    }",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(3^n)",
+      "space": "O(3^n)"
+    },
+    "whySlow": "There are 3^n configurations and the search stores essentially all of them: 3^20 is about 3.5 billion states held in memory in order to produce a one-million-move answer. Worse, it is searching for something that was never hidden. The optimal move sequence has a closed form, so every state the queue expands that is not on the optimal path is pure waste — and for n = 20 that is over 99.9% of them. The search treats the problem as unknown structure when the structure is the problem's own definition."
+  },
+  "patternIdentification": "The recursive leap of faith, in its purest form. Do not try to picture the whole sequence — assume the function already works for n-1 and ask only what this level has to contribute. To move n disks from A to C: the bottom disk cannot move until the other n-1 are off it and are not sitting on C, so move n-1 to B (assume that works), move the bottom disk to C in a single legal move (legal because C is empty and this disk is the largest), then move the n-1 from B to C (assume that works too). Three lines, and at no point do you imagine more than one move. Whenever a problem feels impossible to plan from end to end, try granting yourself the smaller case and asking what the current level adds — the base case then usually writes itself.",
+  "optimized": {
+    "idea": "The three-line recursion above, with the peg names passed as parameters so that 'the spare peg' is whichever one is neither source nor destination. The two recursive calls are the same function with the roles rotated; the single move between them is the only real work any frame does.",
+    "code": [
+      "public static List<String> hanoi(int n) {",
+      "    List<String> moves = new ArrayList<>();",
+      "    solve(n, 'A', 'C', 'B', moves);",
+      "    return moves;",
+      "}",
+      "",
+      "/** Move n disks from `from` to `to`, using `via` as the spare peg. */",
+      "private static void solve(int n, char from, char to, char via, List<String> moves) {",
+      "    if (n == 0) return;",
+      "    solve(n - 1, from, via, to, moves);          // assume this works — that is the leap",
+      "    moves.add(from + \"->\" + to);",
+      "    solve(n - 1, via, to, from, moves);",
+      "}",
+      "",
+      "/** If only the count is wanted, the sequence never has to be built. */",
+      "public static long moveCount(int n) {",
+      "    return (1L << n) - 1;                        // 2^n - 1, provably optimal",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(2^n) — and this is optimal, because the answer itself contains 2^n - 1 moves",
+      "space": "O(n) of call stack, plus O(2^n) for the move list if you materialise it"
+    }
+  },
+  "commonMistakes": [
+    "Getting the peg roles wrong in one of the two recursive calls — for instance `solve(n-1, via, from, to, moves)` for the second. The move count is still 2^n - 1, so the answer looks right by length, and the sequence is illegal: somewhere a large disk lands on a small one. Always replay the actual n = 3 sequence against the rules rather than trusting the count.",
+    "Using `if (n == 1) return;` as the base case. That silently drops the single move at the bottom of every branch, so n = 3 produces 3 moves instead of 7 and the tower is left half-built. `n == 0 -> return` is the safer base case precisely because it has nothing to emit.",
+    "Calling this with a large n when only the count is wanted. The runtime is O(2^n) and cannot be improved — the answer has that many moves in it — but n = 40 means a trillion strings, so the failure is an OutOfMemoryError from the list rather than a slow algorithm. Return 2^n - 1 directly when the sequence is not needed."
+  ],
+  "similar": [
+    "fibonacci-memo",
+    "power-function",
+    "subsets",
+    "permutations",
+    "n-queens"
+  ],
+  "practice": {
+    "leetcode": null,
+    "note": "No LeetCode equivalent — this is a teaching problem for the recursive leap of faith, not an interview question. For recursion practice on a judge, do 509 (Fibonacci Number), 50 (Pow(x, n)) and 779 (K-th Symbol in Grammar)."
+  }
+}

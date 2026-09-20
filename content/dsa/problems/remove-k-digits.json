@@ -1,0 +1,109 @@
+{
+  "id": "remove-k-digits",
+  "title": "Remove K Digits",
+  "patternId": "monotonic-stack",
+  "difficulty": "intermediate",
+  "tags": [
+    "monotonic-stack",
+    "greedy",
+    "string"
+  ],
+  "statement": "Given a non-negative integer as a string `num` and an integer `k`, remove exactly k digits so that the digits left, kept in their original relative order, form the smallest possible number. Return it as a string with no leading zeros, or \"0\" if nothing is left.",
+  "realWorld": "The same optimisation appears whenever a fixed-length identifier or key has to be shortened while preserving sort order — truncating a version or sequence key for a bucketing scheme, or trimming a ranked prefix code so that lexicographic comparison still ranks records the way the full key did. More generally it is the canonical 'delete elements to minimise the resulting sequence' problem that also powers Remove Duplicate Letters and Smallest Subsequence.",
+  "examples": [
+    {
+      "input": "num = \"1432219\", k = 3",
+      "output": "\"1219\"",
+      "explanation": "Remove 4, 3 and the first 2. Each removal happens at a digit that is followed by a smaller one, which is exactly where a deletion lowers the number at the earliest possible place."
+    },
+    {
+      "input": "num = \"10200\", k = 1",
+      "output": "\"200\"",
+      "explanation": "Removing the 1 leaves \"0200\", whose leading zero must be stripped. Removing any other digit gives a four-digit number, all of which are larger."
+    },
+    {
+      "input": "num = \"112\", k = 1",
+      "output": "\"11\"",
+      "explanation": "The string is already non-decreasing, so no digit is ever followed by a smaller one and nothing is popped. The budget must still be spent, and the only place spending it helps is the end."
+    }
+  ],
+  "constraints": [
+    "1 <= k <= num.length <= 10^5",
+    "num consists of digits only and has no leading zeros unless it is exactly \"0\"",
+    "Exactly k digits must be removed"
+  ],
+  "bruteForce": {
+    "idea": "Enumerate every set of k positions to delete, build the resulting string, and keep the smallest by numeric comparison.",
+    "code": [
+      "String best = null;",
+      "for (int mask = 0; mask < (1 << num.length()); mask++) {",
+      "    if (Integer.bitCount(mask) != k) continue;",
+      "    StringBuilder sb = new StringBuilder();",
+      "    for (int i = 0; i < num.length(); i++) {",
+      "        if ((mask & (1 << i)) == 0) sb.append(num.charAt(i));",
+      "    }",
+      "    String candidate = strip(sb.toString());",
+      "    if (best == null || smaller(candidate, best)) best = candidate;",
+      "}",
+      "return best;"
+    ],
+    "complexity": {
+      "time": "O(C(n, k) * n)",
+      "space": "O(n)"
+    },
+    "whySlow": "The enumeration constructs candidates it could have ruled out without building them. Almost every deletion set leaves some digit standing directly in front of a strictly smaller digit — and whenever that happens, deleting the larger digit instead produces a strictly smaller number using the same budget, so the candidate is dominated on sight. The loop still pays O(n) to assemble each one and O(n) to compare it. All that work goes into materialising strings that a single local comparison between neighbours would have rejected before a character was copied."
+  },
+  "patternIdentification": "Numbers of equal length compare left to right, so a reduction in an earlier position outranks any amount of improvement later. That makes the choice local rather than global: whenever a digit is immediately followed by a smaller one, deleting it lowers the number at the earliest place it can be lowered, and no later decision can make that trade a mistake. The transferable signal is the pair 'the sequence is compared position by position from the left' plus 'each element is only in competition with its neighbours' — that is a greedy whose bookkeeping is a monotonic stack. Build the answer left to right, keep the stack non-decreasing, and pop every violation the moment it appears; the stack is not a scratch buffer, it *is* the answer under construction.",
+  "optimized": {
+    "idea": "Scan the digits once, keeping a stack of the digits chosen so far in non-decreasing order from bottom to top. Before pushing a digit, pop any stack top that is strictly larger than it, spending one unit of k per pop — each of those pops replaces a bigger digit with a smaller one at the leftmost place it can happen. Two loose ends remain. If the budget is not exhausted by the time the string runs out, the stack is non-decreasing, so its largest digits are the trailing ones: drop k from the end. And because a pop can expose a zero at the front, strip leading zeros at the very end — after all deletions, never before, since a zero in the middle of the stack is a perfectly good small digit.",
+    "code": [
+      "public static String removeKdigits(String num, int k) {",
+      "    Deque<Character> stack = new ArrayDeque<>();   // kept non-decreasing from bottom to top",
+      "    for (char digit : num.toCharArray()) {",
+      "        while (k > 0 && !stack.isEmpty() && stack.peek() > digit) {",
+      "            stack.pop();   // a bigger digit in front of a smaller one: dropping it lowers the number at the earliest possible place",
+      "            k--;",
+      "        }",
+      "        stack.push(digit);",
+      "    }",
+      "    while (k > 0) {   // already non-decreasing, so the largest digits are the trailing ones",
+      "        stack.pop();",
+      "        k--;",
+      "    }",
+      "    StringBuilder sb = new StringBuilder();",
+      "    for (Iterator<Character> it = stack.descendingIterator(); it.hasNext(); ) {",
+      "        sb.append(it.next());",
+      "    }",
+      "    int lead = 0;",
+      "    while (lead < sb.length() - 1 && sb.charAt(lead) == '0') lead++;",
+      "    String result = sb.substring(lead);",
+      "    return result.isEmpty() ? \"0\" : result;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(n)"
+    }
+  },
+  "commonMistakes": [
+    "Stopping once the stack is non-decreasing without spending the rest of the budget — \"112\" with k = 1 never triggers a pop, and returning \"112\" removes zero digits instead of one. The answer is \"11\", taken off the end.",
+    "Reading the stack out with ArrayDeque's natural iteration instead of descendingIterator — push() inserts at the head, so a plain for-each walks top to bottom and \"1432219\" with k = 3 comes back as \"9121\". The digits are the right ones, which makes the bug read like an unrelated formatting problem.",
+    "Stripping leading zeros too early, or not at all, or collapsing an empty result to \"\" — \"10200\" with k = 1 returns \"0200\", and \"10\" with k = 2 returns the empty string where \"0\" is required. Strip once, at the end, and keep at least one character."
+  ],
+  "similar": [
+    "daily-temperatures",
+    "next-greater-element",
+    "sum-of-subarray-minimums",
+    "largest-rectangle-histogram",
+    "asteroid-collision"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 402,
+      "slug": "remove-k-digits",
+      "title": "Remove K Digits",
+      "url": "https://leetcode.com/problems/remove-k-digits/",
+      "premium": false
+    }
+  }
+}

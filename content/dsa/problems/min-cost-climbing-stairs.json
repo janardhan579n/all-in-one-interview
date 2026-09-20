@@ -1,0 +1,110 @@
+{
+  "id": "min-cost-climbing-stairs",
+  "title": "Min Cost Climbing Stairs",
+  "patternId": "dynamic-programming-basics",
+  "difficulty": "beginner",
+  "tags": [
+    "array",
+    "dynamic-programming"
+  ],
+  "statement": "You are given an array cost where cost[i] is the price you pay to step off step i. From a step you may climb one or two steps. You may start on step 0 or on step 1, and you must reach the floor past the last step. Return the minimum total price paid.",
+  "realWorld": "Cheapest route through a chain of weighted positions where you may skip at most one: a build pipeline where each stage costs minutes and some stages can be jumped by a combined check, or a toll road where every exit charges and you may skip one booth at a time. It is the smallest interesting shortest-path problem — a path on a line.",
+  "examples": [
+    {
+      "input": "cost = [10,15,20]",
+      "output": "15",
+      "explanation": "Start on step 1, pay 15, and climb two steps — that lands past the last step, so nothing more is paid. Starting at step 0 would cost 10 + 20 = 30 or 10 + 15 + 20 = 45."
+    },
+    {
+      "input": "cost = [1,100]",
+      "output": "1",
+      "explanation": "Start on step 0, pay 1, climb two steps and you are past the end. You never pay for the last step because you never step off it."
+    },
+    {
+      "input": "cost = [1,100,1,1,1,100,1,1,100,1]",
+      "output": "6",
+      "explanation": "Start on step 0 and pay at steps 0, 2, 4, 6, 7 and 9 — six payments of 1 each, dodging both 100s by choosing when to take a double step."
+    }
+  ],
+  "constraints": [
+    "2 <= cost.length <= 1000",
+    "0 <= cost[i] <= 999",
+    "You may begin at index 0 or index 1",
+    "The goal is the position just past the last index"
+  ],
+  "bruteForce": {
+    "idea": "Recursion straight from the wording: the cheapest finish from step i is cost[i] plus the cheaper of finishing from i + 1 and from i + 2. Start the recursion at both legal starting points and take the smaller.",
+    "code": [
+      "public static int minCostClimbingStairs(int[] cost) {",
+      "    return Math.min(from(cost, 0), from(cost, 1));",
+      "}",
+      "",
+      "private static int from(int[] cost, int i) {",
+      "    if (i >= cost.length) return 0;",
+      "    return cost[i] + Math.min(from(cost, i + 1), from(cost, i + 2));",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(2^n)",
+      "space": "O(n)"
+    },
+    "whySlow": "The call tree branches in two at every step, and nothing remembers an answer. from(i) is re-evaluated once for every distinct route that arrives at step i, and the number of such routes is a Fibonacci number: for a 30-step staircase from(2) is computed over 500,000 times, and each of those evaluations produces the identical number. The staircase below step i does not care how you got to i, so all but one of those evaluations is pure repetition."
+  },
+  "patternIdentification": "You are asked for an optimum over a sequence of local decisions, and the options at a position depend only on which positions can reach it — not on the route taken to get there. That is the signature of one-dimensional DP. Write the state as a sentence before writing any code: 'dp[i] = the cheapest way to REACH step i, not yet having paid cost[i]'. Then ask 'where could the last move have come from?' — step i - 1 or step i - 2 — and the recurrence writes itself: dp[i] = min(dp[i-1] + cost[i-1], dp[i-2] + cost[i-2]). Base cases are the positions the question hands you for free: dp[0] = dp[1] = 0, because starting on either is allowed and costs nothing. Every DP in this section is that same three-part answer — state, recurrence, base cases — and pinning down the state first is what keeps the indices honest.",
+  "optimized": {
+    "idea": "Fill dp from the bottom. dp[i] is the cost to REACH step i, so dp[i] is not cost[i] — the price of step i is only paid when you leave it. The array needs n + 1 entries because the destination is the imaginary step just past the end, and dp[n] is the answer. Since each cell reads only the two before it, the whole table collapses into two variables.",
+    "code": [
+      "public static int minCostClimbingStairs(int[] cost) {",
+      "    int n = cost.length;",
+      "    int twoBack = 0;   // dp[i - 2]: cost to REACH that step, before paying to leave it",
+      "    int oneBack = 0;   // dp[i - 1]; both are 0 because starting on step 0 or 1 is free",
+      "    for (int i = 2; i <= n; i++) {",
+      "        int current = Math.min(oneBack + cost[i - 1], twoBack + cost[i - 2]);",
+      "        twoBack = oneBack;",
+      "        oneBack = current;",
+      "    }",
+      "    return oneBack;   // dp[n]: the floor past the last step",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(1)"
+    }
+  },
+  "visualization": {
+    "engine": "dp1d",
+    "input": {
+      "kind": "minCostClimbingStairs",
+      "n": 8
+    },
+    "code": [
+      "int[] dp = new int[n + 1];",
+      "dp[0] = 0;",
+      "dp[1] = 0;",
+      "for (int i = 2; i <= n; i++) {",
+      "    dp[i] = Math.min(dp[i-1] + cost[i-1], dp[i-2] + cost[i-2]);",
+      "}",
+      "return dp[n];"
+    ]
+  },
+  "commonMistakes": [
+    "Stopping the table at the last step — looping while i < n and returning dp[n - 1]. That is the cost to stand on the final step, not to get past it; on [10,15,20] it returns 10 instead of 15, and the answer is always short by exactly one hop.",
+    "Setting dp[1] = cost[0], reasoning that you must step on 0 before reaching 1. Starting on step 1 is explicitly allowed, so this forbids the cheaper start: [100,1,1,1] returns 101 instead of 2, and the error is invisible on inputs whose first element happens to be cheap.",
+    "Comparing cost[i - 1] against cost[i - 2] instead of the accumulated totals dp[i-1] + cost[i-1] and dp[i-2] + cost[i-2]. That is a greedy local choice wearing DP clothing: it passes [10,15,20] and then walks straight into the expensive stretch of [1,100,1,1,1,100,1,1,100,1], returning more than 6."
+  ],
+  "similar": [
+    "climbing-stairs",
+    "house-robber",
+    "house-robber-ii",
+    "coin-change"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 746,
+      "slug": "min-cost-climbing-stairs",
+      "title": "Min Cost Climbing Stairs",
+      "url": "https://leetcode.com/problems/min-cost-climbing-stairs/",
+      "premium": false
+    }
+  }
+}

@@ -1,0 +1,141 @@
+{
+  "id": "longest-increasing-subsequence",
+  "title": "Longest Increasing Subsequence",
+  "patternId": "dp-patterns",
+  "difficulty": "intermediate",
+  "tags": [
+    "dp",
+    "binary-search",
+    "subsequence",
+    "array",
+    "lis"
+  ],
+  "statement": "Given an integer array `nums`, return the length of the longest strictly increasing subsequence. A subsequence is formed by deleting some (possibly zero) elements without changing the order of the remaining ones — the elements need **not** be contiguous.",
+  "realWorld": "Finding the longest run of genuinely improving measurements in a noisy series — revenue quarters, benchmark scores, athletic personal bests — where the improving points need not be consecutive. Patience sorting, the O(n log n) solution, is also the engine behind 'longest chain' queries such as the maximum set of versions that can be upgraded in order.",
+  "examples": [
+    {
+      "input": "nums = [10,9,2,5,3,7,101,18]",
+      "output": "4",
+      "explanation": "[2,3,7,18] and [2,3,7,101] are both length 4. No length-5 increasing subsequence exists."
+    },
+    {
+      "input": "nums = [0,1,0,3,2,3]",
+      "output": "4",
+      "explanation": "[0,1,2,3] — note that the chosen 0 is index 0 and the chosen 3 is index 5, so the elements are far from contiguous."
+    },
+    {
+      "input": "nums = [7,7,7,7,7]",
+      "output": "1",
+      "explanation": "'Strictly increasing' means equal values cannot extend a subsequence. Any single 7 is the best you can do."
+    }
+  ],
+  "constraints": [
+    "1 <= nums.length <= 2500",
+    "-10^4 <= nums[i] <= 10^4",
+    "Strictly increasing — equal adjacent values do not count",
+    "Follow-up: can you solve it in O(n log n)?"
+  ],
+  "bruteForce": {
+    "idea": "Enumerate every subsequence — each element is either kept or dropped — and take the longest one that happens to be increasing.",
+    "code": [
+      "public static int lisBrute(int[] nums) {",
+      "    return explore(nums, 0, Integer.MIN_VALUE);",
+      "}",
+      "",
+      "/** Best length obtainable from index i onwards, given the last value taken. */",
+      "private static int explore(int[] nums, int i, int previous) {",
+      "    if (i == nums.length) return 0;",
+      "",
+      "    int skip = explore(nums, i + 1, previous);              // drop nums[i]",
+      "    int take = 0;",
+      "    if (nums[i] > previous) {                               // keep it, if it still increases",
+      "        take = 1 + explore(nums, i + 1, nums[i]);",
+      "    }",
+      "    return Math.max(skip, take);",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(2ⁿ)",
+      "space": "O(n) call stack"
+    },
+    "whySlow": "Every element doubles the number of branches, so n = 30 is already a billion calls. And the branches are enormously redundant: whatever route led you to index i, the only thing that matters from here is the value you last took. Two different prefixes ending on the same value face an identical remaining problem, and the brute force re-solves it every time."
+  },
+  "patternIdentification": "The word **subsequence** rules out sliding window immediately — the elements are not contiguous, so there is no window to slide. What remains is a decision per element (keep or drop) where the decision constrains later ones, which is the DP signature. The subtlety is the state: 'the answer for the first i elements' is useless, because it does not record what the subsequence ends with and therefore cannot be extended. Anchoring the state with 'ending exactly at i' is what makes the transition writable, and that is the LIS shape from the DP Patterns lesson.",
+  "optimized": {
+    "idea": "Two solutions worth knowing. **O(n²) DP**: `dp[i]` is the length of the longest increasing subsequence ending exactly at index i; for each i, scan every earlier j with `nums[j] < nums[i]` and take the best. The answer is `max(dp)`, not `dp[n-1]`. **O(n log n) patience sorting**: maintain `tails`, where `tails[k]` is the smallest possible final element of any increasing subsequence of length k+1. For each value, binary search for the first tail `>= x` and overwrite it, or append if none exists. Keeping every ending as small as possible leaves the most room for future elements, and `tails` stays sorted, which is what licenses the binary search.",
+    "code": [
+      "/** O(n²) DP — write this one first in an interview. */",
+      "public static int lengthOfLIS(int[] nums) {",
+      "    if (nums.length == 0) return 0;",
+      "    int[] dp = new int[nums.length];",
+      "    Arrays.fill(dp, 1);                    // every element alone is a subsequence of length 1",
+      "    int best = 1;",
+      "",
+      "    for (int i = 1; i < nums.length; i++) {",
+      "        for (int j = 0; j < i; j++) {",
+      "            if (nums[j] < nums[i]) {       // strict: '<=' would allow equal values",
+      "                dp[i] = Math.max(dp[i], dp[j] + 1);",
+      "            }",
+      "        }",
+      "        best = Math.max(best, dp[i]);      // the optimum need not end at the last index",
+      "    }",
+      "    return best;",
+      "}",
+      "",
+      "/**",
+      " * O(n log n) — patience sorting.",
+      " *",
+      " * tails[k] = the smallest possible last element of an increasing subsequence of length k+1.",
+      " *",
+      " * Be honest about this in an interview: `tails` is NOT itself a subsequence of the input.",
+      " * Its entries are best-known endings collected from different subsequences, so `size` is",
+      " * the correct answer while the contents of `tails` generally are not a valid LIS.",
+      " * Reconstructing the actual subsequence needs a parallel array of predecessor indices.",
+      " */",
+      "public static int lengthOfLISFast(int[] nums) {",
+      "    int[] tails = new int[nums.length];",
+      "    int size = 0;",
+      "",
+      "    for (int x : nums) {",
+      "        // lower_bound: the first index in [0, size) whose tail is >= x.",
+      "        int lo = 0, hi = size;",
+      "        while (lo < hi) {",
+      "            int mid = (lo + hi) >>> 1;        // >>> keeps the midpoint safe from overflow",
+      "            if (tails[mid] < x) lo = mid + 1;",
+      "            else hi = mid;",
+      "        }",
+      "        tails[lo] = x;                        // improve an existing ending...",
+      "        if (lo == size) size++;               // ...or extend to a new maximum length",
+      "    }",
+      "    return size;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n²) for the DP; O(n log n) for patience sorting",
+      "space": "O(n) for either — the dp array, or the tails array"
+    }
+  },
+  "commonMistakes": [
+    "Defining the state as 'the answer for the first i elements'. It cannot be extended, because it does not say what the subsequence ends with. Use 'ending exactly at index i'.",
+    "Returning `dp[nums.length - 1]`. The best subsequence need not end at the last element; the answer is the maximum over the whole dp array.",
+    "Using `nums[j] <= nums[i]` in the comparison. The problem says strictly increasing, so `[7,7,7]` must return 1, not 3.",
+    "In the binary search, searching for the first tail strictly greater than x. For strictly increasing LIS you want the first tail `>= x` (lower bound); the upper-bound version solves the non-decreasing variant instead.",
+    "Claiming the `tails` array is the longest increasing subsequence. Only its length is meaningful — it is assembled from endings of different subsequences.",
+    "Reaching for a sliding window because the input is an array. 'Subsequence' is not 'substring', and a window can only express contiguous ranges."
+  ],
+  "similar": [
+    "coin-change",
+    "edit-distance",
+    "climbing-stairs",
+    "house-robber"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 300,
+      "slug": "longest-increasing-subsequence",
+      "title": "Longest Increasing Subsequence",
+      "url": "https://leetcode.com/problems/longest-increasing-subsequence/",
+      "premium": false
+    }
+  }
+}

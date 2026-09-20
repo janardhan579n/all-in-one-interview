@@ -1,0 +1,107 @@
+{
+  "id": "trapping-rain-water",
+  "title": "Trapping Rain Water",
+  "patternId": "two-pointers",
+  "difficulty": "advanced",
+  "tags": [
+    "array",
+    "two-pointers",
+    "prefix-maximum"
+  ],
+  "statement": "Given n non-negative integers where height[i] is the height of a bar of width 1, compute how much rain water is trapped by the resulting elevation map after it rains. Water rests on top of a bar only if there is a taller bar somewhere to its left and a taller bar somewhere to its right.",
+  "realWorld": "Hydrology models compute ponded volume over a one-dimensional elevation profile with precisely this arithmetic. The same sum appears in capacity planning: plot a queue's depth against time and the water sitting above a dip is the backlog that has to be held in memory between two peaks of demand — the peaks set the level, the trough sets the floor.",
+  "examples": [
+    {
+      "input": "height = [0,1,0,2,1,0,1,3,2,1,2,1]",
+      "output": "6",
+      "explanation": "Index 2 holds 1 unit (walls of 1 and 2), indices 4..6 hold 1 + 2 + 1 = 4 under the walls 2 and 3, and index 9 holds 1 under the walls 3 and 2. Total 6."
+    },
+    {
+      "input": "height = [4,2,0,3,2,5]",
+      "output": "9",
+      "explanation": "The wall of 4 on the left and 5 on the right set the level at min(4,5) = 4 for everything between them: (4-2) + (4-0) + (4-3) + (4-2) = 2 + 4 + 1 + 2 = 9."
+    },
+    {
+      "input": "height = [3,2,1,0]",
+      "output": "0",
+      "explanation": "A monotone profile traps nothing — every bar is missing a wall on one side. This is the case that exposes any solution that forgets to clamp a negative contribution at zero."
+    }
+  ],
+  "constraints": [
+    "n == height.length",
+    "1 <= n <= 2 * 10^4",
+    "0 <= height[i] <= 10^5",
+    "The answer fits in a 32-bit signed integer"
+  ],
+  "bruteForce": {
+    "idea": "For each bar, scan left for the tallest bar on that side and right for the tallest on the other; the water above this bar is min(maxLeft, maxRight) - height[i], clamped at zero.",
+    "code": [
+      "int water = 0;",
+      "for (int i = 0; i < height.length; i++) {",
+      "    int maxLeft = 0, maxRight = 0;",
+      "    for (int l = 0; l <= i; l++) maxLeft = Math.max(maxLeft, height[l]);",
+      "    for (int r = i; r < height.length; r++) maxRight = Math.max(maxRight, height[r]);",
+      "    water += Math.min(maxLeft, maxRight) - height[i];",
+      "}",
+      "return water;"
+    ],
+    "complexity": {
+      "time": "O(n^2)",
+      "space": "O(1)"
+    },
+    "whySlow": "The scan for bar i walks all the way to index 0 and all the way to the last bar; the scan for bar i + 1 then walks over exactly those same two stretches again. maxLeft for i + 1 is maxLeft for i with one extra comparison — the value was in hand a moment ago and was thrown away, n times over. Every bar is re-examined by every other bar's scan, so a flat 20,000-element profile performs around 4 * 10^8 comparisons to produce a number that two running maxima determine in one traversal."
+  },
+  "patternIdentification": "The whole problem is one formula: the water above bar i is min(maxLeft[i], maxRight[i]) - height[i], because the level is set by the SHORTER of the two enclosing walls — water spills over the low side. That is the transferable half: when a per-index answer depends on a prefix aggregate and a suffix aggregate, either precompute both arrays in two sweeps (O(n) time, O(n) space) or notice that only the smaller of the two ever matters and converge two pointers from the ends. The converging version works because the side whose current bar is shorter has its answer already pinned: whatever lies in between, the far side is known to contain a bar at least as tall, so the min() on that side is already decided and can be committed to without ever looking at the rest of the array.",
+  "optimized": {
+    "idea": "Put one pointer at each end and carry the tallest bar seen so far from each side. At each step compare the two bars the pointers stand on and move the SHORTER side inwards. That choice is safe precisely because the other side is at least as tall, so the shorter side's water level is min(its own running max, something already known to be at least as big) — its own running max. If the bar being left behind is at least as tall as that running max it traps nothing and becomes the new wall; otherwise it traps exactly the difference. Each bar is visited once and the two maxima are updated in constant time.",
+    "code": [
+      "public static int trap(int[] height) {",
+      "    int left = 0;",
+      "    int right = height.length - 1;",
+      "    int leftMax = 0, rightMax = 0, water = 0;",
+      "    while (left < right) {",
+      "        if (height[left] < height[right]) {   // the LEFT wall is the shorter one, so its level is already decided",
+      "            if (height[left] >= leftMax) {",
+      "                leftMax = height[left];       // a new wall traps nothing itself",
+      "            } else {",
+      "                water += leftMax - height[left];",
+      "            }",
+      "            left++;",
+      "        } else {",
+      "            if (height[right] >= rightMax) {",
+      "                rightMax = height[right];",
+      "            } else {",
+      "                water += rightMax - height[right];",
+      "            }",
+      "            right--;",
+      "        }",
+      "    }",
+      "    return water;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(1)"
+    }
+  },
+  "commonMistakes": [
+    "Moving the pointer on the TALLER side — writing if (height[left] > height[right]) and processing the left there. The side you commit to is then no longer guaranteed to have a wall at least as tall behind it, and the running maximum used for the subtraction may still be wrong: [4,2,0,3,2,5] returns 7 instead of 9.",
+    "Adding water without the height[i] >= max guard, so a bar taller than everything seen so far contributes a negative amount: on the strictly rising [1,2,3] the total comes out as -2 rather than 0, and on mixed profiles it silently under-reports.",
+    "Taking the level from the taller of the two walls, max(maxLeft, maxRight) - height[i], instead of the shorter one: water would have to pour over the low side to reach that level, so the total is wildly too large — [4,2,0,3,2,5] reports 14 instead of 9."
+  ],
+  "similar": [
+    "container-with-most-water",
+    "largest-rectangle-histogram",
+    "product-of-array-except-self",
+    "daily-temperatures"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 42,
+      "slug": "trapping-rain-water",
+      "title": "Trapping Rain Water",
+      "url": "https://leetcode.com/problems/trapping-rain-water/",
+      "premium": false
+    }
+  }
+}

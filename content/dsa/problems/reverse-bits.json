@@ -1,0 +1,102 @@
+{
+  "id": "reverse-bits",
+  "title": "Reverse Bits",
+  "patternId": "bit-manipulation",
+  "difficulty": "beginner",
+  "tags": [
+    "bit-manipulation",
+    "shifting"
+  ],
+  "statement": "Reverse the bits of a 32-bit integer: the bit at position 0 becomes the bit at position 31, position 1 becomes 30, and so on. Treat the input as an unsigned 32-bit pattern — in Java it arrives as a signed int and the result may well be negative.",
+  "realWorld": "Endianness and hardware protocols. Serial links and some radio protocols transmit each byte least-significant-bit first, so a driver reading them must reverse bit order to recover the value. Bit-reversal permutation is also the addressing scheme inside an in-place FFT, where the output lands in bit-reversed index order and has to be unscrambled.",
+  "examples": [
+    {
+      "input": "n = 43261596",
+      "output": "964176192",
+      "explanation": "00000010100101000001111010011100 reversed is 00111001011110000010100101000000. Both fit in a positive int, so nothing surprising happens to the sign."
+    },
+    {
+      "input": "n = 1",
+      "output": "-2147483648",
+      "explanation": "Bit 0 moves to bit 31, giving 10000000000000000000000000000000. As an unsigned value that is 2147483648, but Java prints Integer.MIN_VALUE — the answer is correct, the printing is just signed."
+    },
+    {
+      "input": "n = -3",
+      "output": "-1073741825",
+      "explanation": "11111111111111111111111111111101 reversed is 10111111111111111111111111111111. A negative input is where an unguarded `>>` turns the loop into an infinite one, and where a `while (n != 0)` termination condition loses the leading zeros."
+    }
+  ],
+  "constraints": [
+    "The input is a 32-bit integer",
+    "Interpret the bits as unsigned; the returned int may be negative",
+    "The loop must run exactly 32 times — leading zeros in the input become trailing zeros in the output and must be preserved"
+  ],
+  "bruteForce": {
+    "idea": "Build the 32-character binary string, reverse it, and parse it back.",
+    "code": [
+      "StringBuilder sb = new StringBuilder();",
+      "for (int i = 0; i < 32; i++) {",
+      "    sb.append((n >>> i) & 1);",
+      "}",
+      "return (int) Long.parseLong(sb.toString(), 2);"
+    ],
+    "complexity": {
+      "time": "O(32)",
+      "space": "O(32)"
+    },
+    "whySlow": "Every bit makes a round trip through a character: appended to a StringBuilder, stored as a byte, then re-parsed by a routine that multiplies and adds its way back to an integer. That is a heap allocation, 32 character writes and 32 multiply-accumulate steps to perform a permutation the CPU can do with shifts and ORs on values already in registers. The string is pure intermediate representation — it stores nothing the int did not already hold, in a form the machine cannot operate on directly."
+  },
+  "patternIdentification": "Reversal is a peel-and-push loop, the bitwise version of reversing a linked list or a string with a stack: take the item at one end of the source, put it at the growing end of the destination, repeat. Here the source end is the lowest bit of n and the destination end is the lowest bit of `result`, which gets pushed upward one place each round by the shift.\n\nThe part specific to bits, and the one that costs people the interview, is **`>>>` versus `>>`**. Java has no unsigned int, so it has two right shifts: `>>` is arithmetic and refills the vacated high bits with copies of the sign bit, while `>>>` is logical and refills with zeros. When an int represents a *number*, `>>` is right, because it preserves the value's sign under division by two. When an int represents a *bag of bits*, as it does here, `>>` is wrong: on a negative input the high bits regenerate forever, so n never reaches zero and any loop keyed on `n != 0` hangs — which is exactly what happens in `number-of-1-bits`. This particular loop counts to 32 rather than draining n, so `>>` would survive it by luck; that is precisely why the habit is worth forming deliberately rather than learned from a failing test. Reach for `>>>` by default in bit problems and use `>>` only when you mean arithmetic division by two.\n\nThe second detail is the fixed iteration count. Because leading zeros in the input are meaningful — they become trailing zeros in the output — the loop must run exactly 32 times, not 'until n is exhausted'.",
+  "optimized": {
+    "idea": "Thirty-two rounds. Each round makes room in `result` by shifting it left one place, ORs in the current lowest bit of n, and then discards that bit of n with an unsigned right shift. After 32 rounds every bit has moved from position i to position 31 - i.\n\nWhy `result <<= 1` is safe even though `n >>>= 1` must be unsigned: shifting left has no sign-extension behaviour to get wrong, and bits pushed off the top are simply discarded, which is exactly what you want once the loop has run its course.\n\nIf the function is called repeatedly — the follow-up an interviewer usually adds — cache reversals of 8-bit chunks in a 256-entry table and assemble the answer from four lookups, or use the divide-and-conquer swap of adjacent bits, then pairs, then nibbles, then bytes, then halves, which reverses in five masked steps with no loop at all. Java's own Integer.reverse does the latter.",
+    "code": [
+      "public static int reverseBits(int n) {",
+      "    int result = 0;",
+      "    for (int i = 0; i < 32; i++) {   // exactly 32 rounds: the input's leading zeros are real output bits",
+      "        result = (result << 1) | (n & 1);",
+      "        n >>>= 1;                    // >>> not >>: >> refills with the sign bit and never empties a negative n",
+      "    }",
+      "    return result;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(32)",
+      "space": "O(1)"
+    }
+  },
+  "visualization": {
+    "engine": "bitOps",
+    "input": {
+      "value": 13
+    },
+    "code": [
+      "int i = 13;",
+      "int doubled = i << 1;        // shift left  -> multiply by 2",
+      "int halved  = i >> 1;        // shift right -> integer divide by 2",
+      "int lowBit  = i & 1;         // the last bit: 1 if odd, 0 if even",
+      "int cleared = i & (i - 1);   // clears the LOWEST set bit — one 1 fewer",
+      "int lowest  = i & -i;        // isolate the lowest set bit",
+      "int zero    = i ^ i;         // XOR is its own inverse"
+    ]
+  },
+  "commonMistakes": [
+    "Combining `n >>= 1` with `while (n != 0)`. A negative n refills its high bits with ones on every arithmetic shift, so after 31 rounds it is -1 and stays -1 forever: the method hangs on n = -3. The trap is that a fixed 32-round loop with `>>` happens to produce the right answer — the sign-extended bits never reach the bottom within 32 shifts — so the habit looks harmless right up until the day the loop condition changes, and in `number-of-1-bits`, where the loop is termination-based, the same reflex hangs immediately.",
+    "Stopping early with `while (n != 0)`. The bits that are present get reversed, but the input's leading zeros are dropped instead of becoming trailing zeros, so the whole answer is shifted down: n = 1 returns 1 instead of -2147483648. The symptom is a result that is far too small and correct only when bit 31 of the input is set.",
+    "Building the result with `result |= (n & 1) << (31 - i)` but computing the shift distance from the wrong counter, or mixing that approach with `result <<= 1`. Doing both shifts the bits twice — the output is a valid-looking number whose bits are in neither the original nor the reversed order, which is hard to spot without printing the binary."
+  ],
+  "similar": [
+    "number-of-1-bits",
+    "counting-bits",
+    "single-number",
+    "subsets-bitmask"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 190,
+      "slug": "reverse-bits",
+      "title": "Reverse Bits",
+      "url": "https://leetcode.com/problems/reverse-bits/",
+      "premium": false
+    }
+  }
+}

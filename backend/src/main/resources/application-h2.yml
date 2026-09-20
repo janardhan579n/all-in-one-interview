@@ -1,0 +1,22 @@
+# Throwaway in-memory database for quick experiments:
+#   ./mvnw spring-boot:run -Dspring-boot.run.profiles=h2
+#
+# Nothing persists across restarts. SQLite remains the default and the supported
+# configuration (docs/DECISIONS.md ADR-002).
+#
+# MODE=PostgreSQL is required: the repositories use `INSERT ... ON CONFLICT DO UPDATE`,
+# which H2 only accepts in PostgreSQL compatibility mode. Tests run against SQLite in a
+# temporary file rather than H2, so this profile is a convenience, not a supported target.
+app:
+  datasource:
+    mode: h2
+
+spring:
+  datasource:
+    url: jdbc:h2:mem:learning;DB_CLOSE_DELAY=-1;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  sql:
+    init:
+      mode: always

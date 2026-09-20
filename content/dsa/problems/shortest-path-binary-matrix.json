@@ -1,0 +1,189 @@
+{
+  "id": "shortest-path-binary-matrix",
+  "title": "Shortest Path in Binary Matrix",
+  "patternId": "bfs",
+  "difficulty": "intermediate",
+  "tags": [
+    "bfs",
+    "grid",
+    "shortest-path",
+    "implicit-graph"
+  ],
+  "statement": "Given an n x n binary matrix where 0 is an open cell and 1 is blocked, return the length of the shortest clear path from the top-left cell (0,0) to the bottom-right cell (n-1,n-1). A clear path visits only 0 cells and may move to any of the 8 adjacent cells, including diagonals. The length of a path is the number of cells it visits, counting both ends. Return -1 if no clear path exists.",
+  "realWorld": "Occupancy-grid pathfinding: a warehouse robot or a vacuum plans over a discretised floor map in which diagonal movement costs the same as orthogonal movement. The same routine runs inside image tooling, where a mask of blocked pixels is searched for the shortest corridor between two points.",
+  "examples": [
+    {
+      "input": "grid = [[0,1],[1,0]]  (rows of a matrix; 0 is open, 1 is blocked)",
+      "output": "2",
+      "explanation": "(0,0) and (1,1) are diagonally adjacent, so the path is those two cells. A 4-direction search would report -1 here."
+    },
+    {
+      "input": "grid = [[0,0,0],[1,1,0],[1,1,0]]",
+      "output": "4",
+      "explanation": "(0,0) -> (0,1) -> (1,2) -> (2,2). The second step is diagonal. Four cells visited, so the answer is 4, not 3 moves."
+    },
+    {
+      "input": "grid = [[1,0,0],[1,1,0],[1,1,0]]",
+      "output": "-1",
+      "explanation": "The start cell is itself blocked. Check both endpoints before the search — it is the one input where the search would otherwise begin from an illegal cell."
+    }
+  ],
+  "constraints": [
+    "n == grid.length == grid[i].length",
+    "1 <= n <= 100",
+    "grid[i][j] is 0 or 1"
+  ],
+  "bruteForce": {
+    "idea": "Depth-first search every clear path from the corner to the corner, remembering the shortest one found. Mark cells on the current path so a route does not cross itself, and unmark on the way back out.",
+    "code": [
+      "int best = Integer.MAX_VALUE;",
+      "",
+      "void walk(int[][] grid, int r, int c, boolean[][] onPath, int length) {",
+      "    int n = grid.length;",
+      "    if (r < 0 || r >= n || c < 0 || c >= n) return;",
+      "    if (grid[r][c] == 1 || onPath[r][c]) return;",
+      "    if (r == n - 1 && c == n - 1) { best = Math.min(best, length + 1); return; }",
+      "    onPath[r][c] = true;",
+      "    for (int dr = -1; dr <= 1; dr++)",
+      "        for (int dc = -1; dc <= 1; dc++)",
+      "            if (dr != 0 || dc != 0) walk(grid, r + dr, c + dc, onPath, length + 1);",
+      "    onPath[r][c] = false;      // undo, because a different route may need this cell",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(8^(n*n)) in the worst case",
+      "space": "O(n*n) recursion depth"
+    },
+    "whySlow": "The number of self-avoiding routes through an open grid grows exponentially, and the search walks all of them. The waste is specific: the shortest distance from a cell to the corner does not depend on how you arrived at that cell, yet path enumeration recomputes the entire remainder of the journey from scratch on every single arrival. In an empty 10x10 grid the cell in the middle is entered through millions of distinct prefixes, and each time the search re-explores the same suffix and discards it."
+  },
+  "patternIdentification": "The moment you notice that a cell's distance from the start is a property of the cell rather than of the route, path enumeration is the wrong shape and you want a search that touches each cell once. BFS does exactly that, and its expanding ring is why: after processing every cell at distance d, the frontier holds every cell at distance d+1 — so the first time a cell is reached, it is reached by a shortest route and there is nothing to compare. Note that going from 4 neighbours to 8 changes only the neighbour list. The algorithm does not notice; that is the sign you are working on an implicit graph, where the 'edges' are whatever your neighbour-generating loop says they are.",
+  "optimized": {
+    "idea": "Level-by-level BFS from (0,0), generating all eight neighbours. Reject both corners up front if either is blocked. Mark a cell visited the moment it is enqueued, by writing 1 into the grid — the grid doubles as the visited set, and marking at enqueue time is what keeps each cell in the queue exactly once. The level counter starts at 1 because the answer counts cells, and the start cell is the first of them.",
+    "code": [
+      "public static int shortestPathBinaryMatrix(int[][] grid) {",
+      "    int n = grid.length;",
+      "    if (grid[0][0] == 1 || grid[n - 1][n - 1] == 1) return -1;",
+      "",
+      "    Queue<int[]> queue = new ArrayDeque<>();",
+      "    queue.offer(new int[]{0, 0});",
+      "    grid[0][0] = 1;                    // mark visited at ENQUEUE time, not at poll time",
+      "    int length = 1;                    // the answer counts cells, and the start is cell 1",
+      "",
+      "    while (!queue.isEmpty()) {",
+      "        int levelSize = queue.size();",
+      "        for (int i = 0; i < levelSize; i++) {",
+      "            int[] cell = queue.poll();",
+      "            if (cell[0] == n - 1 && cell[1] == n - 1) return length;",
+      "            for (int dr = -1; dr <= 1; dr++) {",
+      "                for (int dc = -1; dc <= 1; dc++) {",
+      "                    if (dr == 0 && dc == 0) continue;",
+      "                    int r = cell[0] + dr, c = cell[1] + dc;",
+      "                    if (r < 0 || r >= n || c < 0 || c >= n) continue;   // bounds BEFORE indexing",
+      "                    if (grid[r][c] == 1) continue;",
+      "                    grid[r][c] = 1;",
+      "                    queue.offer(new int[]{r, c});",
+      "                }",
+      "            }",
+      "        }",
+      "        length++;",
+      "    }",
+      "    return -1;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n^2)",
+      "space": "O(n^2)"
+    }
+  },
+  "visualization": {
+    "engine": "gridBfs",
+    "input": {
+      "grid": [
+        [
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        [
+          1,
+          1,
+          0,
+          1,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          1,
+          1,
+          1,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          1,
+          0
+        ]
+      ],
+      "start": [
+        0,
+        0
+      ],
+      "target": [
+        4,
+        4
+      ],
+      "diagonal": true
+    },
+    "code": [
+      "queue.offer(new int[]{0, 0});",
+      "seen[0][0] = true;                  // mark on ENQUEUE, never on poll",
+      "",
+      "while (!queue.isEmpty()) {",
+      "    int levelSize = queue.size();   // one whole ring per outer iteration",
+      "    for (int i = 0; i < levelSize; i++) {",
+      "        int[] cell = queue.poll();",
+      "        if (cell is the bottom-right corner) return length;",
+      "        for (int[] d : EIGHT_DIRS) {",
+      "            int r = cell[0] + d[0], c = cell[1] + d[1];",
+      "            if (outOfBounds(r, c) || grid[r][c] == 1 || seen[r][c]) continue;",
+      "            seen[r][c] = true;",
+      "            queue.offer(new int[]{r, c});",
+      "        }",
+      "    }",
+      "    length++;",
+      "}"
+    ],
+    "title": "BFS with an eight-cell neighbourhood — same frontier, wider step"
+  },
+  "commonMistakes": [
+    "Reusing the four-direction {{1,0},{-1,0},{0,1},{0,-1}} array copied from another grid problem — example 1 returns -1 even though the two open cells touch diagonally, and larger grids return lengths that are too long rather than obviously wrong.",
+    "Marking a cell visited when it is polled instead of when it is enqueued — up to eight neighbours enqueue the same cell before any of them is processed, so the queue grows by a large constant factor and a 100x100 open grid times out or exhausts memory. The returned length stays correct, which hides the cause.",
+    "Starting the counter at 0 so it measures moves rather than cells — example 1 returns 1 instead of 2 and example 2 returns 3 instead of 4, and every answer is exactly one too small, which is easy to misread as an off-by-one in the loop."
+  ],
+  "similar": [
+    "walls-and-gates",
+    "word-ladder",
+    "rotting-oranges",
+    "number-of-islands"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 1091,
+      "slug": "shortest-path-in-binary-matrix",
+      "title": "Shortest Path in Binary Matrix",
+      "url": "https://leetcode.com/problems/shortest-path-in-binary-matrix/",
+      "premium": false
+    }
+  }
+}

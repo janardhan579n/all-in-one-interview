@@ -1,0 +1,123 @@
+{
+  "id": "subarray-sum-equals-k",
+  "title": "Subarray Sum Equals K",
+  "patternId": "prefix-sum",
+  "difficulty": "intermediate",
+  "tags": [
+    "array",
+    "prefix-sum",
+    "hashing"
+  ],
+  "statement": "Given an array of integers (which may be negative) and an integer k, count the number of contiguous subarrays whose elements sum to exactly k.",
+  "realWorld": "Finding how many billing periods netted exactly zero after refunds, or how many windows of a metric stream hit an exact budget — cases where values go both up and down.",
+  "examples": [
+    {
+      "input": "nums = [1,1,1], k = 2",
+      "output": "2",
+      "explanation": "[1,1] at indices 0-1 and 1-2."
+    },
+    {
+      "input": "nums = [1,2,3], k = 3",
+      "output": "2",
+      "explanation": "[3] and [1,2]."
+    },
+    {
+      "input": "nums = [1,-1,0], k = 0",
+      "output": "3",
+      "explanation": "[1,-1], [0] and [1,-1,0]."
+    }
+  ],
+  "constraints": [
+    "1 <= nums.length <= 2 * 10^4",
+    "-1000 <= nums[i] <= 1000",
+    "-10^7 <= k <= 10^7"
+  ],
+  "bruteForce": {
+    "idea": "Try every start and every end, summing as you extend the end.",
+    "code": [
+      "int count = 0;",
+      "for (int start = 0; start < nums.length; start++) {",
+      "    int sum = 0;",
+      "    for (int end = start; end < nums.length; end++) {",
+      "        sum += nums[end];",
+      "        if (sum == k) count++;",
+      "    }",
+      "}",
+      "return count;"
+    ],
+    "complexity": {
+      "time": "O(n^2)",
+      "space": "O(1)"
+    },
+    "whySlow": "4 * 10^8 operations at the upper constraint. Acceptable in some languages, too slow here — and it misses the structural insight."
+  },
+  "patternIdentification": "A sliding window is the instinct, and it is WRONG: negative values mean extending the window can decrease the sum, so shrinking on invalidity is unsound. 'Subarray sum' + 'negatives allowed' = prefix sums with a hash map.",
+  "optimized": {
+    "idea": "If prefix[j] - prefix[i] == k then prefix[i] == prefix[j] - k. Scan once keeping a running prefix and a map of how many times each prefix value has occurred; at each step add the count of the prefix we need.",
+    "code": [
+      "public static int subarraySum(int[] nums, int k) {",
+      "    Map<Integer, Integer> prefixCounts = new HashMap<>();",
+      "    prefixCounts.put(0, 1);        // the empty prefix: enables subarrays from index 0",
+      "",
+      "    int running = 0;",
+      "    int count = 0;",
+      "    for (int x : nums) {",
+      "        running += x;",
+      "        count += prefixCounts.getOrDefault(running - k, 0);",
+      "        prefixCounts.merge(running, 1, Integer::sum);",
+      "    }",
+      "    return count;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(n)"
+    }
+  },
+  "visualization": {
+    "engine": "prefixSumHash",
+    "input": {
+      "array": [
+        1,
+        2,
+        3,
+        -3,
+        1,
+        1,
+        1
+      ],
+      "k": 3
+    },
+    "code": [
+      "Map<Integer, Integer> seen = new HashMap<>();",
+      "seen.put(0, 1);",
+      "int running = 0, count = 0;",
+      "for (int x : nums) {",
+      "    running += x;",
+      "    count += seen.getOrDefault(running - k, 0);",
+      "    seen.merge(running, 1, Integer::sum);",
+      "}",
+      "return count;"
+    ]
+  },
+  "commonMistakes": [
+    "Omitting prefixCounts.put(0, 1), which silently drops every subarray starting at index 0.",
+    "Updating the map before the lookup, which lets a zero-length subarray be counted when k == 0.",
+    "Reaching for a sliding window — it is incorrect here because of the negative values.",
+    "Storing prefix sums in a Set instead of a Map; you need counts, not presence, since the same prefix can recur."
+  ],
+  "similar": [
+    "two-sum",
+    "running-sum",
+    "max-sum-subarray-k"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 560,
+      "slug": "subarray-sum-equals-k",
+      "title": "Subarray Sum Equals K",
+      "url": "https://leetcode.com/problems/subarray-sum-equals-k/",
+      "premium": false
+    }
+  }
+}

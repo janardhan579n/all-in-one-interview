@@ -1,0 +1,100 @@
+{
+  "id": "system-design-beginner",
+  "title": "System Design from First Principles",
+  "audience": "Backend developers who can build a service but have never designed one for scale.",
+  "description": "Builds the vocabulary component by component, then applies it to complete systems. Every concept answers 'what problem forced this to exist?'.",
+  "steps": [
+    {
+      "ref": "client-server",
+      "kind": "concept"
+    },
+    {
+      "ref": "dns",
+      "kind": "concept"
+    },
+    {
+      "ref": "http",
+      "kind": "concept"
+    },
+    {
+      "ref": "api",
+      "kind": "concept"
+    },
+    {
+      "ref": "proxy",
+      "kind": "concept"
+    },
+    {
+      "ref": "database",
+      "kind": "concept"
+    },
+    {
+      "ref": "indexing",
+      "kind": "concept"
+    },
+    {
+      "ref": "connection-pooling",
+      "kind": "concept"
+    },
+    {
+      "ref": "scaling",
+      "kind": "concept"
+    },
+    {
+      "ref": "load-balancer",
+      "kind": "concept"
+    },
+    {
+      "ref": "cache",
+      "kind": "concept"
+    },
+    {
+      "ref": "cdn",
+      "kind": "concept"
+    },
+    {
+      "ref": "object-storage",
+      "kind": "concept"
+    },
+    {
+      "ref": "replication",
+      "kind": "concept"
+    },
+    {
+      "ref": "message-queue",
+      "kind": "concept"
+    },
+    {
+      "ref": "rate-limiting",
+      "kind": "concept"
+    },
+    {
+      "ref": "websockets",
+      "kind": "concept"
+    },
+    {
+      "ref": "sharding",
+      "kind": "concept"
+    },
+    {
+      "ref": "cap-theorem",
+      "kind": "concept"
+    },
+    {
+      "ref": "url-shortener",
+      "kind": "case-study"
+    },
+    {
+      "ref": "rate-limiter",
+      "kind": "case-study"
+    },
+    {
+      "ref": "notification-system",
+      "kind": "case-study"
+    },
+    {
+      "ref": "chat-application",
+      "kind": "case-study"
+    }
+  ]
+}

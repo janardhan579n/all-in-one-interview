@@ -1,0 +1,100 @@
+{
+  "id": "squares-of-sorted-array",
+  "title": "Squares of a Sorted Array",
+  "patternId": "two-pointers",
+  "difficulty": "beginner",
+  "tags": [
+    "array",
+    "two-pointers",
+    "merge"
+  ],
+  "statement": "Given an integer array sorted in non-decreasing order — it may contain negative numbers — return an array of the squares of each number, also sorted in non-decreasing order.",
+  "realWorld": "Re-ordering signed deviations by magnitude. A monitoring store keeps samples sorted by signed error from a target, and a query wants them ordered by absolute error instead; re-sorting a million rows to apply an even function is work the existing order can pay for.",
+  "examples": [
+    {
+      "input": "nums = [-4,-1,0,3,10]",
+      "output": "[0,1,9,16,100]",
+      "explanation": "Squaring gives [16,1,0,9,100], which is not sorted. The largest square, 100, comes from the rightmost element; the second largest, 16, from the leftmost — never from the middle."
+    },
+    {
+      "input": "nums = [-7,-3,2,3,11]",
+      "output": "[4,9,9,49,121]",
+      "explanation": "A tie: (-3)^2 and 3^2 are both 9, and the two pointers consume them one after the other. Advancing both at once on a tie is the classic bug here."
+    },
+    {
+      "input": "nums = [1,2,3]",
+      "output": "[1,4,9]",
+      "explanation": "With no negatives the left pointer never wins a comparison, and the algorithm degenerates into copying the squares straight across."
+    }
+  ],
+  "constraints": [
+    "1 <= nums.length <= 10^4",
+    "-10^4 <= nums[i] <= 10^4",
+    "nums is sorted in non-decreasing order",
+    "A follow-up asks for O(n) — sorting the squares is O(n log n)"
+  ],
+  "bruteForce": {
+    "idea": "Square every element, then sort the result.",
+    "code": [
+      "int[] result = new int[nums.length];",
+      "for (int i = 0; i < nums.length; i++) {",
+      "    result[i] = nums[i] * nums[i];",
+      "}",
+      "Arrays.sort(result);",
+      "return result;"
+    ],
+    "complexity": {
+      "time": "O(n log n)",
+      "space": "O(n)"
+    },
+    "whySlow": "Squaring throws away the ordering the input handed over for free, and then a general-purpose sort spends n log n comparisons rediscovering most of it. The squared array is not unsorted at all: it is two already-sorted runs glued together — the negatives, whose squares descend, and the non-negatives, whose squares ascend. A comparison sort cannot be told that, so it re-derives from scratch an order that was never really lost."
+  },
+  "patternIdentification": "When a transformation is monotone on each side of a pivot, the transformed array is two sorted runs and the job is a merge, not a sort. Merging two runs that are laid out back to back, one ascending and one descending, is exactly a pair of pointers reading inwards from the two ends — and the largest element is always at one end or the other, never in the middle, which is what lets the output be filled from the back.",
+  "optimized": {
+    "idea": "Point one index at each end and fill the result from its last slot backwards. At each step the larger of the two candidate squares is the largest value not yet placed, because everything between the pointers is smaller in magnitude than one of them. Write it, move that pointer inwards, and repeat until the result is full — exactly n comparisons and n writes.",
+    "code": [
+      "public static int[] sortedSquares(int[] nums) {",
+      "    int n = nums.length;",
+      "    int[] result = new int[n];",
+      "    int left = 0;",
+      "    int right = n - 1;",
+      "    for (int write = n - 1; write >= 0; write--) {   // fill from the BACK: the biggest square is at an end",
+      "        int leftSquare = nums[left] * nums[left];",
+      "        int rightSquare = nums[right] * nums[right];",
+      "        if (leftSquare > rightSquare) {",
+      "            result[write] = leftSquare;",
+      "            left++;",
+      "        } else {",
+      "            result[write] = rightSquare;",
+      "            right--;",
+      "        }",
+      "    }",
+      "    return result;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(n)"
+    }
+  },
+  "commonMistakes": [
+    "Filling the result from the front: the two pointers naturally surrender the largest square first, so writing left to right produces the answer reversed — [-4,-1,0,3,10] comes back as [100,16,9,1,0].",
+    "Advancing both pointers when the two squares are equal: [-3,0,3] returns [9,0,9] instead of [0,9,9], because one slot is written twice and the middle element is consumed out of order.",
+    "Driving the loop with while (left < right) instead of a write counter: only n - 1 squares are ever written and result[0] keeps Java's default 0, so [-7,-3,2,3,11] returns [0,9,9,49,121] — still sorted, still wrong, and it slips past any assertion that only checks the ordering."
+  ],
+  "similar": [
+    "merge-sorted-array",
+    "two-sum-sorted",
+    "remove-duplicates-sorted",
+    "sort-colors"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 977,
+      "slug": "squares-of-a-sorted-array",
+      "title": "Squares of a Sorted Array",
+      "url": "https://leetcode.com/problems/squares-of-a-sorted-array/",
+      "premium": false
+    }
+  }
+}

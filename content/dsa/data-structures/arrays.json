@@ -1,0 +1,269 @@
+{
+  "id": "arrays",
+  "kind": "data-structure",
+  "title": "Arrays",
+  "group": "Arrays & Strings",
+  "level": 1,
+  "difficulty": "beginner",
+  "estimatedMinutes": 25,
+  "summary": "A fixed-size block of contiguous memory where element i sits at a computable address — which is why reading is O(1) and inserting in the middle is not.",
+  "prerequisites": [
+    "data-and-variables"
+  ],
+  "tags": [
+    "array",
+    "data-structure",
+    "level-1"
+  ],
+  "analogy": {
+    "beginner": "A row of numbered post boxes bolted to a wall. Box 7 is exactly seven steps from box 0, so you walk straight to it without checking the others. But if you want to squeeze a new box in at position 3, every box after it has to physically shift along — and if the wall is full, you need a bigger wall.",
+    "interview": "An array is a contiguous allocation of n equally sized slots. Address(i) = base + i × elementSize, so random access is O(1). Insertion or deletion at index i requires shifting the n-i suffix, which is O(n), and capacity is fixed at allocation."
+  },
+  "intuition": "One formula explains every array trade-off:\n\n```\naddress of element i  =  base address  +  i × size of one element\n```\n\nBecause that is arithmetic rather than search, `a[999999]` costs exactly what `a[0]` costs. Everything good about arrays follows from this. So does everything bad: the formula only works if elements are *adjacent with no gaps*, so making a gap in the middle means moving everything after it, and growing beyond the allocated block means copying the whole thing somewhere roomier.\n\nThere is a second, quieter advantage. Because the elements are adjacent, when the CPU fetches `a[0]` it pulls a whole 64-byte cache line — so `a[1]` … `a[15]` arrive free. Iterating an array is often 5–10× faster than iterating a linked list of the same length even though both are O(n). Big-O does not see this; your latency graphs do.",
+  "problemFirst": {
+    "motivatingProblem": "You need to store the daily temperature for a year and answer 'what was the temperature on day 200?' instantly, thousands of times a second.",
+    "bruteForce": {
+      "idea": "Keep 365 separate variables — `day1`, `day2`, … — and a giant switch statement to pick the right one.",
+      "code": [
+        "int day1 = 21, day2 = 23, day3 = 19; // ... 362 more",
+        "int temperatureOn(int day) {",
+        "    switch (day) {",
+        "        case 1: return day1;",
+        "        case 2: return day2;",
+        "        // ... 363 more cases",
+        "    }",
+        "}"
+      ],
+      "complexity": {
+        "time": "O(1) lookup",
+        "space": "O(n)"
+      },
+      "whySlow": "The lookup is fast but the code is unmaintainable and cannot be written for an unknown n. Worse, you cannot loop over separate variables — 'average temperature' becomes 365 hand-written additions."
+    },
+    "observation": "All 365 values have the same type and the same meaning. The only thing that distinguishes them is a number.",
+    "leap": "Lay them out side by side and index them. Now the *name* is the base address and the *number* is arithmetic — one variable, a loop, and O(1) access."
+  },
+  "howItWorks": [
+    "**Declare**: `int[] temps = new int[365];` allocates one contiguous block, zero-filled.",
+    "**Read / write**: `temps[200]` — one address calculation, O(1), regardless of array size.",
+    "**Bounds**: valid indices are `0` to `length - 1`. Java checks every access and throws `ArrayIndexOutOfBoundsException` rather than reading garbage (C does not — hence buffer overflows).",
+    "**Insert / delete in the middle**: shift the tail, O(n).",
+    "**Fixed size**: `length` is final. `ArrayList` fakes growth by allocating a bigger array (usually 1.5–2×) and copying — O(n) occasionally, O(1) amortised.",
+    "**2D arrays**: `int[][] grid = new int[rows][cols];` in Java is an array of row references, so rows need not be contiguous with each other."
+  ],
+  "patternRecognition": {
+    "signals": [
+      "Data is a sequence accessed by position",
+      "You need to iterate in order, repeatedly",
+      "You know roughly how many elements there will be"
+    ],
+    "antiSignals": [
+      "Constant insertion/removal at the front or middle (use a Deque or LinkedList)",
+      "Lookup by key rather than position (use a HashMap)",
+      "Size varies wildly and unpredictably (use ArrayList)"
+    ],
+    "decisionTreeId": "which-data-structure"
+  },
+  "visualizations": [
+    {
+      "id": "array-ops",
+      "title": "Access, search, insert, delete — see what each one actually costs",
+      "engine": "arrayOps",
+      "input": {
+        "array": [
+          10,
+          20,
+          30,
+          40,
+          50
+        ],
+        "operations": [
+          {
+            "op": "access",
+            "index": 3
+          },
+          {
+            "op": "search",
+            "value": 40
+          },
+          {
+            "op": "insert",
+            "index": 1,
+            "value": 15
+          },
+          {
+            "op": "delete",
+            "index": 4
+          },
+          {
+            "op": "traverse"
+          }
+        ]
+      },
+      "code": [
+        "int value = a[3];                  // access: one address calculation",
+        "for (int i = 0; i < n; i++)        // search: look at each in turn",
+        "    if (a[i] == target) return i;",
+        "System.arraycopy(a, i, a, i+1, n-i); // insert: shift the tail right",
+        "System.arraycopy(a, i+1, a, i, n-i-1); // delete: shift the tail left"
+      ]
+    }
+  ],
+  "implementations": [
+    {
+      "label": "Simple",
+      "language": "java",
+      "explanation": "The four operations, written out so the cost of each is visible in the code itself. Notice that access has no loop and insert does.",
+      "code": [
+        "int[] a = {10, 20, 30, 40, 50};",
+        "",
+        "int third = a[2];                       // O(1)",
+        "",
+        "int indexOf(int[] a, int target) {      // O(n)",
+        "    for (int i = 0; i < a.length; i++)",
+        "        if (a[i] == target) return i;",
+        "    return -1;",
+        "}",
+        "",
+        "// insert 15 at index 1 (array must have a spare slot at the end)",
+        "for (int i = size; i > 1; i--) a[i] = a[i - 1];   // O(n) shift right",
+        "a[1] = 15;",
+        "size++;",
+        "",
+        "// delete index 3",
+        "for (int i = 3; i < size - 1; i++) a[i] = a[i + 1]; // O(n) shift left",
+        "size--;"
+      ]
+    },
+    {
+      "label": "Optimized",
+      "language": "java",
+      "explanation": "In production use the library: `System.arraycopy` is an intrinsic that the JIT turns into a vectorised block move, far faster than a hand-written loop for the same O(n). And when order does not matter, deletion can be O(1) — swap the last element into the hole.",
+      "code": [
+        "// Shift with the intrinsic rather than a loop",
+        "System.arraycopy(a, index, a, index + 1, size - index); // make room",
+        "a[index] = value;",
+        "size++;",
+        "",
+        "// O(1) deletion when order is irrelevant (\"swap-remove\")",
+        "a[index] = a[size - 1];",
+        "size--;",
+        "",
+        "// Useful library operations",
+        "int[] copy   = Arrays.copyOf(a, a.length);",
+        "int[] slice  = Arrays.copyOfRange(a, 2, 5);   // [2,5)",
+        "Arrays.sort(a);                               // dual-pivot quicksort, O(n log n)",
+        "int pos = Arrays.binarySearch(a, 40);         // O(log n), sorted input only",
+        "Arrays.fill(a, 0);",
+        "boolean same = Arrays.equals(a, copy);"
+      ]
+    }
+  ],
+  "complexity": {
+    "time": "Access O(1) · Search O(n) unsorted, O(log n) sorted · Insert/Delete at end O(1) · Insert/Delete in middle O(n)",
+    "space": "O(n)",
+    "why": "Access is O(1) because the address is computed, not searched for. Unsorted search is O(n) because nothing about position tells you about value. Insert and delete in the middle are O(n) because contiguity must be restored — on average half the array moves. At the end there is nothing after the index, so no shifting is needed, which is why stacks and `ArrayList.add` are O(1)."
+  },
+  "commonMistakes": [
+    {
+      "mistake": "Off-by-one: `i <= a.length`",
+      "fix": "The last valid index is `length - 1`. The guard is `i < a.length`."
+    },
+    {
+      "mistake": "Expecting `array.length()` or `string.length`",
+      "fix": "Arrays use the field `length`; String uses the method `length()`; collections use `size()`. Java is inconsistent here and it catches everyone."
+    },
+    {
+      "mistake": "Removing elements while iterating forwards",
+      "fix": "Every removal shifts the tail left and you skip an element. Iterate backwards, or collect indices and remove afterwards."
+    },
+    {
+      "mistake": "Using `==` to compare arrays",
+      "fix": "That compares references. Use `Arrays.equals` (1D) or `Arrays.deepEquals` (nested)."
+    },
+    {
+      "mistake": "Growing an array one element at a time",
+      "fix": "Copying on every add is O(n²) overall. Pre-size it, or use `ArrayList`, which doubles."
+    }
+  ],
+  "realWorldUses": [
+    "Every dynamic list you use — `ArrayList`, Python's `list`, JavaScript's `Array` — is an array with a growth policy bolted on.",
+    "Ring buffers built on arrays back Kafka partitions, audio pipelines and log appenders.",
+    "Database pages, image bitmaps and tensors are all arrays chosen specifically for cache locality."
+  ],
+  "interviewNotes": [
+    "If the input is sorted, say so out loud — it unlocks binary search and two pointers.",
+    "Being asked for O(1) extra space means you must modify the input in place or use pointers, not build a second array.",
+    "'Why is ArrayList.add O(1) if it sometimes copies?' — amortised analysis; see the Big-O lesson."
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "complexity",
+      "question": "What is the time complexity of inserting an element at index 0 of an array with n elements?",
+      "options": [
+        "O(1)",
+        "O(log n)",
+        "O(n)",
+        "O(n²)"
+      ],
+      "answerIndex": 2,
+      "explanation": "Every one of the n existing elements must shift one slot right to make room. Inserting at the *end* is the cheap case, O(1)."
+    },
+    {
+      "id": "q2",
+      "type": "mcq",
+      "question": "Why is accessing a[999999] no slower than accessing a[0]?",
+      "options": [
+        "The JVM caches array elements",
+        "The address is computed with base + i × elementSize — arithmetic, not searching",
+        "Arrays are sorted internally",
+        "It is slower, just not noticeably"
+      ],
+      "answerIndex": 1,
+      "explanation": "Contiguous layout means the location of any element is a single multiply-and-add. No traversal is involved, so index magnitude is irrelevant."
+    },
+    {
+      "id": "q3",
+      "type": "predict-output",
+      "question": "What does this print?\n\nint[] a = new int[3];\nSystem.out.println(a[0]);",
+      "options": [
+        "null",
+        "0",
+        "Garbage",
+        "ArrayIndexOutOfBoundsException"
+      ],
+      "answerIndex": 1,
+      "explanation": "Java zero-fills primitive arrays on allocation: 0 for numeric types, false for boolean, null for reference types. C does not — reading uninitialised memory there yields garbage."
+    },
+    {
+      "id": "q4",
+      "type": "mcq",
+      "question": "You must delete an element from an unsorted array in O(1) and order does not matter. How?",
+      "options": [
+        "Impossible — deletion is always O(n)",
+        "Shift everything left",
+        "Copy the last element over the one being deleted, then shrink the size",
+        "Sort the array first"
+      ],
+      "answerIndex": 2,
+      "explanation": "The swap-remove trick: the hole is filled by the last element, so no shifting occurs. It destroys ordering, which is exactly why you must check whether order matters first."
+    }
+  ],
+  "practiceProblems": [
+    "best-time-to-buy-sell-stock",
+    "find-missing-number",
+    "move-zeroes",
+    "product-of-array-except-self",
+    "rotate-array",
+    "running-sum",
+    "contains-duplicate"
+  ],
+  "related": [
+    "two-pointers",
+    "sliding-window",
+    "prefix-sum",
+    "binary-search",
+    "hashing"
+  ]
+}

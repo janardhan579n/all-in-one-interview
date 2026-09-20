@@ -1,0 +1,68 @@
+{
+  "id": "system-design-senior",
+  "title": "System Design for Senior Interviews",
+  "audience": "Engineers who can already name the components and now have to defend the choices — the round that decides senior versus mid.",
+  "description": "Assumes the building blocks. Everything here is about what breaks at the seams: where the data is cut, what happens when a machine cannot be reached, how a failure spreads, and how you find out. Each concept is paired with the failure it exists to prevent, because that is the form the question takes.",
+  "steps": [
+    {
+      "ref": "microservices",
+      "kind": "concept"
+    },
+    {
+      "ref": "api-gateway",
+      "kind": "concept"
+    },
+    {
+      "ref": "auth",
+      "kind": "concept"
+    },
+    {
+      "ref": "consistent-hashing",
+      "kind": "concept"
+    },
+    {
+      "ref": "bloom-filter",
+      "kind": "concept"
+    },
+    {
+      "ref": "search-engine",
+      "kind": "concept"
+    },
+    {
+      "ref": "event-driven",
+      "kind": "concept"
+    },
+    {
+      "ref": "idempotency",
+      "kind": "concept"
+    },
+    {
+      "ref": "saga",
+      "kind": "concept"
+    },
+    {
+      "ref": "cap-theorem",
+      "kind": "concept"
+    },
+    {
+      "ref": "consensus",
+      "kind": "concept"
+    },
+    {
+      "ref": "circuit-breaker",
+      "kind": "concept"
+    },
+    {
+      "ref": "observability",
+      "kind": "concept"
+    },
+    {
+      "ref": "chat-application",
+      "kind": "case-study"
+    },
+    {
+      "ref": "notification-system",
+      "kind": "case-study"
+    }
+  ]
+}

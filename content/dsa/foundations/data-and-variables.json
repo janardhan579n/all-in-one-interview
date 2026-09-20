@@ -1,0 +1,145 @@
+{
+  "id": "data-and-variables",
+  "kind": "foundation",
+  "title": "Data, Variables and Memory",
+  "group": "Foundations",
+  "level": 0,
+  "difficulty": "beginner",
+  "estimatedMinutes": 15,
+  "summary": "A variable is a labelled box in memory; the label is the name, the box holds a value, and the box has a fixed size.",
+  "prerequisites": ["what-is-an-algorithm"],
+  "tags": ["basics", "memory", "variables", "level-0"],
+  "analogy": {
+    "beginner": "Memory is a very long street of identical lockers, numbered from 0 upwards. Each locker holds one small thing. A variable is a sticky note with a name on it stuck to one locker, so you can say 'put 5 in `count`' instead of 'put 5 in locker 140,213,905'. The computer still uses the number — the name is for you.",
+    "interview": "Memory is a linear, byte-addressable array. A variable is a compile-time name bound to a storage location of a known width; the type determines the width and how the bit pattern is interpreted."
+  },
+  "intuition": "Two ideas do most of the work here.\n\n**First: everything is a number.** Text, images, prices, `true`/`false` — all of it is stored as numbers, and ultimately as bits. `'A'` is stored as 65. A pixel is three numbers. The type tells the computer how to interpret the bits it finds.\n\n**Second: location matters.** Reading locker 500 and reading locker 501 cost the same. But reading *a thousand lockers in a row* is dramatically faster than reading *a thousand lockers scattered across the street*, because hardware fetches whole blocks at a time. This single physical fact is why arrays are fast, why linked lists are slower than their Big-O suggests, and why database indexes are shaped the way they are.",
+  "problemFirst": {
+    "motivatingProblem": "You want to keep score in a game. The score changes constantly. Where do you put it, and how does the computer find it again a second later?",
+    "bruteForce": {
+      "idea": "You could imagine the computer searching memory for 'the score' each time. That would mean scanning billions of lockers per update — hopeless. Instead, the compiler decides **once**, before the program runs, which locker `score` means, and burns that address into the instructions.",
+      "code": [
+        "int score = 0;      // compiler: 'score' lives at some fixed slot; put 0 there",
+        "score = score + 10; // read that slot, add 10, write it back",
+        "score += 10;        // exactly the same thing, shorter"
+      ],
+      "complexity": { "time": "O(1)", "space": "O(1)" },
+      "whySlow": "It isn't — and that is the point. Variable access is O(1) precisely because the location is decided in advance rather than searched for at runtime."
+    },
+    "observation": "Naming a location once, ahead of time, converts a search problem into a direct lookup. That trick — precompute the address instead of searching — reappears as hashing, as array indexing, and as database indexes.",
+    "leap": "Data structures are, at bottom, just agreements about *where* things are placed in memory so that finding them later is cheap."
+  },
+  "howItWorks": [
+    "**Declare**: `int score;` reserves a box of the right size (4 bytes for an `int`).",
+    "**Assign**: `score = 10;` writes a bit pattern into that box, overwriting whatever was there.",
+    "**Read**: using `score` in an expression copies the value out; the box is unchanged.",
+    "**Type** decides the width and the interpretation: `int` = 4 bytes, whole numbers roughly ±2.1 billion; `double` = 8 bytes, fractional; `boolean` = true/false; `char` = one UTF-16 code unit.",
+    "**Primitive vs reference**: an `int` variable holds the value itself. An `int[]` or `String` variable holds an *address* — the value lives elsewhere on the heap. This is why two variables can point at the same array and see each other's edits."
+  ],
+  "patternRecognition": {
+    "signals": ["You need to remember something between steps of an algorithm"],
+    "antiSignals": [],
+    "decisionTreeId": null
+  },
+  "visualizations": [
+    {
+      "id": "memory-boxes",
+      "title": "Variables as labelled boxes in memory",
+      "engine": "memoryBoxes",
+      "input": {
+        "program": [
+          { "op": "declare", "name": "score", "type": "int", "value": 0 },
+          { "op": "assign", "name": "score", "value": 10 },
+          { "op": "declare", "name": "bonus", "type": "int", "value": 5 },
+          { "op": "assign", "name": "score", "expr": "score + bonus", "value": 15 },
+          { "op": "declare", "name": "name", "type": "String", "value": "\"Aruna\"", "reference": true },
+          { "op": "alias", "name": "alias", "type": "String", "target": "name" }
+        ]
+      },
+      "code": [
+        "int score = 0;",
+        "score = 10;",
+        "int bonus = 5;",
+        "score = score + bonus;",
+        "String name = \"Aruna\";",
+        "String alias = name;   // copies the address, not the text"
+      ]
+    }
+  ],
+  "implementations": [
+    {
+      "label": "Simple",
+      "language": "java",
+      "explanation": "Primitives hold values. Copying a primitive copies the value, so the two variables are independent afterwards.",
+      "code": [
+        "int a = 5;",
+        "int b = a;   // b gets its own copy of 5",
+        "b = 9;",
+        "System.out.println(a);  // 5  — a was not affected"
+      ]
+    },
+    {
+      "label": "Optimized",
+      "language": "java",
+      "explanation": "References hold an address. Copying a reference copies the address, so both names now refer to the same object — a fact that causes more beginner bugs than any other in Java.",
+      "code": [
+        "int[] a = {1, 2, 3};",
+        "int[] b = a;   // b holds the SAME address as a",
+        "b[0] = 99;",
+        "System.out.println(a[0]);  // 99 — one array, two names",
+        "",
+        "int[] c = a.clone();  // a real copy",
+        "c[1] = 42;",
+        "System.out.println(a[1]);  // 2 — untouched"
+      ]
+    }
+  ],
+  "complexity": {
+    "time": "O(1)",
+    "space": "O(1) per variable",
+    "why": "Reading or writing a variable is a single machine instruction against a known address, so it does not depend on how much data your program holds. Space per variable is fixed by its type — but note that an `int[]` *variable* is O(1) while the array it points to is O(n)."
+  },
+  "commonMistakes": [
+    { "mistake": "Assuming `b = a` copies an array or object", "fix": "It copies the reference. Use `.clone()`, `Arrays.copyOf`, or `new ArrayList<>(list)` for a real copy." },
+    { "mistake": "Comparing strings with `==`", "fix": "`==` compares addresses. Use `.equals()` to compare contents." },
+    { "mistake": "Silent integer overflow: `int` maxes out near 2.1 billion", "fix": "Use `long` for counters, sums of large arrays, timestamps in milliseconds, and IDs." },
+    { "mistake": "Using `double` for money", "fix": "0.1 + 0.2 != 0.3 in binary floating point. Use `BigDecimal`, or store integer paise/cents." }
+  ],
+  "realWorldUses": [
+    "Every cache-friendly loop you will ever write depends on the 'contiguous memory is faster' fact from this lesson.",
+    "The primitive-vs-reference distinction is exactly why immutable objects are recommended for shared state in concurrent code.",
+    "Integer overflow in a 32-bit counter is a genuine production incident category — it is what `long` exists for."
+  ],
+  "interviewNotes": [
+    "'Does Java pass by value or by reference?' — Java is always pass-by-value; for objects, the *value being passed* is the reference. Saying it that precisely is the answer they want.",
+    "Be ready to explain why `int` sums over a large array should accumulate into a `long`."
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "predict-output",
+      "question": "What does this print?\n\nint[] a = {1,2,3};\nint[] b = a;\nb[0] = 99;\nSystem.out.println(a[0]);",
+      "options": ["1", "99", "0", "Compile error"],
+      "answerIndex": 1,
+      "explanation": "`b = a` copies the reference, so `a` and `b` name the same array object. Mutating through one is visible through the other."
+    },
+    {
+      "id": "q2",
+      "type": "mcq",
+      "question": "Why is looping over an array usually faster than looping over a linked list of the same length, even though both are O(n)?",
+      "options": ["Arrays use less memory per element only", "Array elements are contiguous, so the CPU fetches several at once into cache", "Linked lists are not O(n)", "The JVM optimises arrays away"],
+      "answerIndex": 1,
+      "explanation": "Big-O counts operations, not the cost of each one. Contiguous memory means one cache line fetch serves several elements; a linked list chases pointers to scattered addresses, missing cache far more often."
+    },
+    {
+      "id": "q3",
+      "type": "mcq",
+      "question": "You are summing an array of 10 million values, each up to 1,000,000. Which accumulator type is correct?",
+      "options": ["int", "long", "float", "short"],
+      "answerIndex": 1,
+      "explanation": "The sum can reach 10^13, far beyond `int`'s ~2.1×10^9 limit. `long` is required; `float` would silently lose precision."
+    }
+  ],
+  "practiceProblems": [],
+  "related": ["what-is-an-algorithm", "arrays", "big-o"]
+}

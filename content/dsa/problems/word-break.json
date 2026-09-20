@@ -1,0 +1,105 @@
+{
+  "id": "word-break",
+  "title": "Word Break",
+  "patternId": "dynamic-programming-basics",
+  "difficulty": "intermediate",
+  "tags": [
+    "string",
+    "dynamic-programming",
+    "hashing"
+  ],
+  "statement": "Given a string s and a dictionary of words, decide whether s can be cut into a sequence of dictionary words with nothing left over. Words may be reused any number of times, and the dictionary words are distinct.",
+  "realWorld": "Segmenting text that has no spaces: splitting a run-together hashtag or domain name into words, tokenising Chinese or Japanese where whitespace carries no information, or checking whether a concatenated SKU string decomposes into known component codes.",
+  "examples": [
+    {
+      "input": "s = \"leetcode\", wordDict = [\"leet\",\"code\"]",
+      "output": "true",
+      "explanation": "leet|code uses each word once."
+    },
+    {
+      "input": "s = \"catsandog\", wordDict = [\"cats\",\"dog\",\"sand\",\"and\",\"cat\"]",
+      "output": "false",
+      "explanation": "cats|and leaves 'og', and cat|sand leaves 'og' too. Several promising starts exist and every one of them dies at the end — which is why the decision cannot be made locally."
+    },
+    {
+      "input": "s = \"aaab\", wordDict = [\"a\",\"aaa\",\"aab\"]",
+      "output": "true",
+      "explanation": "a|aab works. Note that grabbing the longest matching word first takes 'aaa' and strands 'b', so a greedy longest-match would wrongly answer false."
+    }
+  ],
+  "constraints": [
+    "1 <= s.length <= 300",
+    "1 <= wordDict.length <= 1000",
+    "1 <= wordDict[i].length <= 20",
+    "s and the dictionary words are lower-case English letters",
+    "Words may be reused"
+  ],
+  "bruteForce": {
+    "idea": "Try every first word: for each dictionary word that is a prefix of the remaining string, strip it and recurse on the rest. Succeed when the remainder is empty.",
+    "code": [
+      "public static boolean wordBreak(String s, List<String> wordDict) {",
+      "    return canBreak(s, 0, new HashSet<>(wordDict));",
+      "}",
+      "",
+      "private static boolean canBreak(String s, int start, Set<String> words) {",
+      "    if (start == s.length()) return true;",
+      "    for (int end = start + 1; end <= s.length(); end++) {",
+      "        if (words.contains(s.substring(start, end)) && canBreak(s, end, words)) return true;",
+      "    }",
+      "    return false;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(2^n)",
+      "space": "O(n)"
+    },
+    "whySlow": "Every position is a potential cut, so the recursion explores up to 2^(n-1) ways to chop the string. The waste is that the suffix starting at a given index is re-examined once per way the prefix before it can be cut: on a string like 'aaaaaaaaaaaaaaaaaaaab' with dictionary ['a','aa','aaa'], the question 'can the tail from index 15 be broken?' is asked thousands of times and answered identically every time, because the answer for a suffix cannot depend on how the part before it was split."
+  },
+  "patternIdentification": "A yes/no question about a whole sequence that decomposes into the same yes/no question about a prefix. State it as a sentence: dp[i] = 'is the prefix of length i breakable?'. The recurrence comes from asking what the last word was — dp[i] is true when there is some split point j < i with dp[j] already true and s[j..i) in the dictionary — so it is an OR over the split point rather than the sum a counting problem would give. Base case: dp[0] = true, because the empty prefix is broken by taking no words at all. The tell that greedy will not do is that a locally attractive piece can strand the remainder: take the longest match in 'aaab' with ['a','aaa','aab'] and you consume 'aaa', leaving an unbreakable 'b', even though a|aab succeeds. Whenever a local choice can be undone only by revisiting it, you need the table, not the heuristic.",
+  "optimized": {
+    "idea": "Left to right over prefix lengths, with a boolean table. For each end position i, look back over the possible last words: any j where dp[j] is true and s[j..i) is in the dictionary makes dp[i] true. Bounding j from below by i - (longest dictionary word) means the inner loop is over word lengths, not over the whole string.",
+    "code": [
+      "public static boolean wordBreak(String s, List<String> wordDict) {",
+      "    Set<String> words = new HashSet<>(wordDict);   // membership must be O(1), not a list scan",
+      "    int maxLen = 0;",
+      "    for (String word : wordDict) maxLen = Math.max(maxLen, word.length());",
+      "    int n = s.length();",
+      "    boolean[] dp = new boolean[n + 1];",
+      "    dp[0] = true;   // the empty prefix is broken by taking no words at all",
+      "    for (int i = 1; i <= n; i++) {",
+      "        for (int j = i - 1; j >= Math.max(0, i - maxLen); j--) {",
+      "            if (dp[j] && words.contains(s.substring(j, i))) {",
+      "                dp[i] = true;",
+      "                break;",
+      "            }",
+      "        }",
+      "    }",
+      "    return dp[n];",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n * maxLen^2)",
+      "space": "O(n + dictionary)"
+    }
+  },
+  "commonMistakes": [
+    "Reaching for a greedy longest-match scan instead of the table. It is fast and it is wrong: 'aaab' with ['a','aaa','aab'] consumes 'aaa' first, cannot break the leftover 'b', and reports false where the answer is true.",
+    "Initialising dp[0] = false because 'nothing has been matched yet'. No cell ever becomes true afterwards — dp[i] can only become true by building on an earlier true — so every input, including 'leetcode' with its exact two-word split, returns false.",
+    "Writing s.substring(j, i + 1) in the lookup. Java's substring is half-open, so the prefix of length i already ends at index i; the extra character shifts every candidate word by one, the dictionary never matches, and on the final cell the call throws StringIndexOutOfBoundsException."
+  ],
+  "similar": [
+    "decode-ways",
+    "coin-change",
+    "palindrome-partitioning",
+    "implement-trie"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 139,
+      "slug": "word-break",
+      "title": "Word Break",
+      "url": "https://leetcode.com/problems/word-break/",
+      "premium": false
+    }
+  }
+}

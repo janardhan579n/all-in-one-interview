@@ -1,0 +1,143 @@
+{
+  "id": "asteroid-collision",
+  "title": "Asteroid Collision",
+  "patternId": "stack",
+  "difficulty": "intermediate",
+  "tags": [
+    "stack",
+    "array",
+    "simulation"
+  ],
+  "statement": "Each element of an array represents an asteroid: the absolute value is its size and the sign is its direction — positive means moving right, negative means moving left. All asteroids move at the same speed. Two asteroids collide only when a right-mover is immediately to the left of a left-mover; the smaller one is destroyed, and if they are the same size both are destroyed. Two asteroids moving in the same direction never meet. Return the array of survivors, in order.",
+  "realWorld": "This is the shape of conflict resolution between two opposing streams merging into one lane: last-write-wins reconciliation where a newer record arriving from one replica must be compared against the most recent surviving record from the other, and losing that comparison hands the fight back to the record before it. Train-dispatch and elevator-scheduling simulators resolve head-on requests the same way.",
+  "examples": [
+    {
+      "input": "asteroids = [5,10,-5]",
+      "output": "[5,10]",
+      "explanation": "-5 meets 10 and is destroyed. 5 and 10 both move right, so they never meet each other."
+    },
+    {
+      "input": "asteroids = [10,2,-5]",
+      "output": "[10]",
+      "explanation": "-5 destroys 2, and then -5 keeps travelling and meets 10, which destroys it. One incoming asteroid can trigger a chain of comparisons — resolving only the first one is the classic bug."
+    },
+    {
+      "input": "asteroids = [8,-8]",
+      "output": "[]",
+      "explanation": "Equal sizes, so both are destroyed. The result can be empty."
+    }
+  ],
+  "constraints": [
+    "2 <= asteroids.length <= 10^4",
+    "-1000 <= asteroids[i] <= 1000 and asteroids[i] != 0",
+    "All asteroids move at the same speed"
+  ],
+  "bruteForce": {
+    "idea": "Simulate. Scan the list for an adjacent (positive, negative) pair, resolve it, remove whatever was destroyed, and restart the scan from the beginning. Stop when a full pass finds no collision.",
+    "code": [
+      "List<Integer> work = new ArrayList<>();",
+      "for (int a : asteroids) work.add(a);",
+      "boolean changed = true;",
+      "while (changed) {",
+      "    changed = false;",
+      "    for (int i = 0; i + 1 < work.size(); i++) {",
+      "        int left = work.get(i), right = work.get(i + 1);",
+      "        if (left > 0 && right < 0) {",
+      "            if (left < -right) work.remove(i);",
+      "            else if (left > -right) work.remove(i + 1);",
+      "            else { work.remove(i + 1); work.remove(i); }",
+      "            changed = true;",
+      "            break;",
+      "        }",
+      "    }",
+      "}",
+      "return work.stream().mapToInt(Integer::intValue).toArray();"
+    ],
+    "complexity": {
+      "time": "O(n^2)",
+      "space": "O(n)"
+    },
+    "whySlow": "After a removal the only place a new collision can possibly appear is the junction where the removal happened — the two asteroids that have just become neighbours. Restarting the scan at index 0 re-checks a prefix that nothing has touched and re-establishes, pair by pair, the stability it had already proven on the previous pass. On [1,2,3,...,n,-n] there are n removals and each one replays the untouched prefix, so the work is quadratic even though only n junctions ever needed examining."
+  },
+  "patternIdentification": "A surviving right-mover is only ever challenged by the next left-mover to arrive, and when it loses that challenge the fight passes to the right-mover immediately behind it — never to anything further away, and never to anything that has already been destroyed. 'Resolve against the most recent survivor, and on its death re-resolve against the one before it' is a stack, popped in a loop until the challenge settles. The transferable signal: when each new item is decided against the nearest still-standing earlier item, and losing propagates backwards one step at a time, the earlier items belong on a stack rather than in an array you rescan.",
+  "optimized": {
+    "idea": "Keep a stack of survivors, bottom to top in left-to-right order, and feed the asteroids in one at a time. A collision happens only when the incoming asteroid moves left and the stack top moves right — every other combination (both right, both left, or a left-mover on top) means they are separating or already past each other, so the incoming one just gets pushed. When they do collide there are three outcomes, and getting the loop continuation right is the whole exercise: if the stack top is smaller it is popped and the incoming asteroid survives *and must be compared again* with the next survivor down; if they are equal both die and the loop ends with nothing pushed; if the stack top is larger the incoming asteroid dies and the loop ends. Only the first outcome continues the loop.",
+    "code": [
+      "public static int[] asteroidCollision(int[] asteroids) {",
+      "    Deque<Integer> survivors = new ArrayDeque<>();   // used as a stack; the bottom is the leftmost survivor",
+      "    for (int a : asteroids) {",
+      "        boolean alive = true;",
+      "        while (alive && a < 0 && !survivors.isEmpty() && survivors.peek() > 0) {",
+      "            if (survivors.peek() < -a) {",
+      "                survivors.pop();      // the top loses, but `a` survives and must fight the NEXT survivor down",
+      "            } else if (survivors.peek() == -a) {",
+      "                survivors.pop();",
+      "                alive = false;        // equal sizes: both are destroyed",
+      "            } else {",
+      "                alive = false;        // the incoming asteroid is destroyed",
+      "            }",
+      "        }",
+      "        if (alive) survivors.push(a);",
+      "    }",
+      "    int[] result = new int[survivors.size()];",
+      "    for (int i = result.length - 1; i >= 0; i--) result[i] = survivors.pop();",
+      "    return result;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(n)"
+    }
+  },
+  "visualization": {
+    "engine": "stackOps",
+    "input": {
+      "operations": [
+        {
+          "op": "push",
+          "value": 10
+        },
+        {
+          "op": "push",
+          "value": 2
+        },
+        {
+          "op": "peek"
+        },
+        {
+          "op": "pop"
+        },
+        {
+          "op": "peek"
+        }
+      ]
+    },
+    "code": [
+      "Deque<Integer> survivors = new ArrayDeque<>();",
+      "if (alive) survivors.push(a);",
+      "while (a < 0 && !survivors.isEmpty() && survivors.peek() > 0) {",
+      "    if (survivors.peek() < -a) survivors.pop();   // top dies, keep comparing",
+      "}"
+    ]
+  },
+  "commonMistakes": [
+    "Resolving only one collision per incoming asteroid — an `if` where a `while` is needed, or a `break` after the first pop. [10,2,-5] then returns [10,2]: -5 destroys 2 and is never re-tested against 10. Every input whose collisions happen to be single-step still passes.",
+    "Dropping the direction guard and comparing magnitudes whenever the stack is non-empty — two same-direction asteroids are treated as a collision, so [-2,-1] returns [-2] instead of [-2,-1]. The symptom is asteroids disappearing from a list that contains no opposing pair at all.",
+    "Handling only `<` and `>` and forgetting the tie — [8,-8] returns [8] (or [-8], depending on which branch falls through) instead of []. Unequal-size tests all pass, so this survives until an input with two matched asteroids appears."
+  ],
+  "similar": [
+    "min-stack",
+    "evaluate-rpn",
+    "daily-temperatures",
+    "remove-k-digits"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 735,
+      "slug": "asteroid-collision",
+      "title": "Asteroid Collision",
+      "url": "https://leetcode.com/problems/asteroid-collision/",
+      "premium": false
+    }
+  }
+}

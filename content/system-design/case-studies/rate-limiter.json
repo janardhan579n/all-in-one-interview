@@ -1,0 +1,628 @@
+{
+  "id": "rate-limiter",
+  "title": "Design a Distributed Rate Limiter",
+  "difficulty": "intermediate",
+  "estimatedMinutes": 45,
+  "summary": "Enforce 'at most N requests per window per caller' across many servers, in under a millisecond, without becoming the bottleneck or the single point of failure.",
+  "interactive": "rate-limiter",
+  "steps": [
+    {
+      "key": "requirements",
+      "title": "1. Clarify the problem",
+      "content": "Questions worth asking before designing:\n\n- What is the identity being limited — user, API key, IP, or endpoint? (IP limiting punishes everyone behind a corporate NAT.)\n- Are limits global or per endpoint? Per plan tier?\n- Must the limit be exact, or is approximate acceptable? This single answer picks the algorithm.\n- What happens when the shared store is unavailable — fail open or fail closed?\n- Is it enforced at the edge, in a gateway, or inside each service?"
+    },
+    {
+      "key": "functional",
+      "title": "2. Functional requirements",
+      "content": "- Allow or reject each request against a configured limit for its key.\n- Return 429 with `Retry-After` and the `X-RateLimit-*` headers on rejection.\n- Support different limits per endpoint and per plan tier.\n- Limits configurable at runtime without a deploy.\n- Exempt health checks and internal traffic."
+    },
+    {
+      "key": "nonfunctional",
+      "title": "3. Non-functional requirements",
+      "content": "- **Latency**: the check must add under 1 ms at p99. It runs before every request, so its cost is paid on every request including the ones that get rejected.\n- **Accuracy**: approximate is acceptable for abuse prevention; exactness matters for billing.\n- **Availability**: higher than the service it protects. If the limiter is down, the service must still make a sensible decision.\n- **Scale**: 100,000 checks/s across many instances.\n- **Memory**: O(1) per key, not O(requests) — an algorithm whose memory grows with traffic is itself a denial-of-service vector."
+    },
+    {
+      "key": "estimation",
+      "title": "4. Estimation",
+      "content": "**Traffic**: 100,000 checks/s.\n\n**Keys**: 10M active API keys. Token bucket stores 2 values per key — token count and last-refill timestamp — about 50 bytes with overhead. 10M × 50 B = **500 MB**, which fits comfortably in one Redis node with room to spare.\n\nCompare with a sliding-window log: storing a timestamp per request for a 1-minute window at 100,000/s means 6 million timestamps at ~16 bytes = ~100 MB *per minute of traffic*, and it grows with load precisely when you are under attack. That asymmetry is the argument for token bucket in one sentence.\n\n**Redis throughput**: one node handles 100k+ ops/s, so a single node suffices; shard by key if you outgrow it, which is trivial because keys are independent."
+    },
+    {
+      "key": "algorithms",
+      "title": "5. Choosing the algorithm",
+      "content": "**Fixed window** — one counter per key per window. Simplest, O(1) memory. Fatal flaw: a client can send the full limit at the end of one window and the full limit at the start of the next, achieving 2× the intended rate across the boundary.\n\n**Sliding window log** — store every request timestamp, drop those outside the window, count what remains. Exactly correct, but memory grows with traffic.\n\n**Sliding window counter** — keep the current and previous window counters and weight the previous one by how much of it still overlaps. O(1) memory, close to exact. A good middle ground.\n\n**Token bucket** — tokens refill at a constant rate up to a capacity; each request costs one token. O(1) memory, allows bursts up to the capacity while capping the sustained rate, and matches how real clients behave (a page load fires ten requests at once).\n\n**Leaky bucket** — requests queue and drain at a fixed rate. Perfectly smooth output, no burst allowance.\n\n**Choice: token bucket**, because O(1) state, burst tolerance and a lazy refill computation that needs no background timer."
+    },
+    {
+      "key": "algorithm-detail",
+      "title": "6. Token bucket, precisely",
+      "content": "State per key: `tokens` (a float) and `lastRefillMillis`.\n\nOn each request:\n1. `elapsed = now - lastRefillMillis`\n2. `tokens = min(capacity, tokens + elapsed × refillRatePerMs)`\n3. `lastRefillMillis = now`\n4. If `tokens >= 1`, decrement and allow. Otherwise reject, and compute `Retry-After` as the time until one token accrues.\n\nThe refill is computed lazily from elapsed time rather than by a background job — no timers, no sweeping, and a key that is never touched costs nothing."
+    },
+    {
+      "key": "distributed",
+      "title": "7. Making it work across many servers",
+      "content": "With 50 API instances, per-instance counters mean the effective limit is 50× the intended one. The state must be shared.\n\n**The race**: read-modify-write against Redis from many instances is not atomic, so two instances can both read 1 token remaining and both allow. The fix is to make the whole check atomic — a Lua script evaluated inside Redis, or an atomic INCR with an expiry for the counter-based algorithms. This is the detail that separates a working distributed limiter from one that leaks 2× under concurrency.\n\n**Latency**: one Redis round trip is ~0.5 ms, which meets the budget. If it did not, the usual answer is a local token bucket per instance holding a fraction of the global budget, periodically reconciled — approximate, but with no per-request network call."
+    },
+    {
+      "key": "failure",
+      "title": "8. When Redis is down",
+      "content": "There is no universally correct answer, and being able to argue both sides is the point of the question.\n\n**Fail open** — allow everything. The service stays usable but unprotected; an ongoing attack gets through. Standard for public APIs where availability outranks protection.\n\n**Fail closed** — reject everything. The backend is protected but you have created an outage from a dependency failure. Appropriate when the downstream is fragile or expensive.\n\n**The usual compromise**: fail open globally, while each instance falls back to a conservative local limit (global limit ÷ instance count). Traffic is still bounded, no request is wrongly rejected because of an infrastructure failure, and the protection degrades gracefully rather than vanishing."
+    },
+    {
+      "key": "placement",
+      "title": "9. Where to enforce it",
+      "content": "**At the edge / CDN**: cheapest — rejected traffic never reaches your infrastructure at all. Least context about who the caller is.\n\n**At the API gateway**: the usual choice. One implementation, full request context, still before any application work.\n\n**In each service**: most context (can limit by business rules), but duplicated logic and the request has already consumed connection and parsing resources.\n\nMany systems use all three: coarse volumetric limits at the edge, per-key limits at the gateway, and per-operation limits inside services for genuinely expensive endpoints."
+    },
+    {
+      "key": "response",
+      "title": "10. What to return",
+      "content": "Status **429 Too Many Requests**, with:\n\n- `Retry-After: 30` — seconds until the caller may retry\n- `X-RateLimit-Limit: 1000`\n- `X-RateLimit-Remaining: 0`\n- `X-RateLimit-Reset: 1699999999`\n\nReturning the headers on *successful* responses too lets well-behaved clients slow down before they are rejected, which is the outcome everyone prefers. Add jitter guidance: if every rejected client retries exactly after `Retry-After`, they all return simultaneously and you have built a synchronised thundering herd."
+    },
+    {
+      "key": "tradeoffs",
+      "title": "11. Trade-offs",
+      "content": "- Exactness versus memory: sliding-window log is exact but unbounded; token bucket is approximate and O(1).\n- Shared state versus latency: central Redis is accurate but adds a network hop; local buckets are fast but approximate.\n- Fail open versus fail closed: availability versus protection.\n- Per-user versus per-IP: per-IP is available before authentication but punishes shared NATs; per-user is fairer but requires an authenticated request, so login endpoints still need IP-based limits."
+    },
+    {
+      "key": "final",
+      "title": "12. Final design",
+      "content": "Token bucket, state in Redis, the check implemented as an atomic Lua script, enforced at the API gateway, with per-instance local fallback buckets when Redis is unreachable, and configuration pushed at runtime. Volumetric protection sits in front at the CDN.\n\nThe interactive simulator on this page runs the real token-bucket maths — change the rate and burst and watch which requests are rejected."
+    }
+  ],
+  "estimation": {
+    "assumptions": [
+      "100,000 rate-limit checks/s",
+      "10M active API keys",
+      "Token bucket: ~50 bytes of state per key",
+      "1-minute windows"
+    ],
+    "calculations": [
+      {
+        "label": "Memory, token bucket",
+        "value": "~500 MB",
+        "working": "10M keys × 50 bytes — one Redis node"
+      },
+      {
+        "label": "Memory, sliding window log",
+        "value": "~100 MB per minute of traffic",
+        "working": "6M requests/min × 16 bytes, and it grows under attack"
+      },
+      {
+        "label": "Redis ops needed",
+        "value": "100k/s",
+        "working": "one atomic script call per request — within a single node's capacity"
+      },
+      {
+        "label": "Added latency",
+        "value": "~0.5 ms",
+        "working": "one same-datacentre Redis round trip"
+      }
+    ]
+  },
+  "api": [
+    {
+      "method": "ANY",
+      "path": "(gateway middleware)",
+      "request": "key = apiKey or userId or IP; cost = 1",
+      "response": "allow / deny + remaining + resetAt",
+      "notes": "Runs before routing. Must be O(1) and allocation-free on the hot path."
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/limits/{key}",
+      "request": "—",
+      "response": "200 { \"limit\": 1000, \"remaining\": 842, \"resetAt\": \"…\" }",
+      "notes": "Lets clients self-regulate rather than discovering the limit by being rejected."
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/limits/{tier}",
+      "request": "{ \"capacity\": 1000, \"refillPerSecond\": 16.6 }",
+      "response": "204",
+      "notes": "Runtime configuration, no deploy. Admin only."
+    }
+  ],
+  "dataModel": [
+    {
+      "name": "Redis key: rl:{scope}:{key}",
+      "fields": [
+        {
+          "name": "tokens",
+          "type": "float",
+          "notes": "current allowance"
+        },
+        {
+          "name": "last_refill_ms",
+          "type": "long",
+          "notes": "epoch millis of the last computation"
+        }
+      ],
+      "indexes": [
+        "TTL set to a few multiples of the refill period so idle keys evict themselves"
+      ]
+    },
+    {
+      "name": "limit_config (relational, cached in memory)",
+      "fields": [
+        {
+          "name": "tier",
+          "type": "VARCHAR",
+          "notes": "free / pro / enterprise"
+        },
+        {
+          "name": "endpoint_pattern",
+          "type": "VARCHAR",
+          "notes": "e.g. /api/v1/search"
+        },
+        {
+          "name": "capacity",
+          "type": "INT",
+          "notes": "burst size"
+        },
+        {
+          "name": "refill_per_second",
+          "type": "FLOAT",
+          "notes": "sustained rate"
+        }
+      ],
+      "indexes": [
+        "PRIMARY KEY (tier, endpoint_pattern)"
+      ]
+    }
+  ],
+  "evolution": [
+    {
+      "stage": "Stage 1 — one server",
+      "problem": "One abusive client can consume all capacity.",
+      "change": "An in-memory token bucket per key inside the single app server.",
+      "why": "With one instance, in-process state IS the global state. No network hop, no coordination, sub-microsecond checks. Correct and complete — until there are two servers.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "client",
+            "label": "Clients",
+            "type": "client",
+            "x": 180,
+            "y": 300
+          },
+          {
+            "id": "app",
+            "label": "App server\\n(in-memory buckets)",
+            "type": "server",
+            "x": 520,
+            "y": 300,
+            "note": "HashMap<key, Bucket>. Exact, and free."
+          },
+          {
+            "id": "db",
+            "label": "Database",
+            "type": "db",
+            "x": 850,
+            "y": 300
+          }
+        ],
+        "edges": [
+          {
+            "from": "client",
+            "to": "app"
+          },
+          {
+            "from": "app",
+            "to": "db"
+          }
+        ]
+      }
+    },
+    {
+      "stage": "Stage 2 — several servers, and the limit stops working",
+      "problem": "With 5 instances each holding its own counters, a client spreading requests across them gets 5× the intended limit. The limit is silently wrong, which is worse than having none.",
+      "change": "Move the bucket state to shared Redis.",
+      "why": "The limit is a property of the caller, not of the machine that happened to answer. Shared state is the only way to enforce a global budget — and the check must become atomic, because read-modify-write from 5 instances races.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "client",
+            "label": "Clients",
+            "type": "client",
+            "x": 110,
+            "y": 300
+          },
+          {
+            "id": "lb",
+            "label": "Load Balancer",
+            "type": "lb",
+            "x": 330,
+            "y": 300
+          },
+          {
+            "id": "app1",
+            "label": "App 1",
+            "type": "server",
+            "x": 570,
+            "y": 190
+          },
+          {
+            "id": "app2",
+            "label": "App 2",
+            "type": "server",
+            "x": 570,
+            "y": 410
+          },
+          {
+            "id": "redis",
+            "label": "Redis\\n(atomic Lua check)",
+            "type": "cache",
+            "x": 840,
+            "y": 300,
+            "note": "One round trip, ~0.5 ms. The script makes refill+consume a single atomic operation."
+          }
+        ],
+        "edges": [
+          {
+            "from": "client",
+            "to": "lb"
+          },
+          {
+            "from": "lb",
+            "to": "app1"
+          },
+          {
+            "from": "lb",
+            "to": "app2"
+          },
+          {
+            "from": "app1",
+            "to": "redis"
+          },
+          {
+            "from": "app2",
+            "to": "redis"
+          }
+        ]
+      }
+    },
+    {
+      "stage": "Stage 3 — the limiter becomes the weak point",
+      "problem": "Redis is now on the critical path for every single request. If it is slow, everything is slow; if it is down, you must choose between an outage and an unprotected service.",
+      "change": "Move enforcement into the API gateway, add per-instance local fallback buckets, and replicate Redis.",
+      "why": "Rejecting at the gateway means bad traffic never reaches application servers at all. The local fallback bounds traffic even when Redis is unreachable, converting a hard dependency into a degraded mode — the limiter must be more available than the service it protects.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "client",
+            "label": "Clients",
+            "type": "client",
+            "x": 90,
+            "y": 300
+          },
+          {
+            "id": "gw",
+            "label": "API Gateway\\n(limit enforced here)",
+            "type": "proxy",
+            "x": 330,
+            "y": 300,
+            "note": "Rejected requests never reach the app tier."
+          },
+          {
+            "id": "local",
+            "label": "Local fallback bucket",
+            "type": "cache",
+            "x": 330,
+            "y": 130,
+            "note": "Used only when Redis is unreachable: global limit ÷ instance count."
+          },
+          {
+            "id": "redis",
+            "label": "Redis primary",
+            "type": "cache",
+            "x": 600,
+            "y": 190
+          },
+          {
+            "id": "redisr",
+            "label": "Redis replica",
+            "type": "replica",
+            "x": 600,
+            "y": 410
+          },
+          {
+            "id": "app",
+            "label": "App servers",
+            "type": "server",
+            "x": 880,
+            "y": 300
+          }
+        ],
+        "edges": [
+          {
+            "from": "client",
+            "to": "gw"
+          },
+          {
+            "from": "gw",
+            "to": "redis"
+          },
+          {
+            "from": "redis",
+            "to": "redisr",
+            "dashed": true
+          },
+          {
+            "from": "gw",
+            "to": "local",
+            "label": "on Redis failure",
+            "dashed": true
+          },
+          {
+            "from": "gw",
+            "to": "app",
+            "label": "admitted only"
+          }
+        ]
+      }
+    },
+    {
+      "stage": "Stage 4 — global, and under attack",
+      "problem": "Volumetric attacks saturate the gateway's bandwidth before any rate-limit logic runs. Cross-region checks against one Redis cost 150 ms.",
+      "change": "Coarse volumetric limits at the CDN edge, regional Redis clusters for per-key limits, accepting approximate global enforcement.",
+      "why": "You cannot rate-limit traffic that has already consumed your bandwidth — the edge is the only place to drop it cheaply. Regional state means a client could get the limit in each region; for abuse prevention that approximation is fine, and the alternative (synchronous cross-region coordination on every request) costs more than the problem it solves.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "u",
+            "label": "Global users",
+            "type": "client",
+            "x": 90,
+            "y": 300
+          },
+          {
+            "id": "cdn",
+            "label": "CDN edge\\n(volumetric limits)",
+            "type": "cdn",
+            "x": 310,
+            "y": 300,
+            "note": "Drops floods before they cost you anything."
+          },
+          {
+            "id": "gw1",
+            "label": "Gateway (Asia)",
+            "type": "proxy",
+            "x": 570,
+            "y": 180
+          },
+          {
+            "id": "gw2",
+            "label": "Gateway (EU)",
+            "type": "proxy",
+            "x": 570,
+            "y": 420
+          },
+          {
+            "id": "r1",
+            "label": "Redis (Asia)",
+            "type": "cache",
+            "x": 830,
+            "y": 180
+          },
+          {
+            "id": "r2",
+            "label": "Redis (EU)",
+            "type": "cache",
+            "x": 830,
+            "y": 420
+          },
+          {
+            "id": "app",
+            "label": "Services",
+            "type": "server",
+            "x": 1000,
+            "y": 300
+          }
+        ],
+        "edges": [
+          {
+            "from": "u",
+            "to": "cdn"
+          },
+          {
+            "from": "cdn",
+            "to": "gw1"
+          },
+          {
+            "from": "cdn",
+            "to": "gw2"
+          },
+          {
+            "from": "gw1",
+            "to": "r1"
+          },
+          {
+            "from": "gw2",
+            "to": "r2"
+          },
+          {
+            "from": "gw1",
+            "to": "app"
+          },
+          {
+            "from": "gw2",
+            "to": "app"
+          }
+        ]
+      }
+    }
+  ],
+  "tradeoffs": [
+    {
+      "option": "Central Redis state",
+      "pros": [
+        "Accurate global enforcement",
+        "One place to inspect and configure"
+      ],
+      "cons": [
+        "A network hop on every request",
+        "A new critical dependency",
+        "A hot key can become a hotspot"
+      ]
+    },
+    {
+      "option": "Local per-instance buckets",
+      "pros": [
+        "Zero added latency",
+        "No shared dependency to fail"
+      ],
+      "cons": [
+        "Effective limit multiplies by the instance count unless budgets are divided",
+        "Inaccurate as instances scale in and out"
+      ]
+    },
+    {
+      "option": "Token bucket",
+      "pros": [
+        "O(1) memory",
+        "Tolerates natural bursts",
+        "Lazy refill needs no timers"
+      ],
+      "cons": [
+        "Approximate",
+        "Two parameters to tune per tier"
+      ]
+    },
+    {
+      "option": "Sliding window log",
+      "pros": [
+        "Exact at every instant"
+      ],
+      "cons": [
+        "Memory grows with request volume — worst exactly when under attack"
+      ]
+    }
+  ],
+  "interviewStages": [
+    {
+      "key": "requirements",
+      "prompt": "What do you need to know before designing a rate limiter?",
+      "hints": [
+        "What is the unit of identity?",
+        "Does it need to be exact?",
+        "What happens when the shared store fails?"
+      ],
+      "modelAnswer": [
+        "Limit by user, API key, or IP — each has different availability and fairness properties",
+        "Exact or approximate: this picks the algorithm",
+        "Fail open or fail closed",
+        "Where it is enforced: edge, gateway, or service"
+      ]
+    },
+    {
+      "key": "algorithm",
+      "prompt": "Which algorithm, and why not the others?",
+      "hints": [
+        "Think about memory per key and behaviour at window boundaries"
+      ],
+      "modelAnswer": [
+        "Token bucket: O(1) state, burst tolerance, lazy refill",
+        "Fixed window allows 2× across a boundary",
+        "Sliding log is exact but its memory grows with traffic — a vulnerability, not just a cost",
+        "Leaky bucket smooths perfectly but forbids legitimate bursts"
+      ]
+    },
+    {
+      "key": "distributed",
+      "prompt": "You have 50 API servers. How do you enforce one global limit?",
+      "hints": [
+        "What goes wrong with per-instance counters?",
+        "What race appears with shared state?"
+      ],
+      "modelAnswer": [
+        "Per-instance counters give 50× the intended limit",
+        "Shared state in Redis, with the whole refill-and-consume step atomic (Lua script or INCR+EXPIRE)",
+        "Without atomicity, concurrent instances both see the last token and both allow"
+      ]
+    },
+    {
+      "key": "failure",
+      "prompt": "Redis becomes unavailable. What is your behaviour?",
+      "hints": [
+        "Argue both sides",
+        "Is there a middle option?"
+      ],
+      "modelAnswer": [
+        "Fail open: available but unprotected. Fail closed: protected but an outage",
+        "Most public APIs fail open, because an infrastructure failure should not reject legitimate users",
+        "Better: fail open globally with a conservative per-instance local bucket, so traffic stays bounded"
+      ]
+    },
+    {
+      "key": "response",
+      "prompt": "What exactly do you return to a rejected client?",
+      "hints": [
+        "Status code and headers",
+        "What happens if every client obeys Retry-After precisely?"
+      ],
+      "modelAnswer": [
+        "429 with Retry-After and X-RateLimit-Limit/Remaining/Reset",
+        "Send the headers on success too, so clients can slow down before being rejected",
+        "Advise jitter — synchronised retries recreate the spike you just rejected"
+      ]
+    }
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "architecture",
+      "question": "Five API servers each keep their own in-memory counters for a 100/min limit. What is the effective limit?",
+      "options": [
+        "100/min",
+        "500/min — each instance enforces its own 100",
+        "20/min",
+        "Unlimited"
+      ],
+      "answerIndex": 1,
+      "explanation": "A limit is a property of the caller, not of the server that answered. This is the single most common bug in hand-rolled rate limiters, and it is silent."
+    },
+    {
+      "id": "q2",
+      "type": "architecture",
+      "question": "Why is a sliding-window log a risky choice under attack?",
+      "options": [
+        "It is inaccurate",
+        "Its memory grows with request volume, so an attack inflates the limiter's own memory use — the defence amplifies the attack",
+        "It is slow to compute",
+        "It cannot be distributed"
+      ],
+      "answerIndex": 1,
+      "explanation": "O(requests) memory in a component designed to absorb floods is a poor combination. Token bucket keeps O(1) state per key regardless of how much traffic arrives."
+    },
+    {
+      "id": "q3",
+      "type": "architecture",
+      "question": "Two gateway instances concurrently read '1 token remaining' from Redis and both allow the request. What is the fix?",
+      "options": [
+        "Add more Redis nodes",
+        "Make the read-refill-write sequence atomic — a Lua script inside Redis, or INCR with EXPIRE",
+        "Use a longer window",
+        "Use local counters"
+      ],
+      "answerIndex": 1,
+      "explanation": "Read-modify-write over the network is not atomic. Pushing the whole decision into a single server-side operation eliminates the race."
+    },
+    {
+      "id": "q4",
+      "type": "mcq",
+      "question": "Which status code and header should a rejected request receive?",
+      "options": [
+        "503 with Retry-After",
+        "429 with Retry-After",
+        "403 with no headers",
+        "400 with an error body"
+      ],
+      "answerIndex": 1,
+      "explanation": "429 Too Many Requests is specifically for this. Retry-After tells a well-behaved client exactly when to come back — and advising jitter prevents synchronised retries."
+    }
+  ],
+  "related": [
+    "rate-limiting",
+    "cache",
+    "api",
+    "load-balancer"
+  ]
+}

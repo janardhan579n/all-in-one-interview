@@ -1,0 +1,261 @@
+{
+  "id": "recursion",
+  "kind": "foundation",
+  "title": "Recursion",
+  "group": "Foundations",
+  "level": 2,
+  "difficulty": "intermediate",
+  "estimatedMinutes": 30,
+  "summary": "A function that solves a problem by calling itself on a strictly smaller version of the same problem, with a base case that stops the descent.",
+  "prerequisites": [
+    "loops-and-functions"
+  ],
+  "tags": [
+    "recursion",
+    "call-stack",
+    "divide-and-conquer",
+    "level-2"
+  ],
+  "analogy": {
+    "beginner": "You're in a cinema and want to know which row you're in. You can't see the front. So you tap the person in front and ask 'which row are you in?'. They don't know either, so they ask the person in front of them. Eventually someone in row 1 says 'row 1' — that's the base case. Then the answer travels back: row 1 → I'm row 2 → I'm row 3 … Each person does almost no work: ask one question, add one, pass it back.",
+    "interview": "Recursion expresses a problem in terms of smaller instances of itself. Correctness requires a base case, a recursive case that strictly reduces the problem size, and a guarantee that the reduction terminates. Each call consumes a stack frame, so the recursion depth is the space cost."
+  },
+  "intuition": "The mental trap everyone hits is trying to trace the whole thing in your head — call inside call inside call. Don't. Instead, take the **recursive leap of faith**:\n\n1. Assume the function already works correctly for any smaller input.\n2. Ask: given that correct answer for the smaller input, how do I build the answer for mine?\n3. Handle the smallest case directly.\n\nIf those three hold and the input genuinely shrinks, the function is correct. That's it. The machine handles the bookkeeping on the call stack.\n\nRecursion is the natural language of anything with a self-similar shape: a tree's subtree is a tree, a sorted half of an array is a sorted array, a folder inside a folder is a folder. Trees, graphs, backtracking, divide-and-conquer sorting and dynamic programming all start here — which is why this lesson is a gate to Level 3.",
+  "problemFirst": {
+    "motivatingProblem": "Count the files inside a folder — including files inside subfolders, and folders inside those, nested as deeply as the user likes. You do not know the depth in advance.",
+    "bruteForce": {
+      "idea": "With loops you would need one loop per level of nesting. Three nested loops handle three levels. But the depth is unknown, so no fixed number of loops can be correct. You could simulate it with an explicit stack — which works, and is exactly what the machine does for you under recursion.",
+      "code": [
+        "// Only correct for exactly 2 levels of nesting. Fragile and wrong in general.",
+        "int count = 0;",
+        "for (File entry : root.listFiles()) {",
+        "    if (entry.isFile()) count++;",
+        "    else for (File inner : entry.listFiles()) {",
+        "        if (inner.isFile()) count++;",
+        "        // ... and a third level? a fourth?",
+        "    }",
+        "}"
+      ],
+      "complexity": {
+        "time": "O(n)",
+        "space": "O(1)"
+      },
+      "whySlow": "Not slow — simply incapable. The code's structure must mirror the data's structure, and the data is arbitrarily deep. When you cannot write enough loops, you need recursion."
+    },
+    "observation": "A folder's contents are files plus… more folders, which have exactly the same shape as the thing we started with.",
+    "leap": "Define the answer in terms of itself: countFiles(folder) = (files directly inside) + sum of countFiles(each subfolder). One line, any depth."
+  },
+  "howItWorks": [
+    "**Base case** — the smallest input you can answer without recursing. Write it first. A missing or wrong base case is the cause of nearly every `StackOverflowError`.",
+    "**Recursive case** — call yourself on a strictly smaller input.",
+    "**Combine** — turn the sub-answer(s) into your answer.",
+    "**The call stack** — each call gets its own frame holding its own parameters and locals. Frames are popped as calls return, in reverse order. Java's default stack allows roughly 10,000–20,000 frames.",
+    "**Work on the way down vs on the way up** — code before the recursive call runs top-down (pre-order); code after it runs bottom-up (post-order). Choosing which side to put your work on is often the whole trick."
+  ],
+  "patternRecognition": {
+    "signals": [
+      "The data structure is self-similar: trees, nested folders, JSON, graphs",
+      "The problem says 'all combinations / all subsets / all paths'",
+      "You can express the answer for n in terms of n-1 or n/2",
+      "You would need an unknown number of nested loops"
+    ],
+    "antiSignals": [
+      "A simple linear scan does it — recursion adds stack cost for nothing",
+      "The depth could reach millions (recursion will overflow; convert to an explicit stack)"
+    ],
+    "decisionTreeId": null
+  },
+  "visualizations": [
+    {
+      "id": "factorial-stack",
+      "title": "The call stack growing and unwinding: factorial(5)",
+      "engine": "recursionTrace",
+      "input": {
+        "kind": "factorial",
+        "n": 5
+      },
+      "code": [
+        "int factorial(int n) {",
+        "    if (n <= 1) {",
+        "        return 1;",
+        "    }",
+        "    return n * factorial(n - 1);",
+        "}"
+      ]
+    },
+    {
+      "id": "fib-tree",
+      "title": "Why naive fib(n) is exponential: the call tree",
+      "engine": "recursionTrace",
+      "input": {
+        "kind": "fib",
+        "n": 5
+      },
+      "code": [
+        "int fib(int n) {",
+        "    if (n <= 1) {",
+        "        return n;",
+        "    }",
+        "    return fib(n - 1) + fib(n - 2);",
+        "}"
+      ]
+    }
+  ],
+  "implementations": [
+    {
+      "label": "Simple",
+      "language": "java",
+      "explanation": "Base case first, then the leap of faith. Read the last line as: 'assuming factorial(n-1) is already correct, my answer is n times it.'",
+      "code": [
+        "public static long factorial(int n) {",
+        "    if (n < 0) throw new IllegalArgumentException(\"n must be >= 0\");",
+        "    if (n <= 1) return 1;              // base case",
+        "    return n * factorial(n - 1);       // recursive case, strictly smaller",
+        "}",
+        "",
+        "public static int countFiles(File folder) {",
+        "    int count = 0;",
+        "    File[] entries = folder.listFiles();",
+        "    if (entries == null) return 0;     // base case: not a folder / unreadable",
+        "    for (File entry : entries) {",
+        "        count += entry.isFile() ? 1 : countFiles(entry);",
+        "    }",
+        "    return count;",
+        "}"
+      ]
+    },
+    {
+      "label": "Optimized",
+      "language": "java",
+      "explanation": "Naive fib re-computes the same values exponentially many times — fib(5) computes fib(2) three times. Memoising turns O(2ⁿ) into O(n). This is literally the first step of Dynamic Programming: recursion plus a cache.",
+      "code": [
+        "// O(2^n) — every call spawns two more",
+        "int fibSlow(int n) {",
+        "    return n <= 1 ? n : fibSlow(n - 1) + fibSlow(n - 2);",
+        "}",
+        "",
+        "// O(n) time, O(n) space — each value computed once",
+        "long fibMemo(int n, long[] memo) {",
+        "    if (n <= 1) return n;",
+        "    if (memo[n] != 0) return memo[n];      // already known",
+        "    memo[n] = fibMemo(n - 1, memo) + fibMemo(n - 2, memo);",
+        "    return memo[n];",
+        "}",
+        "",
+        "// O(n) time, O(1) space — no recursion at all",
+        "long fibIterative(int n) {",
+        "    long prev = 0, curr = 1;",
+        "    for (int i = 0; i < n; i++) {",
+        "        long next = prev + curr;",
+        "        prev = curr;",
+        "        curr = next;",
+        "    }",
+        "    return prev;",
+        "}"
+      ]
+    }
+  ],
+  "complexity": {
+    "time": "(number of calls) × (work per call)",
+    "space": "O(maximum depth) for the call stack, plus anything you allocate",
+    "why": "Count the calls, not the lines. factorial(n) makes n calls doing O(1) work each → O(n) time, O(n) stack. Naive fib(n) makes roughly 2ⁿ calls → exponential time but only O(n) stack, because at any instant only one root-to-leaf path is live. Binary search recurses on half the array: n → n/2 → n/4 … → 1 is log₂ n calls → O(log n). Merge sort makes O(n) work at each of log n levels → O(n log n)."
+  },
+  "commonMistakes": [
+    {
+      "mistake": "No base case, or a base case that is never reached",
+      "fix": "`StackOverflowError`. Write the base case before the recursive call, and check the recursive call always moves towards it."
+    },
+    {
+      "mistake": "The recursive call doesn't make the input smaller",
+      "fix": "`solve(n)` calling `solve(n)` — infinite. Every path must strictly reduce the problem."
+    },
+    {
+      "mistake": "Mutating a shared list and forgetting to undo it",
+      "fix": "In backtracking, whatever you add before recursing must be removed after. See the Backtracking lesson."
+    },
+    {
+      "mistake": "Recursing on user-controlled depth",
+      "fix": "Parsing deeply nested JSON from an untrusted source is a real denial-of-service vector. Cap the depth or use an explicit stack."
+    },
+    {
+      "mistake": "Assuming Java optimises tail calls",
+      "fix": "It does not. Deep tail recursion still overflows; convert to a loop."
+    }
+  ],
+  "realWorldUses": [
+    "Walking file systems, JSON/XML documents, HTML DOM trees, and abstract syntax trees in compilers.",
+    "Divide-and-conquer algorithms: merge sort, quicksort, binary search.",
+    "Every tree and graph traversal in the next few lessons."
+  ],
+  "interviewNotes": [
+    "Say the base case out loud first. It shows you know where the recursion stops.",
+    "'What's the space complexity?' on a recursive solution is asking about stack depth — it is O(h) for a tree of height h, which is O(n) for a skewed tree and O(log n) for a balanced one.",
+    "If an interviewer says 'can you do this iteratively?', they mean: replace the call stack with an explicit `Deque`."
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "mcq",
+      "question": "What happens if a recursive function has no reachable base case?",
+      "options": [
+        "It returns null",
+        "It loops forever with no error",
+        "It throws StackOverflowError once stack frames are exhausted",
+        "The compiler rejects it"
+      ],
+      "answerIndex": 2,
+      "explanation": "Each call consumes a stack frame. When the stack is exhausted the JVM throws StackOverflowError. The compiler cannot detect this in general."
+    },
+    {
+      "id": "q2",
+      "type": "complexity",
+      "question": "What is the time complexity of the naive `fib(n) = fib(n-1) + fib(n-2)`?",
+      "options": [
+        "O(n)",
+        "O(n log n)",
+        "O(n²)",
+        "O(2ⁿ)"
+      ],
+      "answerIndex": 3,
+      "explanation": "Each call spawns two more, so the call tree roughly doubles per level — about 2ⁿ nodes. The same subproblems are recomputed over and over, which is precisely the redundancy memoisation removes."
+    },
+    {
+      "id": "q3",
+      "type": "mcq",
+      "question": "What is the space complexity of recursively computing factorial(n)?",
+      "options": [
+        "O(1)",
+        "O(log n)",
+        "O(n) for the call stack",
+        "O(n²)"
+      ],
+      "answerIndex": 2,
+      "explanation": "n nested calls are live simultaneously before any returns, so n stack frames exist at peak. The iterative version is O(1)."
+    },
+    {
+      "id": "q4",
+      "type": "identify-pattern",
+      "question": "You must list every possible way to place 8 queens on a chessboard so none attack each other. Which idea does this need?",
+      "options": [
+        "Sliding Window",
+        "Recursion with backtracking",
+        "Binary Search",
+        "Prefix Sum"
+      ],
+      "answerIndex": 1,
+      "explanation": "'List every possible arrangement' with a validity constraint is the signature of backtracking: recurse to build a partial solution, abandon branches that violate the constraint, undo and try the next option."
+    }
+  ],
+  "practiceProblems": [
+    "fibonacci-memo",
+    "power-function",
+    "tower-of-hanoi",
+    "climbing-stairs",
+    "max-depth-binary-tree"
+  ],
+  "related": [
+    "trees",
+    "backtracking",
+    "dynamic-programming-basics"
+  ]
+}

@@ -1,0 +1,102 @@
+{
+  "id": "minimum-arrows-burst-balloons",
+  "title": "Minimum Number of Arrows to Burst Balloons",
+  "patternId": "intervals",
+  "difficulty": "intermediate",
+  "tags": [
+    "intervals",
+    "greedy",
+    "sorting"
+  ],
+  "statement": "Each balloon is given as points[i] = [start, end] and occupies that closed horizontal span. An arrow shot vertically at coordinate x bursts every balloon whose span contains x, that is every balloon with start <= x <= end, and it travels infinitely upward so one arrow can burst any number of balloons. Return the minimum number of arrows needed to burst all of them.",
+  "realWorld": "The minimum number of probe timestamps that observe every pending session: each session is live over a window, and you want the fewest sampling moments that catch all of them. The same computation picks the fewest maintenance ticks that intersect every scheduled job window, or the fewest snapshots that cover every open transaction.",
+  "examples": [
+    {
+      "input": "points = [[10,16],[2,8],[1,6],[7,12]]",
+      "output": "2",
+      "explanation": "Sorted by end: [1,6], [2,8], [7,12], [10,16]. An arrow at 6 bursts the first two; an arrow at 12 bursts the last two. Note the arrow position is always the end of the balloon that closed first."
+    },
+    {
+      "input": "points = [[1,2],[3,4],[5,6],[7,8]]",
+      "output": "4",
+      "explanation": "Nothing overlaps, so every balloon needs its own arrow. The answer to this problem is exactly the size of the largest set of pairwise disjoint balloons."
+    },
+    {
+      "input": "points = [[1,2],[2,3],[3,4],[4,5]]",
+      "output": "2",
+      "explanation": "The spans are closed, so touching at a single coordinate counts as overlapping: an arrow at 2 bursts [1,2] and [2,3], and an arrow at 4 bursts [3,4] and [4,5]. This is the example that decides whether your comparison is > or >=."
+    }
+  ],
+  "constraints": [
+    "1 <= points.length <= 10^5",
+    "-2^31 <= start <= end <= 2^31 - 1, so both the comparator and the 'last arrow' variable have to survive the extremes",
+    "Spans are closed: an arrow at exactly start or exactly end bursts the balloon"
+  ],
+  "bruteForce": {
+    "idea": "Search over arrow placements. Only endpoints are worth trying, so for the first unburst balloon try shooting at each of its candidate coordinates, remove everything that bursts, and recurse on the rest, keeping the best total.",
+    "code": [
+      "int best(boolean[] burst, int[][] points) {",
+      "    int first = -1;",
+      "    for (int i = 0; i < points.length; i++) if (!burst[i]) { first = i; break; }",
+      "    if (first == -1) return 0;",
+      "    int answer = Integer.MAX_VALUE;",
+      "    for (int x = points[first][0]; x <= points[first][1]; x++) {   // try every arrow position",
+      "        boolean[] next = burst.clone();",
+      "        for (int i = 0; i < points.length; i++) {",
+      "            if (!next[i] && points[i][0] <= x && x <= points[i][1]) next[i] = true;",
+      "        }",
+      "        answer = Math.min(answer, 1 + best(next, points));",
+      "    }",
+      "    return answer;",
+      "}"
+    ],
+    "complexity": {
+      "time": "Exponential",
+      "space": "O(n) per recursion level"
+    },
+    "whySlow": "The search treats the arrow's position as a free choice and re-explores, at every level, which balloon each arrow should belong to. But the position is never actually free: among all the coordinates that cover the first balloon, shooting at its end coordinate bursts a superset of what any earlier coordinate bursts, and among all balloons, the one that ends earliest constrains the arrow the most. Every branch of the recursion spends its time rediscovering that same fact in a different order."
+  },
+  "patternIdentification": "Sort by END, not by start — and recognise this as a family, because that is the transferable part. Any problem asking for the maximum number of mutually disjoint intervals, or the minimum number of points that stab them all, or the fewest intervals to delete so the rest are disjoint, is solved by repeatedly committing to the interval that finishes earliest. Finishing earliest leaves the largest possible remainder of the line free, so no other first choice can beat it — the exchange argument: take any optimal solution, swap its first commitment for the earliest-ending interval, and the result is still valid and no larger, so the greedy choice is safe. non-overlapping-intervals is the identical sweep with the answer counted the other way round: it reports n minus the number of groups, this one reports the number of groups. The single thing that differs between the two is the comparison at the boundary, because balloons are closed intervals — touching counts as overlapping — while non-overlapping intervals treat a shared endpoint as no overlap.",
+  "optimized": {
+    "idea": "Sort by end coordinate. Sweep left to right holding the position of the last arrow fired. Whenever a balloon starts strictly after that position it was not burst, so fire a new arrow — and fire it at that balloon's end, the latest position that still bursts it and therefore the position that gives following balloons the best chance of being caught for free.",
+    "code": [
+      "public static int findMinArrowShots(int[][] points) {",
+      "    Arrays.sort(points, (a, b) -> Integer.compare(a[1], b[1]));   // by END: earliest finish is the safe commit",
+      "    int arrows = 0;",
+      "    long lastShot = Long.MIN_VALUE;   // long, so a balloon starting at Integer.MIN_VALUE is still 'after' it",
+      "    for (int[] balloon : points) {",
+      "        if (balloon[0] > lastShot) {",
+      "            arrows++;",
+      "            lastShot = balloon[1];",
+      "        }",
+      "    }",
+      "    return arrows;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n log n), dominated by the sort",
+      "space": "O(log n) for the sort"
+    }
+  },
+  "commonMistakes": [
+    "Sorting by start instead of end and then shooting at the current balloon's end. A long balloon that starts first sets the arrow far to the right and swallows everything after it: [[1,10],[2,3],[5,6]] returns 1 when [2,3] and [5,6] are disjoint and need two arrows. Sorting by start can be made to work, but only by tracking the running minimum end, which is the same algorithm wearing a disguise.",
+    "Writing `balloon[0] >= lastShot` instead of `>`. The spans are closed, so a balloon starting exactly where the last arrow was fired has already burst; [[1,2],[2,3],[3,4],[4,5]] returns 4 instead of 2. This is precisely the comparison that differs from non-overlapping-intervals.",
+    "Comparator `(a, b) -> a[1] - b[1]` with endpoints near the ends of the int range — the subtraction overflows, the comparator becomes non-transitive, and Arrays.sort throws 'Comparison method violates its general contract!' on large inputs. The constraints reach 2^31 - 1 specifically to expose this."
+  ],
+  "similar": [
+    "non-overlapping-intervals",
+    "merge-intervals",
+    "meeting-rooms",
+    "meeting-rooms-ii",
+    "insert-interval"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 452,
+      "slug": "minimum-number-of-arrows-to-burst-balloons",
+      "title": "Minimum Number of Arrows to Burst Balloons",
+      "url": "https://leetcode.com/problems/minimum-number-of-arrows-to-burst-balloons/",
+      "premium": false
+    }
+  }
+}

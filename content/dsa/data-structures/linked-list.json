@@ -1,0 +1,308 @@
+{
+  "id": "linked-list",
+  "kind": "data-structure",
+  "title": "Linked List",
+  "group": "Linked List",
+  "level": 1,
+  "difficulty": "intermediate",
+  "estimatedMinutes": 30,
+  "summary": "Nodes scattered in memory, each holding a value and the address of the next — O(1) insertion anywhere you already stand, O(n) to get anywhere at all.",
+  "prerequisites": [
+    "arrays",
+    "data-and-variables"
+  ],
+  "tags": [
+    "linked-list",
+    "pointers",
+    "data-structure",
+    "level-1"
+  ],
+  "analogy": {
+    "beginner": "A treasure hunt. Each clue tells you the value at this spot and where the next clue is hidden. To reach clue 7 you must follow clues 1 to 6 — there is no shortcut. But inserting a new clue between 3 and 4 is trivial: rewrite two notes, and nothing else in the hunt has to move.",
+    "interview": "A chain of heap-allocated nodes, each holding a payload and a reference to its successor. Sequential access only: O(n) to reach index i, O(1) to insert or delete given a reference to the predecessor. No contiguity, so no cache locality and per-node object overhead."
+  },
+  "intuition": "An array buys O(1) access with contiguity, and contiguity is what makes insertion expensive. A linked list makes the opposite trade: give up contiguity, and inserting becomes rewiring two references instead of shifting a million elements — but finding anything now means walking.\n\nThat is the entire comparison, and it is the reason interviewers love linked lists: there is nowhere to hide. Every operation is explicit pointer manipulation, so a linked-list question tests whether you can hold a precise mental model of state changing step by step.\n\nOne practical caveat worth knowing: in real systems `ArrayList` beats `LinkedList` far more often than Big-O suggests, because chasing pointers to scattered addresses misses cache on nearly every hop. Java's own `LinkedList` is rarely the right production choice. Its value here is as a *teaching* structure and as the backbone of trees, graphs, LRU caches and adjacency lists.",
+  "problemFirst": {
+    "motivatingProblem": "Maintain a playlist where users constantly insert songs in the middle and remove songs, thousands of times a second.",
+    "bruteForce": {
+      "idea": "Use an array. Inserting at position 3 of a 10,000-song playlist means shifting 9,997 entries one slot right.",
+      "code": [
+        "// insert 'song' at index 3 in an array-backed playlist",
+        "for (int i = size; i > 3; i--) {",
+        "    songs[i] = songs[i - 1];   // 9,997 moves for one insertion",
+        "}",
+        "songs[3] = song;",
+        "size++;"
+      ],
+      "complexity": {
+        "time": "O(n) per insertion",
+        "space": "O(n)"
+      },
+      "whySlow": "The array's promise — element i is at base + i × size — is exactly what forces the shift. Keeping that promise is the cost."
+    },
+    "observation": "The shifting exists only to keep elements adjacent. But nothing about a playlist requires the songs to be adjacent in memory; it only requires knowing what comes next.",
+    "leap": "Store 'what comes next' explicitly in each node. Insertion becomes two reference assignments — O(1) — at the price of losing O(1) access by position."
+  },
+  "howItWorks": [
+    "**Node** = `{ value, next }`. The list is a reference to the first node (`head`); the last node's `next` is `null`.",
+    "**Traverse**: `for (Node cur = head; cur != null; cur = cur.next)`. O(n), and the only way to reach index i.",
+    "**Insert after a known node**: `newNode.next = cur.next; cur.next = newNode;` — O(1). Order matters; swap those two lines and you lose the rest of the list.",
+    "**Delete after a known node**: `cur.next = cur.next.next;` — O(1).",
+    "**Insert/delete at the head**: O(1), which is why a stack is trivially a linked list.",
+    "**Dummy head node** — a fake node before the real first one. It removes the 'what if we delete the head?' special case from nearly every problem. Use it by default.",
+    "**Doubly linked list** adds a `prev` reference: O(1) deletion given only the node itself, and backwards traversal, for one extra reference per node. This is what makes an LRU cache work."
+  ],
+  "patternRecognition": {
+    "signals": [
+      "Frequent insertion/removal at positions you already hold a reference to",
+      "No need for random access by index",
+      "The problem explicitly says 'linked list' (reverse it, detect a cycle, merge two)",
+      "Implementing an LRU cache, adjacency list, or a queue"
+    ],
+    "antiSignals": [
+      "You need `list[i]` (use an array)",
+      "You need to sort or binary search (needs random access)",
+      "Performance-critical iteration (cache locality wins)"
+    ],
+    "decisionTreeId": "which-data-structure"
+  },
+  "visualizations": [
+    {
+      "id": "list-ops",
+      "title": "Traverse · insert · delete",
+      "engine": "linkedListOps",
+      "input": {
+        "values": [
+          10,
+          20,
+          30,
+          40
+        ],
+        "operations": [
+          {
+            "op": "traverse"
+          },
+          {
+            "op": "insertAfter",
+            "index": 1,
+            "value": 25
+          },
+          {
+            "op": "deleteAt",
+            "index": 3
+          },
+          {
+            "op": "insertHead",
+            "value": 5
+          }
+        ]
+      },
+      "code": [
+        "for (Node cur = head; cur != null; cur = cur.next) { visit(cur); }",
+        "newNode.next = cur.next;   // 1. point the new node at the rest",
+        "cur.next = newNode;        // 2. only THEN relink the predecessor",
+        "cur.next = cur.next.next;  // delete: skip over the node",
+        "newHead.next = head; head = newHead;  // insert at head"
+      ]
+    },
+    {
+      "id": "reverse",
+      "title": "Reversing a list: three pointers, one pass",
+      "engine": "linkedListReverse",
+      "input": {
+        "values": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ]
+      },
+      "code": [
+        "Node prev = null;",
+        "Node curr = head;",
+        "while (curr != null) {",
+        "    Node next = curr.next;   // remember the rest before we lose it",
+        "    curr.next = prev;        // flip this link",
+        "    prev = curr;             // step both pointers forward",
+        "    curr = next;",
+        "}",
+        "return prev;                 // prev is the new head"
+      ]
+    }
+  ],
+  "implementations": [
+    {
+      "label": "Simple",
+      "language": "java",
+      "explanation": "The node type and the three operations everything else is built from. Read the insert carefully: the order of the two assignments is the whole lesson.",
+      "code": [
+        "class Node {",
+        "    int value;",
+        "    Node next;",
+        "    Node(int value) { this.value = value; }",
+        "}",
+        "",
+        "// Traverse — O(n)",
+        "void print(Node head) {",
+        "    for (Node cur = head; cur != null; cur = cur.next) {",
+        "        System.out.print(cur.value + \" -> \");",
+        "    }",
+        "    System.out.println(\"null\");",
+        "}",
+        "",
+        "// Insert after a node we already hold — O(1)",
+        "void insertAfter(Node node, int value) {",
+        "    Node fresh = new Node(value);",
+        "    fresh.next = node.next;   // 1. link forward FIRST",
+        "    node.next = fresh;        // 2. then link backward",
+        "}",
+        "",
+        "// Delete the node following `node` — O(1)",
+        "void deleteAfter(Node node) {",
+        "    if (node.next != null) {",
+        "        node.next = node.next.next;",
+        "    }",
+        "}"
+      ]
+    },
+    {
+      "label": "Optimized",
+      "language": "java",
+      "explanation": "Two techniques that make linked-list problems easy: the dummy head (kills the delete-the-first-node special case) and the three-pointer reverse (the single most asked linked-list question). Both are O(n) time, O(1) space.",
+      "code": [
+        "// Dummy head: no special case for removing the first node",
+        "public Node removeAll(Node head, int target) {",
+        "    Node dummy = new Node(0);",
+        "    dummy.next = head;",
+        "    Node prev = dummy;",
+        "    while (prev.next != null) {",
+        "        if (prev.next.value == target) prev.next = prev.next.next;",
+        "        else                           prev = prev.next;",
+        "    }",
+        "    return dummy.next;   // correct even if the original head was removed",
+        "}",
+        "",
+        "// Reverse in place — O(n) time, O(1) space",
+        "public Node reverse(Node head) {",
+        "    Node prev = null, curr = head;",
+        "    while (curr != null) {",
+        "        Node next = curr.next;",
+        "        curr.next = prev;",
+        "        prev = curr;",
+        "        curr = next;",
+        "    }",
+        "    return prev;",
+        "}"
+      ]
+    }
+  ],
+  "complexity": {
+    "time": "Access by index O(n) · Search O(n) · Insert/delete at head O(1) · Insert/delete given the predecessor O(1) · Insert/delete at index i O(n) because you must walk there first",
+    "space": "O(n) values plus O(n) references — roughly 2–3× an array's memory for the same ints, once object headers are counted",
+    "why": "Everything follows from having no address arithmetic: the only way to reach position i is to follow i links. Conversely, once you are standing at a node, rewiring costs a constant number of assignments no matter how long the list is. Note the asymmetry interviewers probe: 'insert is O(1)' is only true if you already hold the predecessor."
+  },
+  "commonMistakes": [
+    {
+      "mistake": "Assigning `cur.next = newNode` before `newNode.next = cur.next`",
+      "fix": "The rest of the list is lost. Always link the new node forward first. Draw the arrows before typing."
+    },
+    {
+      "mistake": "Losing the head reference while traversing",
+      "fix": "Traverse with a separate cursor variable; never advance `head` itself unless you mean to."
+    },
+    {
+      "mistake": "Dereferencing `cur.next.next` without null checks",
+      "fix": "Guard with `cur != null && cur.next != null` — and note that Java's `&&` short-circuits, so order matters."
+    },
+    {
+      "mistake": "Forgetting the head-deletion case",
+      "fix": "Use a dummy head node. It removes the special case entirely."
+    },
+    {
+      "mistake": "Reaching for LinkedList in production code",
+      "fix": "`ArrayList` is usually faster even for middle insertion at realistic sizes, because of cache locality. Measure before choosing."
+    }
+  ],
+  "realWorldUses": [
+    "LRU caches: a doubly linked list gives O(1) move-to-front, paired with a HashMap for O(1) lookup.",
+    "Adjacency lists in graph representations.",
+    "Java's `HashMap` uses linked nodes for collision chains.",
+    "Undo histories, music playlists, and the free-block lists inside memory allocators and filesystems."
+  ],
+  "interviewNotes": [
+    "Draw the pointers on paper before writing code. Nearly every linked-list bug is an assignment done in the wrong order.",
+    "Standard toolkit: dummy head, two pointers (fast/slow), and reversal. Most questions are a combination of those three.",
+    "Always state whether your solution mutates the input list — interviewers care."
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "complexity",
+      "question": "What is the time complexity of accessing the 500th element of a singly linked list?",
+      "options": [
+        "O(1)",
+        "O(log n)",
+        "O(n)",
+        "O(n log n)"
+      ],
+      "answerIndex": 2,
+      "explanation": "There is no address arithmetic — you must follow 500 `next` references. This is the price paid for O(1) insertion."
+    },
+    {
+      "id": "q2",
+      "type": "predict-output",
+      "question": "What happens if you write:\n\ncur.next = newNode;\nnewNode.next = cur.next;",
+      "options": [
+        "The node is inserted correctly",
+        "newNode.next points at newNode itself, and the rest of the list is lost",
+        "A compile error",
+        "The list is reversed"
+      ],
+      "answerIndex": 1,
+      "explanation": "After line 1, `cur.next` IS newNode, so line 2 assigns newNode to its own next — a self-loop, and everything after `cur` is unreachable. Link forward first."
+    },
+    {
+      "id": "q3",
+      "type": "mcq",
+      "question": "Why does a dummy head node simplify deletion?",
+      "options": [
+        "It makes the list circular",
+        "Every real node then has a predecessor, so deleting the first node needs no special case",
+        "It halves the memory used",
+        "It allows binary search"
+      ],
+      "answerIndex": 1,
+      "explanation": "Deletion needs the predecessor's `next` to rewrite. Without a dummy, the first node has no predecessor and needs separate code — a classic source of bugs."
+    },
+    {
+      "id": "q4",
+      "type": "mcq",
+      "question": "Both ArrayList and LinkedList insert at the head. Which is faster in practice for 10,000 ints, and why?",
+      "options": [
+        "LinkedList always — it is O(1) vs O(n)",
+        "ArrayList always — Big-O is irrelevant",
+        "LinkedList is asymptotically better, but ArrayList often wins in practice at small-to-moderate sizes due to cache locality and no per-node allocation",
+        "They are identical"
+      ],
+      "answerIndex": 2,
+      "explanation": "O(1) vs O(n) eventually wins, but `System.arraycopy` moves contiguous memory extremely fast while pointer-chasing misses cache on nearly every hop. The honest answer names both effects and says: measure."
+    }
+  ],
+  "practiceProblems": [
+    "merge-two-sorted-lists",
+    "reverse-linked-list",
+    "add-two-numbers",
+    "remove-nth-from-end",
+    "reorder-list",
+    "lru-cache",
+    "middle-of-linked-list",
+    "linked-list-cycle"
+  ],
+  "related": [
+    "fast-slow-pointer",
+    "arrays",
+    "stack",
+    "queue"
+  ]
+}

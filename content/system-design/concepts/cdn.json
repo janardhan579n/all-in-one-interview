@@ -1,0 +1,200 @@
+{
+  "id": "cdn",
+  "title": "CDN — Content Delivery Network",
+  "group": "Performance",
+  "level": 1,
+  "estimatedMinutes": 22,
+  "summary": "Copies of your static content in data centres near your users, so bytes travel hundreds of kilometres instead of thousands.",
+  "analogy": "A chain of local warehouses instead of one central depot. When someone in Chennai orders a popular item, it ships from a Chennai warehouse rather than from Germany. Rare items still come from the central depot — but those are the minority of orders.",
+  "explanation": {
+    "beginner": "Data travels at roughly two-thirds the speed of light through fibre, and it cannot go faster. A request from India to a server in Virginia takes about 200 ms round trip no matter how fast your servers are. A CDN keeps copies of your images, CSS, JavaScript and videos in hundreds of locations worldwide, so users download them from a machine a few milliseconds away.",
+    "interview": "A geographically distributed reverse-proxy cache. Edge PoPs terminate TLS close to the user, serve cached objects directly and forward misses to the origin, often over optimised backbone links with connection reuse. Benefits are latency reduction, origin offload and absorption of volumetric attacks. The design questions are cache-key design, TTLs, invalidation (purge versus versioned URLs) and what can safely be cached at all."
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "u1",
+        "label": "User (Mumbai)",
+        "type": "client",
+        "x": 110,
+        "y": 170
+      },
+      {
+        "id": "u2",
+        "label": "User (London)",
+        "type": "client",
+        "x": 110,
+        "y": 430
+      },
+      {
+        "id": "e1",
+        "label": "Edge PoP (Mumbai)",
+        "type": "cdn",
+        "x": 420,
+        "y": 170,
+        "note": "~10 ms away. Serves cached objects without ever contacting the origin."
+      },
+      {
+        "id": "e2",
+        "label": "Edge PoP (London)",
+        "type": "cdn",
+        "x": 420,
+        "y": 430,
+        "note": "Independent cache with its own hit rate."
+      },
+      {
+        "id": "origin",
+        "label": "Origin server\\n(Virginia)",
+        "type": "server",
+        "x": 790,
+        "y": 300,
+        "note": "Only cache misses reach it. Typically 80-95% of static traffic is absorbed at the edge.",
+        "why": {
+          "without": [
+            "Every user waits for a trans-continental round trip on every asset",
+            "The origin serves every byte of every image, repeatedly"
+          ],
+          "with": [
+            "Assets served from ~10 ms away",
+            "Origin bandwidth and CPU drop by an order of magnitude"
+          ],
+          "conclusion": "You cannot beat the speed of light — so move the content, not the packets."
+        }
+      }
+    ],
+    "edges": [
+      {
+        "from": "u1",
+        "to": "e1",
+        "label": "~10 ms"
+      },
+      {
+        "from": "u2",
+        "to": "e2",
+        "label": "~8 ms"
+      },
+      {
+        "from": "e1",
+        "to": "origin",
+        "label": "miss only",
+        "dashed": true
+      },
+      {
+        "from": "e2",
+        "to": "origin",
+        "label": "miss only",
+        "dashed": true
+      }
+    ]
+  },
+  "why": {
+    "without": [
+      "Physics imposes 150–250 ms on intercontinental round trips",
+      "The origin pays bandwidth for every byte, repeatedly",
+      "A traffic spike or attack lands directly on your servers"
+    ],
+    "with": [
+      "Content served from tens of milliseconds away",
+      "Origin traffic falls by 80–95% for static assets",
+      "Volumetric attacks are absorbed by a network built for it"
+    ],
+    "conclusion": "For static content a CDN is close to a free win. The judgement calls are all about invalidation."
+  },
+  "whenToUse": [
+    "Static assets: images, CSS, JS, fonts, video",
+    "A geographically spread user base",
+    "Traffic spikes you cannot provision for",
+    "Large downloads"
+  ],
+  "whenNotToUse": [
+    "Per-user personalised responses (unless you cache fragments or use edge compute carefully)",
+    "Rapidly changing data where staleness is unacceptable",
+    "A purely local user base already close to your origin — the benefit is small",
+    "Anything private that must never be cached by an intermediary"
+  ],
+  "tradeoffs": [
+    {
+      "option": "Long TTL + versioned URLs (app.a1b2c3.js)",
+      "pros": [
+        "Near-perfect hit rates",
+        "Deploys are instantly effective because the URL changes",
+        "No purge needed"
+      ],
+      "cons": [
+        "Build tooling must produce hashed filenames",
+        "HTML itself must stay short-TTL to point at the new URLs"
+      ]
+    },
+    {
+      "option": "Short TTL",
+      "pros": [
+        "Simple, content refreshes on its own"
+      ],
+      "cons": [
+        "Lower hit rate, more origin traffic",
+        "Still stale for up to the TTL"
+      ]
+    },
+    {
+      "option": "Explicit purge on deploy",
+      "pros": [
+        "Immediate control"
+      ],
+      "cons": [
+        "Propagation across hundreds of PoPs is not instantaneous",
+        "A missed purge is a hard-to-reproduce bug"
+      ]
+    }
+  ],
+  "keyNumbers": [
+    {
+      "label": "Mumbai to Virginia round trip",
+      "value": "~200 ms"
+    },
+    {
+      "label": "User to nearest PoP",
+      "value": "5–30 ms"
+    },
+    {
+      "label": "Typical static hit rate",
+      "value": "85–95%"
+    },
+    {
+      "label": "Speed of light in fibre",
+      "value": "~200,000 km/s — about 1 ms per 100 km each way"
+    }
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "architecture",
+      "question": "You deploy new JavaScript but users keep running the old version for hours. What is the standard fix?",
+      "options": [
+        "Reduce the TTL to zero",
+        "Include a content hash in the filename so a new deploy produces a new URL the CDN has never seen",
+        "Ask users to clear their cache",
+        "Stop using a CDN"
+      ],
+      "answerIndex": 1,
+      "explanation": "Cache-busting by URL. The asset gets a one-year TTL and the deploy changes the URL, so there is nothing to invalidate — this is why build tools emit hashed filenames."
+    },
+    {
+      "id": "q2",
+      "type": "mcq",
+      "question": "Why can't faster servers fix a 200 ms load time for users in Australia hitting a US origin?",
+      "options": [
+        "They can, with enough CPU",
+        "Because most of that time is propagation delay — the speed of light through fibre, which no amount of compute changes",
+        "Because of database queries",
+        "Because of TLS"
+      ],
+      "answerIndex": 1,
+      "explanation": "Round-trip time is dominated by distance. The only fix is to shorten the distance, which is precisely what a CDN does."
+    }
+  ],
+  "related": [
+    "cache",
+    "http",
+    "load-balancer"
+  ]
+}

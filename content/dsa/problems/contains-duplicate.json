@@ -1,0 +1,85 @@
+{
+  "id": "contains-duplicate",
+  "title": "Contains Duplicate",
+  "patternId": "hashing",
+  "difficulty": "beginner",
+  "tags": [
+    "array",
+    "hashing"
+  ],
+  "statement": "Return true if any value appears at least twice in the array, and false if every element is distinct.",
+  "realWorld": "Idempotency checks: has this request ID, order ID or webhook delivery already been processed? The same question in a payments system prevents charging a customer twice.",
+  "examples": [
+    {
+      "input": "nums = [1,2,3,1]",
+      "output": "true",
+      "explanation": "1 appears twice."
+    },
+    {
+      "input": "nums = [1,2,3,4]",
+      "output": "false",
+      "explanation": "All distinct."
+    }
+  ],
+  "constraints": [
+    "1 <= nums.length <= 10^5",
+    "-10^9 <= nums[i] <= 10^9"
+  ],
+  "bruteForce": {
+    "idea": "Compare every element with every other element.",
+    "code": [
+      "for (int i = 0; i < nums.length; i++) {",
+      "    for (int j = i + 1; j < nums.length; j++) {",
+      "        if (nums[i] == nums[j]) return true;",
+      "    }",
+      "}",
+      "return false;"
+    ],
+    "complexity": {
+      "time": "O(n^2)",
+      "space": "O(1)"
+    },
+    "whySlow": "5 billion comparisons at n = 100,000. The inner loop is asking 'have I seen this value?', which a set answers in O(1)."
+  },
+  "patternIdentification": "'Have I seen this before?' is the canonical HashSet signal.",
+  "optimized": {
+    "idea": "Add each value to a set. HashSet.add returns false if the value was already present, so the check and the insert are one operation. Return early on the first repeat.",
+    "code": [
+      "public static boolean containsDuplicate(int[] nums) {",
+      "    Set<Integer> seen = new HashSet<>(nums.length * 4 / 3 + 1);",
+      "    for (int x : nums) {",
+      "        if (!seen.add(x)) return true;   // add() == false means already present",
+      "    }",
+      "    return false;",
+      "}",
+      "",
+      "// Alternative: O(n log n) time, O(1) extra space if mutating the input is allowed",
+      "// Arrays.sort(nums);  then check adjacent pairs.",
+      "// Worth mentioning as the space/time trade-off."
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(n)"
+    }
+  },
+  "commonMistakes": [
+    "Calling seen.contains(x) then seen.add(x) — two hash lookups where one suffices.",
+    "Not mentioning the sort-based alternative when the interviewer asks for O(1) extra space.",
+    "Using an array of counts without checking the value range; nums[i] can be ±10^9 here."
+  ],
+  "similar": [
+    "two-sum",
+    "group-anagrams",
+    "find-duplicate-number",
+    "find-missing-number"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 217,
+      "slug": "contains-duplicate",
+      "title": "Contains Duplicate",
+      "url": "https://leetcode.com/problems/contains-duplicate/",
+      "premium": false
+    }
+  }
+}

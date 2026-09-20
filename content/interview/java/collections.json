@@ -1,0 +1,238 @@
+{
+  "id": "java-collections",
+  "trackId": "java",
+  "topic": "collections",
+  "title": "Collections",
+  "summary": "HashMap internals, the right structure for the job, and the failure modes that reach production.",
+  "questions": [
+    {
+      "id": "jco-01",
+      "level": "junior",
+      "type": "concept",
+      "question": "How does a HashMap actually work?",
+      "answer": "An array of buckets. On `put`, the key's `hashCode()` is spread (`h ^ (h >>> 16)` — mixing the high bits down, because the index is taken with a mask that would otherwise ignore them), then the bucket index is `hash & (n - 1)`, which works because the table size is always a power of two.\n\nCollisions — two keys in the same bucket — are chained in a linked list. Since Java 8, a bucket with more than 8 entries converts to a red-black tree, making the worst case O(log n) instead of O(n); it untreeifies below 6. This was a direct response to hash-collision denial-of-service attacks.\n\nWhen size exceeds capacity × load factor (0.75 by default), the table doubles and every entry is rehashed. That is why sizing a map you know the size of matters: `new HashMap<>(expected / 0.75 + 1)` avoids repeated full rehashes.",
+      "keyPoints": [
+        "Array of buckets, index = hash & (n-1), which needs a power-of-two size",
+        "Hash spreading mixes high bits down before masking",
+        "Java 8+ treeifies a bucket at 8 entries — O(log n) worst case",
+        "Resize at 0.75 load factor rehashes everything; pre-size when you can"
+      ],
+      "followUps": [
+        {
+          "q": "Why is the default load factor 0.75?",
+          "a": "It is the empirical balance point between space and collision probability. Lower wastes memory; higher makes collisions common enough that lookups degrade. The Javadoc states it as a time/space trade-off, and 0.75 gives roughly a 0.5 expected bucket occupancy under uniform hashing."
+        },
+        {
+          "q": "What happens if every key has the same hashCode?",
+          "a": "All entries land in one bucket. Pre-Java 8 that made every operation O(n); now the bucket treeifies to O(log n) — but only if the keys are Comparable, otherwise it stays a list. Either way it is a pathological case worth knowing, because it is exactly what a hash-flooding attack manufactures."
+        }
+      ],
+      "redFlags": [
+        "Not knowing collisions exist",
+        "\"HashMap is always O(1)\" with no mention of the worst case",
+        "Confusing capacity with size"
+      ],
+      "related": [
+        "hashing"
+      ]
+    },
+    {
+      "id": "jco-02",
+      "level": "junior",
+      "type": "concept",
+      "question": "ArrayList or LinkedList — which do you use, and why?",
+      "answer": "ArrayList, almost always. That is not a glib answer: it is the one Java's own maintainers give.\n\nThe textbook comparison says LinkedList has O(1) insert and delete versus ArrayList's O(n). What the textbook omits is that to insert at position i you must first *walk* to position i, which is O(n) — so the O(1) applies only at the ends, and only if you already hold the node. Meanwhile every LinkedList node is a separate heap object with two pointers, so traversal is a cache-miss per element, while an ArrayList is one contiguous block the prefetcher loves. In real benchmarks ArrayList wins even at the operations LinkedList is supposed to be good at, until the lists are very large and the inserts are strictly at the head.\n\nUse ArrayDeque, not LinkedList, when you want a queue or stack — it is array-backed and faster at both ends.",
+      "keyPoints": [
+        "Random access: ArrayList O(1), LinkedList O(n)",
+        "LinkedList's O(1) insert assumes you already have the node — finding it is O(n)",
+        "Memory locality dominates in practice; ArrayList is contiguous",
+        "For queue/deque semantics use ArrayDeque, not LinkedList"
+      ],
+      "followUps": [
+        {
+          "q": "When would you genuinely choose LinkedList?",
+          "a": "Very rarely. The honest case is when you are holding ListIterators and doing many inserts or removals at known positions during iteration, or building a queue where you need the List interface too. Most codebases have zero justified uses."
+        }
+      ],
+      "redFlags": [
+        "Reciting the Big-O table without the traversal cost or memory locality",
+        "Recommending LinkedList for a queue"
+      ],
+      "related": [
+        "arrays",
+        "linked-list"
+      ]
+    },
+    {
+      "id": "jco-03",
+      "level": "mid",
+      "type": "concept",
+      "question": "What is a ConcurrentModificationException and how do you avoid it?",
+      "answer": "It is the fail-fast mechanism: collections keep a `modCount`, the iterator records it at creation, and every `next()` checks it still matches. Structurally modifying the collection while iterating — adding or removing through the collection rather than the iterator — bumps the count and the next `next()` throws.\n\nIt is a **best-effort diagnostic, not a guarantee**. It exists to turn a silently corrupt iteration into a loud failure, and it is explicitly not reliable for detecting concurrent access from another thread.\n\nThree correct fixes depending on intent:\n\n```java\niterator.remove();                       // removing during iteration\nlist.removeIf(item -> item.isStale());   // the idiomatic version of the above\nfor (Item i : new ArrayList<>(list)) {}  // iterate a snapshot if you must mutate the original\n```\n\nAnd `CopyOnWriteArrayList` if the real situation is multi-threaded with far more reads than writes — its iterator works on an immutable snapshot, so it never throws, at the cost of copying the array on every write.",
+      "keyPoints": [
+        "modCount comparison in the iterator — fail-fast, not fail-safe",
+        "Not a reliable concurrency check; it is a bug detector for single-threaded misuse",
+        "Fix with Iterator.remove, removeIf, or iterating a copy",
+        "CopyOnWriteArrayList for read-heavy concurrent cases"
+      ],
+      "followUps": [
+        {
+          "q": "Does ConcurrentHashMap throw it?",
+          "a": "No. Its iterators are weakly consistent: they reflect some state at or after creation, never throw, and may or may not show concurrent updates. That is a deliberate different contract — you trade the fail-fast guarantee for the ability to iterate under concurrent writes."
+        }
+      ],
+      "redFlags": [
+        "Wrapping the loop in try/catch and continuing",
+        "Believing it reliably detects other threads",
+        "Reaching for `synchronized` when the loop is single-threaded"
+      ]
+    },
+    {
+      "id": "jco-04",
+      "level": "mid",
+      "type": "concept",
+      "question": "How does ConcurrentHashMap achieve thread safety without locking the whole map?",
+      "answer": "In Java 8 it was rewritten away from the old segment-based design. Now: reads are entirely lock-free, relying on `volatile` reads of the table and nodes. Writes use a CAS to install the first node in an empty bucket, and `synchronized` on that **bin's head node** when the bucket is already occupied — so contention is per-bucket, not per-map or per-segment.\n\nResizing is cooperative: a thread that arrives during a resize helps transfer bins rather than blocking, which is why throughput does not collapse at the moment the table grows.\n\nThe consequences to state in an interview: `size()` is an estimate (it sums per-cell counters), iteration is weakly consistent, and **compound operations are still not atomic**. `if (!map.containsKey(k)) map.put(k, v)` is a race no matter how thread-safe each call is — use `putIfAbsent`, `computeIfAbsent`, or `merge`.",
+      "keyPoints": [
+        "Java 8+: CAS for empty bins, synchronized on the bin head otherwise — no segments",
+        "Reads are lock-free via volatile",
+        "Threads help with resizing rather than blocking",
+        "Atomicity is per-operation: use computeIfAbsent / merge for read-modify-write"
+      ],
+      "followUps": [
+        {
+          "q": "What must you never do inside computeIfAbsent?",
+          "a": "Modify the same map. The mapping function runs while holding the bin lock, so a recursive update can deadlock or corrupt the table — and in Java 9+ it throws IllegalStateException if it detects recursion. Long-running or blocking work in there is also a bad idea: you are holding a lock other writers need."
+        },
+        {
+          "q": "Hashtable versus ConcurrentHashMap?",
+          "a": "Hashtable synchronises every method on the whole object — one lock, no concurrency, and it is legacy. There is no reason to use it in new code."
+        }
+      ],
+      "redFlags": [
+        "Describing the pre-Java-8 segment design as current",
+        "Believing thread-safe methods make check-then-act sequences safe"
+      ]
+    },
+    {
+      "id": "jco-05",
+      "level": "mid",
+      "type": "code",
+      "question": "This method is a bottleneck under load. What is wrong?",
+      "answer": "`list.contains()` inside a loop over another list is O(n × m). With two lists of ten thousand elements that is a hundred million `equals` calls.\n\nThe fix is to index the side you search:\n\n```java\nSet<String> blocked = new HashSet<>(blockedIds);   // O(m) once\nreturn users.stream()\n            .filter(u -> !blocked.contains(u.id()))  // O(1) per check\n            .toList();                                // total O(n + m)\n```\n\nThe general shape is worth naming because it recurs everywhere: **a nested loop doing a lookup is a hash table waiting to happen** — the same trade of time for space that turns Two Sum from O(n²) into O(n). Look for `contains`, `indexOf` or a repeated `filter` inside a loop when profiling; it is the single most common accidental quadratic in business code.",
+      "codeExample": {
+        "language": "java",
+        "code": [
+          "public List<User> removeBlocked(List<User> users, List<String> blockedIds) {",
+          "    List<User> result = new ArrayList<>();",
+          "    for (User user : users) {",
+          "        if (!blockedIds.contains(user.id())) {   // O(m) on a List",
+          "            result.add(user);",
+          "        }",
+          "    }",
+          "    return result;",
+          "}"
+        ]
+      },
+      "keyPoints": [
+        "List.contains is a linear scan — inside a loop that is O(n × m)",
+        "Build a HashSet once, then membership is O(1)",
+        "Same pattern as the hashing DSA pattern: trade space for time",
+        "The rewrite is O(n + m) with one extra allocation"
+      ],
+      "followUps": [
+        {
+          "q": "When would the original actually be fine?",
+          "a": "When blockedIds is tiny and fixed — say under about ten elements. A linear scan of a short contiguous array can beat hashing on cache locality alone, and the set allocation is not free. The point is to know which regime you are in, not to apply the rewrite reflexively."
+        }
+      ],
+      "redFlags": [
+        "Converting to streams without changing the complexity — a parallel stream over an O(n×m) algorithm is still O(n×m)",
+        "Not being able to state the complexity before and after"
+      ],
+      "related": [
+        "hashing",
+        "two-sum"
+      ]
+    },
+    {
+      "id": "jco-06",
+      "level": "mid",
+      "type": "concept",
+      "question": "When do you use a TreeMap over a HashMap?",
+      "answer": "When you need **order** rather than just lookup. TreeMap is a red-black tree: O(log n) instead of O(1), but it keeps keys sorted and gives you the navigation methods that a hash map fundamentally cannot — `firstKey`, `lastKey`, `floorKey`, `ceilingKey`, `headMap`, `tailMap`, `subMap`.\n\nThe cases where that is decisive: range queries (\"all events between these two timestamps\"), finding the nearest value below or above a key (rate-limit buckets, price ladders, leaderboards), or any time you need to iterate in key order without sorting the whole key set on every pass.\n\nIf you need insertion order rather than sorted order, that is `LinkedHashMap` — which also gives you a one-line LRU cache by passing `accessOrder = true` and overriding `removeEldestEntry`.",
+      "keyPoints": [
+        "TreeMap: O(log n), sorted, navigable — floor/ceiling/headMap/subMap",
+        "HashMap: O(1), no order at all",
+        "LinkedHashMap: insertion or access order, and the basis of a simple LRU",
+        "Range and nearest-neighbour queries are the real differentiator"
+      ],
+      "followUps": [
+        {
+          "q": "How would you build an LRU cache in Java?",
+          "a": "`new LinkedHashMap<>(capacity, 0.75f, true)` with `removeEldestEntry` returning `size() > capacity` — access order plus eviction in about five lines. For anything production-grade use Caffeine, which gives you size and time bounds, async loading, and metrics."
+        }
+      ],
+      "redFlags": [
+        "Saying TreeMap is faster because it is a tree",
+        "Not knowing LinkedHashMap exists"
+      ],
+      "related": [
+        "trees",
+        "cache"
+      ]
+    },
+    {
+      "id": "jco-07",
+      "level": "senior",
+      "type": "concept",
+      "question": "Explain the difference between fail-fast and fail-safe iterators, and why the distinction matters in design.",
+      "answer": "Fail-fast iterators (`ArrayList`, `HashMap`) check a modification counter and throw `ConcurrentModificationException` the moment they notice structural change. Fail-safe — more accurately *weakly consistent* — iterators (`ConcurrentHashMap`, `CopyOnWriteArrayList`) iterate a snapshot or tolerate concurrent change and never throw.\n\nThe design point is what each contract buys. Fail-fast is a **debugging aid**: it converts undefined behaviour into an immediate, localised exception. It is explicitly documented as best-effort, so writing code that depends on the exception being thrown is a mistake.\n\nWeakly consistent is a **liveness guarantee**: iteration cannot block writers and writers cannot break iteration, at the cost of your never quite knowing which updates you saw. `CopyOnWriteArrayList` takes this furthest — a full array copy per write, which is superb for a listener list read constantly and written at startup, and catastrophic for anything write-heavy.\n\nSo the choice is really: do I want loud failure on programmer error, or do I want iteration and mutation to coexist?",
+      "keyPoints": [
+        "Fail-fast = modCount check, best-effort, a bug detector",
+        "Weakly consistent = no exception, no guarantee of seeing concurrent updates",
+        "CopyOnWriteArrayList copies per write — read-mostly only",
+        "Never write logic that depends on CME being thrown"
+      ],
+      "followUps": [
+        {
+          "q": "Where is CopyOnWriteArrayList genuinely the right choice?",
+          "a": "Listener and observer registries, routing or configuration tables, feature-flag sets — written rarely, read on every request, and iterated without locking. The moment writes become frequent, it is the wrong structure."
+        }
+      ],
+      "redFlags": [
+        "Calling weakly consistent iterators \"thread-safe\" without qualification",
+        "Using CopyOnWriteArrayList as a general-purpose concurrent list"
+      ]
+    },
+    {
+      "id": "jco-08",
+      "level": "senior",
+      "type": "scenario",
+      "question": "A service that was fine for months starts spending 40% of CPU in `HashMap.resize` under a traffic spike. What is happening and what do you do?",
+      "answer": "Something is building large maps repeatedly, and each one is growing from the default capacity of 16 by doubling and rehashing every entry. A map that ends at 100,000 entries has resized about thirteen times and rehashed roughly 200,000 entries along the way, all of it garbage.\n\n**Confirm first**: an async-profiler or JFR CPU profile showing `resize`/`treeifyBin` in the hot path, and an allocation profile showing `HashMap$Node` churn. Do not act on the flame graph shape alone.\n\n**The fixes, in order of how much they usually help**:\n\n1. **Pre-size the maps.** If the expected size is known — a response with N rows — `new HashMap<>((int)(n / 0.75f) + 1)` eliminates every resize. This is frequently the whole fix.\n2. **Stop building the map at all.** Very often the map is a per-request lookup table rebuilt from data that barely changes. Build it once and cache it.\n3. **Check the keys.** A poor `hashCode` — a record keyed on a field with low cardinality, or an enum-like string — causes treeification, which shows up next to resize in the same profile.\n\n**The lesson to state**: the code did not change, the size of the data did. Cost that is invisible at n=100 becomes the dominant term at n=100,000, and pre-sizing is the cheapest possible fix in a hot path.",
+      "keyPoints": [
+        "Growth from default 16 means repeated doubling and full rehash",
+        "Profile before acting — async-profiler or JFR, CPU and allocation",
+        "Pre-size with expected/0.75 + 1 when the size is known",
+        "Ask whether the map should be rebuilt per request at all",
+        "Treeification in the profile points at a weak hashCode"
+      ],
+      "followUps": [
+        {
+          "q": "How do you find out the expected size when it is not obvious?",
+          "a": "Instrument it — export the final size of the map as a histogram metric for a day. Guessing at a capacity and over-allocating 10× wastes memory in a different way; measuring costs one deploy."
+        }
+      ],
+      "redFlags": [
+        "Jumping to a ConcurrentHashMap, which does not address resizing at all",
+        "Raising heap instead of removing the churn",
+        "Optimising without a profile"
+      ],
+      "related": [
+        "hashing",
+        "big-o"
+      ]
+    }
+  ]
+}

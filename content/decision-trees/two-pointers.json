@@ -1,0 +1,73 @@
+{
+  "id": "two-pointers",
+  "title": "Is this a Two Pointers problem?",
+  "start": "n1",
+  "nodes": {
+    "n1": {
+      "type": "question",
+      "text": "Are you looking for a pair, triplet, or a relationship between two positions in a sequence?",
+      "options": [
+        {
+          "label": "Yes",
+          "next": "n2"
+        },
+        {
+          "label": "No, I am modifying the array in place",
+          "next": "n4"
+        }
+      ]
+    },
+    "n2": {
+      "type": "question",
+      "text": "Is the input sorted, or may you sort it (the answer does not depend on original indices)?",
+      "options": [
+        {
+          "label": "Yes",
+          "next": "r-opposite"
+        },
+        {
+          "label": "No — I must return original indices",
+          "next": "r-hash"
+        }
+      ]
+    },
+    "n4": {
+      "type": "question",
+      "text": "Do you need O(1) extra space while removing, partitioning or compacting elements?",
+      "options": [
+        {
+          "label": "Yes",
+          "next": "r-same"
+        },
+        {
+          "label": "No",
+          "next": "r-other"
+        }
+      ]
+    },
+    "r-opposite": {
+      "type": "result",
+      "text": "Opposite-end (converging) Two Pointers",
+      "detail": "left = 0, right = n-1. Move the pointer that can improve the situation, and be able to say why the discarded element cannot be part of any answer.",
+      "lessonId": "two-pointers"
+    },
+    "r-same": {
+      "type": "result",
+      "text": "Same-direction (read/write) Two Pointers",
+      "detail": "`fast` reads every element; `slow` marks where the next kept element goes. In-place, O(1) space.",
+      "lessonId": "two-pointers"
+    },
+    "r-hash": {
+      "type": "result",
+      "text": "HashMap, not Two Pointers",
+      "detail": "Sorting destroys the original indices. A map of value → index gives O(n) time for O(n) space.",
+      "lessonId": "hashing"
+    },
+    "r-other": {
+      "type": "result",
+      "text": "Probably something else",
+      "detail": "Without an ordering or monotonic property, nothing justifies a pointer move. Reconsider hashing, sorting, or a sliding window.",
+      "lessonId": "hashing"
+    }
+  }
+}

@@ -1,0 +1,99 @@
+{
+  "id": "jump-game-ii",
+  "title": "Jump Game II",
+  "patternId": "greedy",
+  "difficulty": "intermediate",
+  "tags": [
+    "greedy",
+    "array",
+    "bfs"
+  ],
+  "statement": "You are given an array nums where nums[i] is the maximum forward jump length from index i. You start at index 0, and it is guaranteed that the last index is reachable. Return the minimum number of jumps needed to reach the last index.",
+  "realWorld": "Minimum-hop routing where each node advertises how far ahead it can relay: a chunked download whose manifest says how far you may seek from each chunk, or a CDN chain where each hop knows the furthest edge it can forward to. The question 'fewest hops to the end' is the same in all of them.",
+  "examples": [
+    {
+      "input": "nums = [2,3,1,1,4]",
+      "output": "2",
+      "explanation": "Jump from index 0 to index 1 (one step), then from index 1 all the way to index 4 (three steps). Two jumps. Jumping the full two steps from index 0 first would land on index 2, which reaches only index 3 — the greedy choice is not 'jump as far as you can now' but 'within everything you can reach now, keep the best reach for next time'."
+    },
+    {
+      "input": "nums = [2,3,0,1,4]",
+      "output": "2",
+      "explanation": "Same answer despite the 0 at index 2: a zero is only fatal if you land on it, and the route 0 -> 1 -> 4 jumps straight over it."
+    },
+    {
+      "input": "nums = [0]",
+      "output": "0",
+      "explanation": "You already are at the last index, so no jumps are needed. A solution that primes the first jump before the loop returns 1 here."
+    }
+  ],
+  "constraints": [
+    "1 <= nums.length <= 10^4",
+    "0 <= nums[i] <= 1000",
+    "It is guaranteed you can reach nums.length - 1"
+  ],
+  "bruteForce": {
+    "idea": "Dynamic programming over positions: best[i] is the fewest jumps to reach i. For each i, look at every earlier index j that can reach it and take the cheapest.",
+    "code": [
+      "int n = nums.length;",
+      "int[] best = new int[n];",
+      "Arrays.fill(best, Integer.MAX_VALUE);",
+      "best[0] = 0;",
+      "for (int i = 1; i < n; i++) {",
+      "    for (int j = 0; j < i; j++) {",
+      "        if (j + nums[j] >= i && best[j] != Integer.MAX_VALUE) {",
+      "            best[i] = Math.min(best[i], best[j] + 1);",
+      "        }",
+      "    }",
+      "}",
+      "return best[n - 1];"
+    ],
+    "complexity": {
+      "time": "O(n^2)",
+      "space": "O(n)"
+    },
+    "whySlow": "The set of positions reachable in exactly j jumps is a contiguous block, so best[] is a staircase: long runs of identical values. The inner loop rediscovers each step of that staircase index by index, re-scanning the same earlier positions over and over to re-derive an answer that is constant across the whole run. It also re-computes j + nums[j] for every j at every i, when the only thing that ever matters is the maximum of those values seen so far."
+  },
+  "patternIdentification": "Reachability here is a graph — an edge from i to every index within nums[i] — and 'fewest jumps' is a shortest path on an unweighted graph, which is BFS. The greedy is not a different algorithm; it is BFS with the queue deleted. Because every edge points forward and the reachable set is contiguous, the frontier at BFS level j is exactly a *range* of indices, so the whole level can be represented by one number: where it ends. You sweep the array once, keep a running maximum of how far anything in the current level reaches, and when the scan index arrives at the current level's last index you have finished that level and spend one jump. That is why the local choice is globally optimal: you are not choosing an index at all, you are consuming a whole BFS level, and the union of everything the level reaches is by definition at least as good as any single member of it. Whenever a graph's frontier is guaranteed to be an interval, BFS collapses into a linear scan with two boundary variables.",
+  "optimized": {
+    "idea": "Sweep left to right holding two numbers: currentEnd, the last index of the current BFS level, and farthest, the furthest index anything scanned so far can reach. At each index update farthest. When i reaches currentEnd you have exhausted the level: increment the jump count and let the next level run to farthest. Stop one short of the end, because the final index is a destination, not a place you jump from.",
+    "code": [
+      "public static int jump(int[] nums) {",
+      "    int jumps = 0, currentEnd = 0, farthest = 0;",
+      "    for (int i = 0; i < nums.length - 1; i++) {",
+      "        farthest = Math.max(farthest, i + nums[i]);",
+      "        if (i == currentEnd) {        // end of this BFS level: one jump is spent crossing it",
+      "            jumps++;",
+      "            currentEnd = farthest;",
+      "        }",
+      "    }",
+      "    return jumps;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(1)"
+    }
+  },
+  "commonMistakes": [
+    "Looping to nums.length instead of nums.length - 1 — arriving at the final index then counts as crossing one more level boundary, so [2,3,1,1,4] returns 3 instead of 2 and [1,1,1,1] returns 4 instead of 3. The last index is where you stop, not somewhere you jump from.",
+    "Writing `currentEnd = i + nums[i]` at the boundary instead of `currentEnd = farthest` — that takes the reach of whichever index happens to land on the boundary rather than the best reach found anywhere in the level, which is the entire point of the running maximum. [2,5,1,1,1,1,1] returns 5 instead of 2.",
+    "Priming the first jump (`jumps = 1; currentEnd = nums[0];`) to 'get the loop started'. A single-element array needs zero jumps, so [0] returns 1. The loop bound `i < nums.length - 1` already handles the degenerate case; nothing needs priming."
+  ],
+  "similar": [
+    "jump-game",
+    "gas-station",
+    "task-scheduler",
+    "partition-labels",
+    "coin-change"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 45,
+      "slug": "jump-game-ii",
+      "title": "Jump Game II",
+      "url": "https://leetcode.com/problems/jump-game-ii/",
+      "premium": false
+    }
+  }
+}

@@ -1,0 +1,100 @@
+{
+  "id": "power-function",
+  "title": "Pow(x, n) — Fast Exponentiation",
+  "patternId": "recursion",
+  "difficulty": "intermediate",
+  "tags": [
+    "recursion",
+    "divide-and-conquer",
+    "math",
+    "overflow"
+  ],
+  "statement": "Implement pow(double x, int n), which computes x raised to the power n. The exponent may be negative, and it may be Integer.MIN_VALUE.",
+  "realWorld": "Modular exponentiation is this exact algorithm and it is the core of RSA and Diffie-Hellman: a 2048-bit exponent costs about 2048 squarings rather than 2^2048 multiplications, which is the difference between a handshake and heat death. The same halving turns up as fast matrix power for linear recurrences (including an O(log n) Fibonacci) and as repeated doubling in any 'apply this operation k times' loop.",
+  "examples": [
+    {
+      "input": "x = 2.0, n = 10",
+      "output": "1024.0",
+      "explanation": "Naively ten multiplications. By squaring: 2 -> 4 -> 16 -> 256 -> 1024, following the binary expansion of 10 (1010), so four squarings and one extra multiply instead of ten steps."
+    },
+    {
+      "input": "x = 2.0, n = -3",
+      "output": "0.125",
+      "explanation": "A negative exponent is x^|n| inverted. Either compute 2^3 = 8 and return 1/8, or invert the base once at the start and raise 0.5 to the 3rd power — the code below does the latter, because inverting a single time is one rounding step rather than one per level."
+    },
+    {
+      "input": "x = 2.0, n = -2147483648",
+      "output": "0.0",
+      "explanation": "Integer.MIN_VALUE. The mathematical answer underflows a double to 0, which is fine — the trap is getting there. There is no positive int equal to 2147483648, so negating n inside an int leaves it negative and the recursion never terminates. Widen to long before flipping the sign."
+    }
+  ],
+  "constraints": [
+    "-100.0 < x < 100.0",
+    "-2^31 <= n <= 2^31 - 1 — both endpoints are legal, and only one of them has a negation that overflows",
+    "The result is guaranteed to fit in a double (it may legitimately underflow to 0 or overflow to infinity)"
+  ],
+  "bruteForce": {
+    "idea": "Multiply x by itself n times, then invert if the exponent was negative.",
+    "code": [
+      "public static double myPow(double x, int n) {",
+      "    double result = 1.0;",
+      "    long exponent = Math.abs((long) n);",
+      "    for (long i = 0; i < exponent; i++) {",
+      "        result *= x;",
+      "    }",
+      "    return n < 0 ? 1.0 / result : result;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(1)"
+    },
+    "whySlow": "It performs n multiplications one at a time while the intermediate results it is throwing away are themselves exactly the powers it will need next. Having computed x^2 on the second iteration, the loop grinds through two more multiplications to reach x^4 — when one squaring of the value already in the accumulator would have got there. It is re-deriving by repeated addition of exponents what it could reach by doubling them. For n = 2^31 - 1 that is over two billion multiplications for a result reachable in 31 squarings, and the gap is entirely the discarded partial powers."
+  },
+  "patternIdentification": "Look at what the recursion consumes. Here it is the exponent, and the exponent can be halved rather than decremented, because x^n = (x^(n/2))^2 with one spare x when n is odd. Any time the parameter driving a recursion can be cut in half instead of reduced by one, the depth drops from n to log n — that is the same structural move as binary search, as merge sort's split, and as fast matrix exponentiation. The tell is that combining two identical halves is no more expensive than combining any two pieces, which is what lets you compute one half and reuse it rather than computing both.",
+  "optimized": {
+    "idea": "Exponentiation by squaring. Handle the sign once at the top by inverting the base, widening the exponent to long first so that Integer.MIN_VALUE survives negation. Then recurse on n/2, square the single result, and multiply one more x back in when n is odd.",
+    "code": [
+      "public static double myPow(double x, int n) {",
+      "    long exponent = n;                 // widen BEFORE negating: -Integer.MIN_VALUE overflows int",
+      "    if (exponent < 0) {",
+      "        x = 1 / x;",
+      "        exponent = -exponent;",
+      "    }",
+      "    return power(x, exponent);",
+      "}",
+      "",
+      "private static double power(double x, long n) {",
+      "    if (n == 0) return 1.0;",
+      "    double half = power(x, n / 2);     // computed ONCE, then reused — this is the whole trick",
+      "    double squared = half * half;",
+      "    return (n % 2 == 0) ? squared : squared * x;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(log n)",
+      "space": "O(log n) of call stack — at most 32 frames, since n fits in an int"
+    }
+  },
+  "commonMistakes": [
+    "Negating the exponent while it is still an int: `if (n < 0) { x = 1 / x; n = -n; }`. For n = Integer.MIN_VALUE the negation overflows back to Integer.MIN_VALUE, so n stays negative, `n / 2` keeps producing negative values and the base case n == 0 is reached only after sign weirdness or never — the symptom is a StackOverflowError on exactly one input out of four billion.",
+    "Writing `return power(x, n / 2) * power(x, n / 2);` instead of computing the half once. The answer is still right and the algorithm is back to O(n), because the two calls re-expand the identical subtree — the same overlapping-subproblem waste as naive Fibonacci, and the symptom is a solution that times out while looking like the fast one.",
+    "Dropping or misplacing the odd case. Returning `squared` for odd n loses one factor of x, so pow(2,3) comes back as 4 instead of 8; every even exponent still passes, which is half of any hand-written test set."
+  ],
+  "similar": [
+    "fibonacci-memo",
+    "tower-of-hanoi",
+    "binary-search-basic",
+    "counting-bits",
+    "single-number"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 50,
+      "slug": "powx-n",
+      "title": "Pow(x, n)",
+      "url": "https://leetcode.com/problems/powx-n/",
+      "premium": false
+    }
+  }
+}

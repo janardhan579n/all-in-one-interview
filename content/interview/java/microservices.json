@@ -1,0 +1,281 @@
+{
+  "id": "java-microservices",
+  "trackId": "java",
+  "topic": "microservices",
+  "title": "Microservices",
+  "summary": "What actually justifies splitting a system, how sagas replace distributed transactions, and why one slow dependency can take everything down.",
+  "questions": [
+    {
+      "id": "jms-01",
+      "level": "junior",
+      "type": "tradeoff",
+      "question": "When is a monolith the right answer, and what actually justifies splitting a system into services?",
+      "answer": "Start from what splitting *costs*, because that is what the decision turns on. The moment a call crosses a process boundary you have added network latency, partial failure (the call can fail in ways that are neither success nor failure — a timeout), serialisation, a versioning problem between deployables, and the loss of transactions and joins across what used to be one database. You have also added operational work: deployment pipelines, service discovery, distributed tracing, more dashboards, more on-call surface. None of that is optional.\n\nSo a monolith is right whenever you are not buying something that outweighs those costs. That is most systems: a small team, a product still discovering its own domain boundaries, modest and uniform load. Getting boundaries wrong inside a monolith costs a refactor; getting them wrong across services costs a migration.\n\nWhat genuinely justifies a split:\n\n- **Independent deployability that a team actually needs.** If two teams keep blocking each other's releases, that is a real, measurable cost a boundary removes.\n- **Different scaling profiles.** One component needs thirty instances and another needs two; scaling them together wastes money or capacity.\n- **Different reliability or isolation requirements.** A batch job must not be able to exhaust the memory serving customer traffic.\n- **Regulatory or security isolation** — narrowing what holds cardholder or health data.\n\nWhat does not justify it: a class that has grown too large, a desire for a fashionable architecture, or a vague hope that services will force better design. Boundaries enforce themselves in a modular monolith too — packages, ArchUnit rules, Spring Modulith — and that is the cheap experiment. Extract a service when a seam has proved itself, not before.\n\nThe worst outcome is the **distributed monolith**: services that must be deployed together and cannot function independently. You pay every cost of distribution and receive none of the benefits.",
+      "keyPoints": [
+        "Distribution buys you things but charges network latency, partial failure and operational load on every call",
+        "Wrong boundaries in a monolith cost a refactor; across services they cost a migration",
+        "Real justifications: independent deployment, different scaling, isolation, compliance",
+        "A modular monolith gives boundaries without distribution — try that first",
+        "A distributed monolith pays every cost and collects no benefit"
+      ],
+      "followUps": [
+        {
+          "q": "How do you tell whether you have built a distributed monolith?",
+          "a": "Ask whether you can deploy one service without coordinating the release of others, and whether a single service can be brought up in isolation for a test. If a change routinely spans four repositories and they must ship in a fixed order, the boundaries exist on the org chart but not in the design."
+        },
+        {
+          "q": "What is Conway's law and why does it show up in this discussion?",
+          "a": "Systems tend to mirror the communication structure of the organisation that builds them. It matters because service boundaries that cut across team boundaries generate constant cross-team coordination, while boundaries aligned with teams reduce it. Splitting services without aligning ownership usually makes coordination worse, not better."
+        }
+      ],
+      "redFlags": [
+        "Microservices as the default starting architecture for a new product",
+        "No mention of operational cost",
+        "\"The monolith was too big\" with no measurable problem attached"
+      ],
+      "related": [
+        "scaling"
+      ]
+    },
+    {
+      "id": "jms-02",
+      "level": "mid",
+      "type": "concept",
+      "question": "How do you decide service boundaries, and why is a distributed transaction across two services a design smell?",
+      "answer": "A good boundary is drawn around a **business capability that owns its data** — ordering, payments, inventory — not around a technical layer. Two practical tests tell you whether you got it right. First, **do most changes stay inside one service?** If a typical feature requires coordinated edits in four services, the boundary is cutting across a natural unit of change. Second, **does the service own the data it needs to make its decisions?** A service that must ask another for data on every request has not been given a real responsibility. This is the domain-driven design idea of an aggregate: the consistency boundary and the ownership boundary should be the same thing.\n\nThe corollary is that each service owns its database and nobody else reads it directly. A shared schema is the fastest way to get services that cannot be changed or deployed independently, because the schema becomes an undocumented public API.\n\nNow the smell. If a use case requires **atomicity across two services** — both succeed or neither does — you have found evidence that the two pieces belong inside one consistency boundary. The usual reflex is a distributed transaction with two-phase commit, and it is a bad answer for concrete reasons: the coordinator is a single point of failure; locks are held across the network for the duration of the protocol, so throughput collapses under contention; and if the coordinator dies after prepare, participants are blocked holding locks with no way to decide. Most modern datastores, message brokers and third-party HTTP APIs do not support XA at all.\n\nSo the options are: move the operation so it happens inside one service, or accept eventual consistency and implement the workflow as a **saga** with compensating actions and a transactional outbox. Choosing the saga is a business decision as much as a technical one, because someone must define what \"undo\" means.",
+      "keyPoints": [
+        "Draw boundaries around business capabilities that own their data, not technical layers",
+        "Test them by asking whether typical changes stay local and whether the service owns its decision data",
+        "A shared database makes the schema an undocumented public API and kills independence",
+        "Needing atomicity across two services is evidence they are one consistency boundary",
+        "2PC blocks on coordinator failure, holds locks over the network, and is unsupported by most modern infrastructure"
+      ],
+      "followUps": [
+        {
+          "q": "A service needs data owned by another on every request. What are the options?",
+          "a": "Either the boundary is wrong and the data should move, or you replicate a read-only projection into the consumer — kept current by events — so it can answer locally. Replication is the standard answer when the data is needed for filtering or display, and it makes the staleness explicit instead of paying a network hop and a coupling for every request."
+        },
+        {
+          "q": "What is the dual-write problem?",
+          "a": "Writing to your database and publishing an event to a broker are two separate operations with no shared transaction, so a crash between them leaves the state changed with no event, or an event with no state. The transactional outbox fixes it: write the event into a table in the same transaction, and a separate relay publishes it, giving at-least-once delivery with no lost events."
+        }
+      ],
+      "redFlags": [
+        "Services sharing a database schema",
+        "Reaching for XA or two-phase commit as the default",
+        "Boundaries drawn by technical layer: a 'controller service' and a 'data service'"
+      ],
+      "related": [
+        "database",
+        "cap-theorem",
+        "message-queue"
+      ]
+    },
+    {
+      "id": "jms-03",
+      "level": "junior",
+      "type": "tradeoff",
+      "question": "Synchronous or asynchronous communication between services — how do you choose?",
+      "answer": "**Synchronous** calls — REST or gRPC — are request/response: the caller waits and gets an answer. They are simple to reason about, easy to debug, and give the caller the result immediately. The cost is **temporal coupling**: the callee must be up at the moment you call it, its latency is added to yours, and its failures become yours. Availability multiplies, so a chain of five services each up 99.9% of the time gives you roughly 99.5% — and that is before you consider that a slow dependency can consume all of your request threads.\n\n**Asynchronous** messaging through a broker — Kafka, RabbitMQ, SQS — decouples in time. The producer writes a message and returns; the consumer processes it when it can. The broker absorbs bursts, so a traffic spike becomes a queue depth rather than a cascade of timeouts, and it gives you back-pressure and fan-out for free: three teams can react to `OrderPlaced` without the order service knowing they exist.\n\nThe costs are equally real. You get **eventual consistency**, so the user may not see their change immediately and the UI must be designed for it. Delivery is at-least-once, so every consumer must be **idempotent** — duplicates are a certainty, not an edge case. Ordering guarantees are partial, usually per partition or per queue. And debugging shifts from reading a stack trace to reconstructing a distributed timeline, which is why tracing stops being optional.\n\nThe rule of thumb: **synchronous when the caller needs the answer to respond to the user** — a price quote, an authorisation, a validation. **Asynchronous when the work is a consequence rather than part of the answer** — send the confirmation email, update the analytics warehouse, rebuild the search index. The most common design mistake is doing consequential work synchronously, which couples the checkout path's availability to the email provider's.",
+      "keyPoints": [
+        "Synchronous is simple but couples availability and latency; failures propagate upward",
+        "Availability multiplies across a synchronous call chain",
+        "Async decouples in time, absorbs bursts and enables fan-out",
+        "Async costs eventual consistency, duplicate delivery and harder debugging",
+        "Sync for what the caller needs to answer; async for consequences"
+      ],
+      "followUps": [
+        {
+          "q": "Can you just do the async work on a background thread pool instead of a broker?",
+          "a": "Only when losing it is acceptable. An in-process queue dies with the JVM, does not survive a deploy, and has no retry or dead-letter handling. It is fine for a metrics push, not for 'send the receipt'. If the work must not be lost, it needs durable storage — an outbox table or a broker."
+        },
+        {
+          "q": "How do you make a consumer idempotent?",
+          "a": "Give each message a stable business or event id and record processed ids in the same transaction as the effect, protected by a unique constraint — or make the operation naturally idempotent, such as setting a status to a fixed value rather than incrementing a counter. Checking a cache before processing is not enough; two consumers can check concurrently."
+        }
+      ],
+      "redFlags": [
+        "Choosing a broker for everything because it is 'decoupled'",
+        "Assuming exactly-once delivery",
+        "Sending email or calling analytics inside the checkout request",
+        "No mention of eventual consistency reaching the user interface"
+      ],
+      "related": [
+        "message-queue",
+        "api"
+      ]
+    },
+    {
+      "id": "jms-04",
+      "level": "senior",
+      "type": "concept",
+      "question": "Explain the saga pattern with a concrete order, payment and inventory example, including compensation.",
+      "answer": "A saga replaces one distributed transaction with a **sequence of local transactions**, each committed independently, plus a **compensating action** for each step that can undo its business effect if a later step fails.\n\nTake checkout. Step one: the order service creates the order in `PENDING` and commits. Step two: the payment service **authorises** the card — reserving funds without capturing them — and commits. Step three: the inventory service reserves the stock. Step four: payment captures, inventory confirms, and the order moves to `CONFIRMED`.\n\nIf step three fails because an item is out of stock, you compensate backwards: **void the authorisation** and mark the order `CANCELLED` with a reason the customer can see.\n\nThe details that matter in practice.\n\n**Compensation is semantic, not a rollback.** You cannot undo a commit; you perform a new business action that offsets the old one. Voiding an authorisation leaves no trace, but a refund after a capture does — the customer saw a charge and then a credit. This is exactly why you order the steps so that reversible actions come first and irreversible ones last: authorise early, capture late, and send the confirmation email only when nothing can fail afterwards.\n\n**Every step and every compensation must be idempotent**, because retries are guaranteed. Payment authorisation carries an idempotency key; \"release reservation\" must be safe to call twice.\n\n**Saga state must be durable** — you cannot hold it in memory — and every step needs a timeout, because a step that never answers is the common failure, not an explicit error.\n\n**There is no isolation.** Another saga can observe the intermediate state, which is why the order sits in `PENDING` rather than looking confirmed; that status is a semantic lock.\n\nTwo styles: **choreography**, where services react to each other's events with no coordinator — fine for two or three steps, untraceable beyond that — and **orchestration**, where one service owns an explicit state machine. Orchestration costs a component and gains something you can read, test and query when a saga gets stuck.",
+      "keyPoints": [
+        "Local transactions plus compensating actions instead of one atomic transaction",
+        "Compensation is a new business fact, not a rollback — order steps so irreversible ones come last",
+        "Authorise early and capture late so the common failure needs a void, not a refund",
+        "Steps and compensations must be idempotent, and saga state must be persisted with timeouts",
+        "Choreography for two or three steps; orchestration when you need to see and test the flow"
+      ],
+      "followUps": [
+        {
+          "q": "What if a compensation itself fails?",
+          "a": "Retry it with backoff, since it is idempotent, and if it still fails after a bounded number of attempts, park the saga in a dead-letter state and alert a human. Some compensations genuinely cannot succeed automatically — a refund to a closed card — so the design must include a manual path. A saga with no operator visibility becomes silent money loss."
+        },
+        {
+          "q": "How do you stop a customer seeing a half-completed order?",
+          "a": "Use the status field as a semantic lock and make every reader respect it: a `PENDING` order is not shippable, not editable, and shown to the customer as 'processing'. That is the countermeasure for the saga's lack of isolation — you make the intermediate state a legitimate, well-defined state rather than pretending it does not exist."
+        }
+      ],
+      "redFlags": [
+        "Describing compensation as a rollback",
+        "No idempotency on saga steps",
+        "Saga state held in memory or inferred from scattered events",
+        "Capturing payment first and refunding as the normal path"
+      ],
+      "related": [
+        "message-queue",
+        "cap-theorem"
+      ]
+    },
+    {
+      "id": "jms-05",
+      "level": "mid",
+      "type": "concept",
+      "question": "What do circuit breakers and bulkheads protect, and how do they differ?",
+      "answer": "They solve two different halves of the same problem, which is why you generally need both.\n\nA **bulkhead** limits *how much of your capacity* a single dependency can consume. The name is from ship compartments: a breach floods one section, not the hull. Concretely you cap the concurrent calls allowed to each downstream — say 20 permits for the recommendation service — so that even if every one of those calls hangs, the other 180 request threads remain free to serve traffic that does not need recommendations. Without it, one slow dependency silently acquires every thread in your pool and your entire service goes down because an optional feature got slow. Resilience4j offers a semaphore bulkhead (cheap, but cannot interrupt a blocked call) and a thread-pool bulkhead (can enforce a timeout on blocking calls, at the cost of context switching and losing thread-local context like security and tracing unless you propagate it).\n\nA **circuit breaker** limits *how long you keep trying* something that is already failing. It watches a sliding window of recent calls and, when the failure rate or slow-call rate crosses a threshold — with a minimum number of calls, so three failures at startup do not trip it — it moves to `OPEN` and fails subsequent calls immediately without attempting them. After a wait it goes `HALF_OPEN`, allows a limited number of trial calls, and either closes or opens again.\n\nThat fast failure protects both sides. Your service stops spending threads and time on calls that will not succeed, and the struggling dependency stops receiving a retry storm from every caller at exactly the moment it needs room to recover.\n\nWhat neither gives you is a good answer for the user. That is the **fallback**: a cached value, a degraded response, a queued action, or an honest error. A fallback returning `null` into code that does not expect it converts a handled outage into an unhandled one.",
+      "keyPoints": [
+        "Bulkhead caps how much capacity one dependency can consume; breaker caps how long you keep trying",
+        "Without a bulkhead, one slow optional dependency can take every request thread",
+        "Breakers need a minimum call count and a sliding window, plus a half-open trial state",
+        "Fast failure also protects the struggling dependency by stopping the retry storm",
+        "A fallback must be meaningful — cached, degraded or explicit — never a surprise null"
+      ],
+      "followUps": [
+        {
+          "q": "Should the breaker trip on slow calls as well as errors?",
+          "a": "Yes, and it is the more important case. A dependency returning 200s in eight seconds does more damage than one returning errors quickly, because errors release the thread and slowness does not. Configure a slow-call rate threshold alongside the failure rate."
+        },
+        {
+          "q": "Does every downstream call need a breaker?",
+          "a": "Not blindly. A breaker on a dependency with no viable fallback just converts a slow failure into a fast one, which is still useful for protecting threads but changes nothing for the user. Prioritise dependencies that are optional (where degrading is genuinely possible) and dependencies shared by many callers (where the retry storm is the real danger)."
+        }
+      ],
+      "redFlags": [
+        "Circuit breaker and bulkhead used as synonyms",
+        "A breaker with no half-open state or no minimum call threshold",
+        "Fallbacks that return null or an empty object with no signal to the caller",
+        "Retries layered at every level, multiplying load on a failing service"
+      ],
+      "related": [
+        "rate-limiting",
+        "load-balancer"
+      ]
+    },
+    {
+      "id": "jms-06",
+      "level": "mid",
+      "type": "concept",
+      "question": "How does distributed tracing work, and what does a correlation id give you?",
+      "answer": "In a single application a stack trace tells you what happened. Across fourteen services it does not exist, so you have to build the equivalent by propagating context.\n\nThe minimum useful version is a **correlation id**: the entry point — gateway or first service — generates an id, puts it in the logging MDC so every log line carries it, and passes it in a header to every downstream call, which does the same. Now one `grep` across aggregated logs reconstructs everything that happened for one request. This is perhaps a day's work and delivers most of the debugging value.\n\n**Distributed tracing** is the structured version. A **trace** is a tree of **spans**, each span one operation with a start time, duration, parent and attributes. Context propagates in the W3C `traceparent` header, which carries the trace id, the parent span id and sampling flags — a standard, so your Java service and someone else's Go service participate in the same trace. **OpenTelemetry** is the vendor-neutral instrumentation standard; in Spring Boot 3 you get it through Micrometer Tracing, which replaced Spring Cloud Sleuth.\n\nWhat that buys you is the waterfall: a request took 4 seconds, and here is the one span of the fourteen that took 3.8 of them. Answering that question without tracing means correlating latency dashboards by eye across teams.\n\nThe place it usually breaks is **async boundaries**. Context lives in a thread-local, so the moment work moves to a thread pool, a `CompletableFuture` or a message consumer, it is lost unless you propagate it explicitly — wrapping the executor, or writing trace headers into the message and restoring them on consumption.\n\nThe operational trade-off is **sampling**. Recording every trace is expensive, so head-based sampling keeps a fixed percentage — cheap, but the rare failure you care about is probably not in it. Tail-based sampling buffers spans and keeps traces that were slow or errored, which is what you actually want, at the cost of a collector that holds them until the trace completes.",
+      "keyPoints": [
+        "A correlation id in the MDC plus a propagated header is most of the value for a fraction of the effort",
+        "A trace is a tree of spans; W3C `traceparent` makes propagation cross-language",
+        "Spring Boot 3 uses Micrometer Tracing with OpenTelemetry; Sleuth is its predecessor",
+        "Thread-local context is lost across executors and brokers unless explicitly propagated",
+        "Head sampling is cheap but misses rare failures; tail sampling keeps the traces worth having"
+      ],
+      "followUps": [
+        {
+          "q": "How do you connect a trace to the logs for the same request?",
+          "a": "Put the trace and span ids into the MDC and include them in the log pattern, then index them in your log store. Tracing tools link out to logs filtered by trace id, so you go from 'this span was slow' to the exact log lines that span produced. Without that link you have two disconnected tools."
+        },
+        {
+          "q": "What is baggage and what is the risk with it?",
+          "a": "Baggage is arbitrary key-value context propagated alongside the trace — a tenant id, an experiment flag — available to every downstream service. The risks are size, since it travels on every request, and leakage, since it crosses service and sometimes organisational boundaries, so it must never carry anything sensitive."
+        }
+      ],
+      "redFlags": [
+        "No correlation id at all in a multi-service system",
+        "Trace context silently dropped across async boundaries",
+        "Tracing enabled but never linked to logs",
+        "Believing 100% sampling is free"
+      ],
+      "related": [
+        "api"
+      ]
+    },
+    {
+      "id": "jms-07",
+      "level": "mid",
+      "type": "tradeoff",
+      "question": "Service discovery: client-side or server-side load balancing?",
+      "answer": "The problem is the same in both: instances come and go with deploys and autoscaling, so callers cannot hold a fixed address list. Something must maintain the mapping from a logical service name to a current set of healthy instances. The difference is **who chooses the instance**.\n\nIn **client-side discovery** the caller queries a registry — Eureka, Consul — gets the full list of instances, caches it, and picks one itself, typically with Spring Cloud LoadBalancer. The advantages are one fewer network hop, and the client can be clever: it knows which instances are slow and can do least-request or zone-aware routing using information a central proxy would have to infer. The costs are that every client in every language needs the discovery and balancing logic, cached lists can be stale so you will call a dead instance sometimes, and the registry becomes critical infrastructure with its own consistency problems.\n\nIn **server-side discovery** the caller sends to a stable address and something in the path chooses: a load balancer, an API gateway, or a Kubernetes `Service` where DNS gives a virtual IP and kube-proxy distributes to healthy pods. Clients stay trivial and language-agnostic, and routing policy, TLS and retries are configured in one place. The costs are an extra hop, a component to scale and keep available, and less client-side context for routing decisions.\n\nA **service mesh** is the synthesis: a sidecar proxy does client-side balancing out of the application process, so you get per-request intelligence with no library in your code, at the price of significant operational complexity.\n\nIn practice, if you run on Kubernetes the server-side default is already there and reaching for Eureka is usually redundant. What matters more than the choice is **health checking**: separate readiness from liveness, deregister quickly on shutdown, and drain connections before terminating — otherwise every deploy produces a burst of errors regardless of which model you picked.",
+      "keyPoints": [
+        "The question is who picks the instance: the caller or something in the path",
+        "Client-side saves a hop and enables smarter routing, but needs a library per language and can act on stale lists",
+        "Server-side keeps clients trivial and centralises policy, at the cost of a hop and a component",
+        "A mesh gives client-side behaviour without in-process libraries, for real operational cost",
+        "Readiness and graceful shutdown matter more than the model — bad draining means errors on every deploy"
+      ],
+      "followUps": [
+        {
+          "q": "Why do you get errors during a deploy even with health checks?",
+          "a": "Because deregistration is not instant. In-flight requests are still arriving when the process begins shutting down, and caches or DNS TTLs keep the old instance in rotation for seconds. The fix is to fail readiness first, keep serving for a grace period while traffic drains, and only then stop — Spring Boot's graceful shutdown plus a preStop delay in Kubernetes."
+        },
+        {
+          "q": "Round robin or least-request?",
+          "a": "Round robin assumes instances are equivalent, which breaks when one is slow — a just-started JVM still warming up, or a noisy neighbour — because it keeps receiving its full share. Least-request routes to whoever has the fewest in-flight calls, which naturally sheds load away from the struggling instance. It is usually the better default for heterogeneous latency."
+        }
+      ],
+      "redFlags": [
+        "Hardcoded instance addresses or hostnames",
+        "Liveness and readiness probes treated as the same thing",
+        "Adding a discovery server on Kubernetes without knowing why",
+        "No graceful shutdown or connection draining"
+      ],
+      "related": [
+        "load-balancer",
+        "scaling"
+      ]
+    },
+    {
+      "id": "jms-08",
+      "level": "senior",
+      "type": "scenario",
+      "question": "One downstream service slows down and the whole platform goes down with it. Explain the cascade and the layered fix.",
+      "answer": "**The mechanism.** Say the pricing service degrades from 50 ms to 5 seconds. Every caller's request threads now block for 5 seconds instead of 50 ms, so at constant traffic the number of threads in flight rises by a factor of a hundred. Thread pools and connection pools saturate. New requests queue, including requests to endpoints that never touch pricing. Callers of *those* services now time out, and their callers after them. Health checks — ordinary requests served by the same exhausted pool — start failing, so instances are ejected, and their traffic lands on the remaining instances, which fall over faster. Meanwhile every layer is retrying, multiplying load on the one service that needed relief. The system can stay down after the original cause is fixed, because the retry backlog keeps re-saturating it. That last property is what makes these failures metastable.\n\n**Evidence.** Thread dumps showing request threads parked in socket reads on one host; connection pool saturation metrics; a trace waterfall where one span owns nearly all the latency; error rates rising *outward* from one service over time.\n\n**Why timeouts alone are insufficient.** A timeout bounds how long you waste a thread, not how many. With 200 threads, 500 requests per second and a 2-second timeout, you still need 1,000 threads' worth of capacity — you are saturated regardless. Worse, a timeout combined with automatic retry *increases* load on the failing service at the exact moment it is struggling. Timeouts are necessary and nowhere near sufficient.\n\n**The layers, each doing something the others cannot.** *Timeouts* (connect and read, on every outbound call) bound the damage per call and are the precondition for everything else. *Bulkheads* cap the concurrent calls allowed to pricing, so at most N threads can be stuck and the rest of the service keeps working. *Circuit breakers* stop calling it at all once failure or slow-call rates cross a threshold, which frees your capacity and gives pricing room to recover. *Fallbacks* turn that fast failure into something a user can live with — a cached price, a default, or the feature hidden. *Retry budgets* with jitter cap total retry traffic as a fraction of normal load, so you never amplify. And on the callee side, *load shedding* — rejecting excess work quickly rather than queueing it — is what lets a service break out of the metastable state.\n\nThe design question behind all of it: should this dependency be on the critical path at all? Precomputing or caching prices removes the failure mode entirely.",
+      "keyPoints": [
+        "Slowness saturates threads and pools, then propagates outward and fails health checks",
+        "Retries at every layer amplify load and keep the system down after the cause is fixed",
+        "A timeout bounds time per call, not the number of threads consumed — necessary but insufficient",
+        "Bulkhead caps concurrency per dependency, breaker stops calling it, fallback gives the user an answer",
+        "Load shedding on the callee and retry budgets with jitter break the metastable state",
+        "The strongest fix is removing the dependency from the critical path"
+      ],
+      "followUps": [
+        {
+          "q": "How do you choose timeout values?",
+          "a": "From the dependency's measured latency distribution, not from a round number — something above its p99 so you do not cut off calls that would have succeeded, but far below your own SLO. Then propagate a deadline: pass the remaining budget downstream so an inner call cannot outlive the outer request that is waiting on it."
+        },
+        {
+          "q": "How would you verify these protections actually work?",
+          "a": "Deliberately inject the failure. A fault-injection test or game day that adds latency to the pricing dependency in a staging environment, or a shadow of production traffic, shows whether the bulkhead and breaker behave as configured. Resilience configuration that has never been exercised is almost always wrong — thresholds too high, fallback throwing, bulkhead sized at the pool size."
+        }
+      ],
+      "redFlags": [
+        "Adding timeouts and declaring the problem solved",
+        "Retries with no budget, no jitter and no backoff",
+        "Scaling up the failing service as the only response",
+        "No fallback plan for an optional dependency",
+        "Health checks that share the exhausted thread pool with no compensation"
+      ],
+      "related": [
+        "rate-limiting",
+        "load-balancer",
+        "cache"
+      ]
+    }
+  ]
+}

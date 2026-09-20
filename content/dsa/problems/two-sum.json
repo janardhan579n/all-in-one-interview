@@ -1,0 +1,110 @@
+{
+  "id": "two-sum",
+  "title": "Two Sum",
+  "patternId": "hashing",
+  "difficulty": "beginner",
+  "tags": [
+    "array",
+    "hashing"
+  ],
+  "statement": "Given an array of integers and a target, return the indices of the two numbers that add up to the target. Exactly one valid answer exists and you may not use the same element twice.",
+  "realWorld": "Reconciling payments: given a list of transaction amounts and an expected total, find the two that make it up. Also the shape of 'find the complement' in accounting and inventory matching.",
+  "examples": [
+    {
+      "input": "nums = [2,7,11,15], target = 9",
+      "output": "[0,1]",
+      "explanation": "nums[0] + nums[1] = 2 + 7 = 9."
+    },
+    {
+      "input": "nums = [3,2,4], target = 6",
+      "output": "[1,2]",
+      "explanation": "2 + 4 = 6. Note [0,0] is not allowed."
+    }
+  ],
+  "constraints": [
+    "2 <= nums.length <= 10^4",
+    "-10^9 <= nums[i], target <= 10^9",
+    "Exactly one valid answer exists"
+  ],
+  "bruteForce": {
+    "idea": "Test every pair.",
+    "code": [
+      "for (int i = 0; i < nums.length; i++) {",
+      "    for (int j = i + 1; j < nums.length; j++) {",
+      "        if (nums[i] + nums[j] == target) return new int[]{i, j};",
+      "    }",
+      "}",
+      "return new int[]{-1, -1};"
+    ],
+    "complexity": {
+      "time": "O(n^2)",
+      "space": "O(1)"
+    },
+    "whySlow": "n(n-1)/2 pairs. The inner loop exists only to ask 'is target - nums[i] present?', which is a lookup dressed up as a search."
+  },
+  "patternIdentification": "The inner loop searches for a value we can compute in advance. Any time you can name exactly what you are looking for, use a hash map instead of scanning for it.",
+  "optimized": {
+    "idea": "One pass. For each element compute the complement and check whether an earlier element equalled it. Store each value with its index as you go, so the map always holds everything to the left of the current position.",
+    "code": [
+      "public static int[] twoSum(int[] nums, int target) {",
+      "    Map<Integer, Integer> seen = new HashMap<>();   // value -> index",
+      "    for (int i = 0; i < nums.length; i++) {",
+      "        int need = target - nums[i];",
+      "        Integer j = seen.get(need);",
+      "        if (j != null) return new int[]{j, i};",
+      "        seen.put(nums[i], i);   // put AFTER the check: no element pairs with itself",
+      "    }",
+      "    return new int[]{-1, -1};",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(n)"
+    }
+  },
+  "visualization": {
+    "engine": "twoSumHash",
+    "input": {
+      "array": [
+        2,
+        7,
+        11,
+        15,
+        3
+      ],
+      "target": 18
+    },
+    "code": [
+      "Map<Integer, Integer> seen = new HashMap<>();",
+      "for (int i = 0; i < nums.length; i++) {",
+      "    int need = target - nums[i];",
+      "    if (seen.containsKey(need)) {",
+      "        return new int[]{ seen.get(need), i };",
+      "    }",
+      "    seen.put(nums[i], i);",
+      "}",
+      "return new int[]{-1, -1};"
+    ]
+  },
+  "commonMistakes": [
+    "Putting the current value in the map before checking for its complement — target 6 with a single 3 then wrongly returns [0,0].",
+    "Assuming the array is sorted and reaching for two pointers; sorting destroys the original indices the problem asks for.",
+    "Overflow when computing target - nums[i] with extreme values; use long if the constraints allow both near Integer.MIN_VALUE."
+  ],
+  "similar": [
+    "two-sum-sorted",
+    "three-sum",
+    "contains-duplicate",
+    "subarray-sum-equals-k",
+    "four-sum-count"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 1,
+      "slug": "two-sum",
+      "title": "Two Sum",
+      "url": "https://leetcode.com/problems/two-sum/",
+      "premium": false
+    }
+  }
+}

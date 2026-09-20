@@ -1,0 +1,348 @@
+{
+  "id": "backtracking",
+  "kind": "pattern",
+  "title": "Backtracking",
+  "group": "Recursion & Backtracking",
+  "level": 3,
+  "difficulty": "advanced",
+  "estimatedMinutes": 35,
+  "summary": "Build a solution one choice at a time; when a choice cannot lead anywhere valid, undo it and try the next — a systematic search that prunes instead of enumerating.",
+  "prerequisites": [
+    "recursion",
+    "dfs"
+  ],
+  "tags": [
+    "backtracking",
+    "recursion",
+    "combinatorics",
+    "level-3"
+  ],
+  "analogy": {
+    "beginner": "Trying keys on a locked door in a corridor of locked doors. You pick a key, open door 1, walk to door 2, try keys there. If none work, you go back, put key 1 back on the ring, and try a different key on door 1. You never carry a wrong key forward, and you never try the same combination twice. The 'put the key back' step is the backtrack — and it is the step people forget.",
+    "interview": "Systematic DFS over a state-space tree of partial solutions. At each node choose an option, recurse, then undo the choice so the parent's state is restored. Correctness depends on the undo being exact; efficiency depends on pruning — abandoning a branch as soon as it cannot yield a valid completion."
+  },
+  "intuition": "Backtracking is DFS where the graph is the space of *partial answers* rather than a graph someone handed you.\n\nThe template is three lines that never change:\n\n```\nchoose  → add the option to the current partial solution\nexplore → recurse\nunchoose→ remove it, restoring the state exactly as it was\n```\n\nThat unchoose line is the entire difference between backtracking and ordinary recursion. Without it, choices from one branch leak into the next and every answer after the first is wrong.\n\nThe second idea is **pruning**, and it is where the performance lives. Naive enumeration of 8-queens placements is 8⁸ ≈ 16 million. Checking validity *as you place* each queen — abandoning a column the moment it conflicts — cuts that to about 2,000 explored nodes. Same answer, four orders of magnitude less work. So the question to ask about any backtracking problem is not 'how do I enumerate?' but 'how early can I tell that this branch is doomed?'\n\nWorth being honest about: these problems are exponential by nature. You are not making them polynomial. You are making the constant survivable and cutting the exponent's base.",
+  "problemFirst": {
+    "motivatingProblem": "Generate every subset of [1, 2, 3].",
+    "bruteForce": {
+      "idea": "With 3 elements you could write 3 nested loops, or iterate a bitmask from 0 to 2³-1 and include element i when bit i is set. Both work — until n is not known at compile time, or until the problem adds a constraint like 'only subsets summing to 10', at which point the bitmask still generates all 2ⁿ and filters afterwards.",
+      "code": [
+        "// Bitmask enumeration: fine for pure subsets, hopeless once constraints appear",
+        "for (int mask = 0; mask < (1 << n); mask++) {",
+        "    List<Integer> subset = new ArrayList<>();",
+        "    for (int i = 0; i < n; i++) {",
+        "        if ((mask & (1 << i)) != 0) subset.add(nums[i]);",
+        "    }",
+        "    if (isValid(subset)) result.add(subset);   // generate everything, then reject",
+        "}"
+      ],
+      "complexity": {
+        "time": "O(2ⁿ · n)",
+        "space": "O(n)"
+      },
+      "whySlow": "It generates every candidate before testing any of them. If a constraint invalidates a partial choice — say the first two elements already exceed the budget — the bitmask approach still enumerates all 2ⁿ⁻² completions of that doomed prefix."
+    },
+    "observation": "Each element is a binary decision: in or out. That is a binary tree of decisions, depth n, and a constraint violated at depth 2 invalidates the entire subtree below it.",
+    "leap": "Walk the decision tree with recursion and check validity *at every node*. When a partial solution cannot possibly be completed, return immediately — cutting away the whole subtree instead of exploring it."
+  },
+  "howItWorks": [
+    "**Define the state** — the partial solution so far (a list, a board, a string) plus whatever index or position you are deciding about.",
+    "**Base case** — the partial solution is complete: record a *copy* of it and return.",
+    "**Enumerate the choices** available at this position.",
+    "**Prune** — skip any choice that makes the partial solution invalid. This is where the algorithm earns its keep.",
+    "**Choose → explore → unchoose** — mutate the state, recurse, then undo exactly what you did.",
+    "**Deduplicate** — with repeated input values, sort first and skip a value equal to its predecessor at the same depth, which stops the same combination being produced twice.",
+    "**Record copies, not references** — `result.add(new ArrayList<>(current))`. Adding `current` itself stores a reference that will be empty by the time the recursion unwinds."
+  ],
+  "patternRecognition": {
+    "signals": [
+      "'Find **all** …' — all subsets, permutations, combinations, paths, partitions",
+      "'How many ways …' where you must construct each way (if you only need the count, consider DP)",
+      "Constraint satisfaction: Sudoku, N-Queens, crosswords, scheduling",
+      "Small n (typically ≤ 20), with 2ⁿ or n! implied by the constraints",
+      "The problem is naturally a sequence of decisions where an early decision limits later ones"
+    ],
+    "antiSignals": [
+      "You need only the count or the optimum, and subproblems overlap → dynamic programming is polynomial where backtracking is exponential",
+      "n is large (> 30) with no strong pruning available — the search will not finish",
+      "A greedy rule provably works → far cheaper"
+    ],
+    "decisionTreeId": null
+  },
+  "visualizations": [
+    {
+      "id": "subsets",
+      "title": "Subsets — the include/exclude decision tree",
+      "engine": "backtrackingSubsets",
+      "input": {
+        "array": [
+          1,
+          2,
+          3
+        ]
+      },
+      "code": [
+        "void backtrack(int start, List<Integer> current) {",
+        "    result.add(new ArrayList<>(current));   // every node is a valid subset",
+        "    for (int i = start; i < nums.length; i++) {",
+        "        current.add(nums[i]);               // choose",
+        "        backtrack(i + 1, current);          // explore",
+        "        current.remove(current.size() - 1); // UNCHOOSE",
+        "    }",
+        "}"
+      ]
+    },
+    {
+      "id": "permutations",
+      "title": "Permutations — used[] marks what is already placed",
+      "engine": "backtrackingPermutations",
+      "input": {
+        "array": [
+          1,
+          2,
+          3
+        ]
+      },
+      "code": [
+        "void backtrack(List<Integer> current, boolean[] used) {",
+        "    if (current.size() == nums.length) {",
+        "        result.add(new ArrayList<>(current));",
+        "        return;",
+        "    }",
+        "    for (int i = 0; i < nums.length; i++) {",
+        "        if (used[i]) continue;",
+        "        used[i] = true;  current.add(nums[i]);",
+        "        backtrack(current, used);",
+        "        used[i] = false; current.remove(current.size() - 1);",
+        "    }",
+        "}"
+      ]
+    },
+    {
+      "id": "n-queens",
+      "title": "N-Queens — pruning cuts away entire subtrees",
+      "engine": "backtrackingNQueens",
+      "input": {
+        "n": 5
+      },
+      "code": [
+        "void place(int row) {",
+        "    if (row == n) { record(); return; }",
+        "    for (int col = 0; col < n; col++) {",
+        "        if (!isSafe(row, col)) continue;   // PRUNE: skip the whole subtree",
+        "        board[row] = col;",
+        "        place(row + 1);",
+        "        board[row] = -1;                   // unchoose",
+        "    }",
+        "}"
+      ]
+    }
+  ],
+  "implementations": [
+    {
+      "label": "Simple",
+      "language": "java",
+      "explanation": "Subsets and permutations — the two templates most problems are variations of. Note the `start` parameter in subsets (combinations do not care about order, so never look backwards) versus the `used` array in permutations (order matters, so every unused element is a candidate at every position).",
+      "code": [
+        "/** All subsets. O(2^n) subsets, O(n) to copy each => O(n · 2^n). */",
+        "public static List<List<Integer>> subsets(int[] nums) {",
+        "    List<List<Integer>> result = new ArrayList<>();",
+        "    backtrack(nums, 0, new ArrayList<>(), result);",
+        "    return result;",
+        "}",
+        "",
+        "private static void backtrack(int[] nums, int start,",
+        "                              List<Integer> current, List<List<Integer>> result) {",
+        "    result.add(new ArrayList<>(current));      // copy, not the live list",
+        "",
+        "    for (int i = start; i < nums.length; i++) {",
+        "        current.add(nums[i]);                  // choose",
+        "        backtrack(nums, i + 1, current, result); // explore (i+1: no reuse)",
+        "        current.remove(current.size() - 1);    // unchoose",
+        "    }",
+        "}",
+        "",
+        "/** All permutations. O(n!) results, O(n) each => O(n · n!). */",
+        "public static List<List<Integer>> permutations(int[] nums) {",
+        "    List<List<Integer>> result = new ArrayList<>();",
+        "    permute(nums, new ArrayList<>(), new boolean[nums.length], result);",
+        "    return result;",
+        "}",
+        "",
+        "private static void permute(int[] nums, List<Integer> current,",
+        "                            boolean[] used, List<List<Integer>> result) {",
+        "    if (current.size() == nums.length) {",
+        "        result.add(new ArrayList<>(current));",
+        "        return;",
+        "    }",
+        "    for (int i = 0; i < nums.length; i++) {",
+        "        if (used[i]) continue;",
+        "        used[i] = true;",
+        "        current.add(nums[i]);",
+        "        permute(nums, current, used, result);",
+        "        current.remove(current.size() - 1);",
+        "        used[i] = false;",
+        "    }",
+        "}"
+      ]
+    },
+    {
+      "label": "Optimized",
+      "language": "java",
+      "explanation": "N-Queens with O(1) conflict checking. Instead of scanning the board, three boolean arrays track occupied columns and both diagonal families. The diagonal indices are the trick: cells on a ╲ diagonal share `row - col` (offset by n-1 to stay non-negative), and cells on a ╱ diagonal share `row + col`.",
+      "code": [
+        "public class NQueens {",
+        "    private int n;",
+        "    private int[] queenCol;       // queenCol[row] = column of the queen in that row",
+        "    private boolean[] colUsed;    // column occupied",
+        "    private boolean[] diagUsed;   // '\\' diagonal: row - col + (n-1)",
+        "    private boolean[] antiUsed;   // '/' diagonal: row + col",
+        "    private List<List<String>> solutions;",
+        "",
+        "    public List<List<String>> solve(int n) {",
+        "        this.n = n;",
+        "        queenCol = new int[n];",
+        "        colUsed  = new boolean[n];",
+        "        diagUsed = new boolean[2 * n - 1];",
+        "        antiUsed = new boolean[2 * n - 1];",
+        "        solutions = new ArrayList<>();",
+        "        place(0);",
+        "        return solutions;",
+        "    }",
+        "",
+        "    private void place(int row) {",
+        "        if (row == n) {",
+        "            solutions.add(render());",
+        "            return;",
+        "        }",
+        "        for (int col = 0; col < n; col++) {",
+        "            int diag = row - col + (n - 1);",
+        "            int anti = row + col;",
+        "            if (colUsed[col] || diagUsed[diag] || antiUsed[anti]) {",
+        "                continue;                       // PRUNE in O(1)",
+        "            }",
+        "            colUsed[col] = diagUsed[diag] = antiUsed[anti] = true;",
+        "            queenCol[row] = col;",
+        "",
+        "            place(row + 1);",
+        "",
+        "            colUsed[col] = diagUsed[diag] = antiUsed[anti] = false;  // unchoose",
+        "        }",
+        "    }",
+        "}"
+      ]
+    }
+  ],
+  "complexity": {
+    "time": "Exponential, bounded by the size of the explored state-space tree: O(n · 2ⁿ) for subsets, O(n · n!) for permutations, far below the naive bound for pruned searches like N-Queens",
+    "space": "O(n) for the recursion stack and the current partial solution, plus O(total output) to store the results",
+    "why": "The honest bound is 'number of nodes explored × work per node'. For subsets every node is an answer, so 2ⁿ is unavoidable — the output alone is that large. For constrained problems, pruning is what separates feasible from hopeless: 8-Queens has 8⁸ ≈ 16.7 million naive placements but the pruned search explores roughly 2,000 nodes. This is why 'how early can I detect failure?' is the design question. Note also that output-sized results mean you cannot beat exponential when the problem genuinely asks for all of them — if it only asks *how many*, switch to DP."
+  },
+  "commonMistakes": [
+    {
+      "mistake": "Forgetting to undo the choice",
+      "fix": "The single most common bug. State leaks into sibling branches and every result after the first is wrong. Make unchoose the mirror image of choose."
+    },
+    {
+      "mistake": "`result.add(current)` instead of `result.add(new ArrayList<>(current))`",
+      "fix": "You store a reference to the live list, which the recursion then empties. Every entry in your result ends up identical (usually empty)."
+    },
+    {
+      "mistake": "Passing `i + 1` vs `i` vs `start` incorrectly",
+      "fix": "`i + 1` = each element used at most once; `i` = elements may repeat; `0` = order matters (permutations). Decide which the problem wants before writing the loop."
+    },
+    {
+      "mistake": "Duplicate results with repeated input values",
+      "fix": "Sort the input, then `if (i > start && nums[i] == nums[i-1]) continue;` — skip equal values at the same depth, not across depths."
+    },
+    {
+      "mistake": "Validating only at the leaves",
+      "fix": "That is enumeration, not backtracking. Prune at every node or the search explodes."
+    },
+    {
+      "mistake": "Using backtracking where DP applies",
+      "fix": "'How many ways to climb n stairs' is O(n) with DP and exponential with backtracking. Ask whether you need the answers themselves or just a count/optimum."
+    }
+  ],
+  "realWorldUses": [
+    "Constraint solvers and SAT solvers — DPLL is backtracking with clause learning.",
+    "Regular-expression engines backtrack over match alternatives, which is exactly why catastrophic regex backtracking is a real denial-of-service class.",
+    "SQL query planners search join orders; compilers search register allocations.",
+    "Puzzle solvers (Sudoku, crosswords), timetabling, seating and shift scheduling.",
+    "Type inference and unification in compilers explore and undo candidate bindings."
+  ],
+  "interviewNotes": [
+    "Write the three-line skeleton — choose / explore / unchoose — before filling in details. It shows structure and stops you forgetting the undo.",
+    "State the complexity in terms of the output size: 'there are 2ⁿ subsets and each costs O(n) to copy, so O(n·2ⁿ), and that is optimal because the output is that large.'",
+    "When asked to optimise, talk about pruning first, then memoisation of repeated states — that is the bridge to DP.",
+    "n ≤ 20 in the constraints is a strong hint that exponential search is intended."
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "mcq",
+      "question": "What is the defining step of backtracking, compared with plain recursion?",
+      "options": [
+        "Using a HashMap",
+        "Undoing the choice after the recursive call, restoring the state for the next branch",
+        "Sorting the input",
+        "Using a while loop"
+      ],
+      "answerIndex": 1,
+      "explanation": "Choose → explore → unchoose. Without the undo, mutations from one branch corrupt every branch explored afterwards."
+    },
+    {
+      "id": "q2",
+      "type": "predict-output",
+      "question": "You write `result.add(current)` instead of `result.add(new ArrayList<>(current))`. What happens?",
+      "options": [
+        "Nothing — it is the same",
+        "Every entry in result points at the same list, which the recursion eventually empties, so you get N identical (usually empty) lists",
+        "A compile error",
+        "Only the first result is wrong"
+      ],
+      "answerIndex": 1,
+      "explanation": "Java stores the reference, not a snapshot. As the recursion unwinds it removes elements from that very list, so all the stored 'results' change together."
+    },
+    {
+      "id": "q3",
+      "type": "complexity",
+      "question": "What is the time complexity of generating all subsets of n elements?",
+      "options": [
+        "O(n)",
+        "O(n²)",
+        "O(n · 2ⁿ)",
+        "O(n!)"
+      ],
+      "answerIndex": 2,
+      "explanation": "There are 2ⁿ subsets and copying each costs O(n). You cannot do better — the output itself has that size."
+    },
+    {
+      "id": "q4",
+      "type": "identify-pattern",
+      "question": "'Count the number of ways to climb n stairs taking 1 or 2 steps.' Backtracking or DP?",
+      "options": [
+        "Backtracking — enumerate every way",
+        "Dynamic programming — you need only the count, and subproblems overlap heavily, giving O(n) instead of exponential",
+        "Binary search",
+        "Sliding window"
+      ],
+      "answerIndex": 1,
+      "explanation": "Backtracking would enumerate exponentially many paths to count them. Because ways(n) = ways(n-1) + ways(n-2) and those subproblems repeat, DP answers it in O(n). 'All the answers' ⇒ backtracking; 'how many' or 'the best one' ⇒ usually DP."
+    }
+  ],
+  "practiceProblems": [
+    "subsets",
+    "permutations",
+    "combination-sum",
+    "letter-combinations-phone",
+    "word-search",
+    "n-queens",
+    "palindrome-partitioning"
+  ],
+  "related": [
+    "recursion",
+    "dfs",
+    "dynamic-programming-basics"
+  ]
+}

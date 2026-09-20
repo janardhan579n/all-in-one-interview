@@ -1,0 +1,149 @@
+{
+  "id": "serialize-deserialize-tree",
+  "title": "Serialize and Deserialize Binary Tree",
+  "patternId": "trees",
+  "difficulty": "advanced",
+  "tags": [
+    "tree",
+    "traversal",
+    "design",
+    "recursion"
+  ],
+  "statement": "Design two functions: serialize(TreeNode) turning a binary tree into a string, and deserialize(String) turning that string back into a tree structurally identical to the original. The tree is an ordinary binary tree — not a BST — and values may repeat. Any format is allowed as long as the round trip is exact.",
+  "realWorld": "Any time a tree crosses a boundary: caching a parsed AST so a rebuild can skip the parser, writing an index page to disk, shipping a DOM subtree to a worker thread, snapshotting a scene graph. Every one of those formats has to answer the same question this problem asks — how do you write down a shape, rather than just a bag of values?",
+  "examples": [
+    {
+      "input": "root = [1,2,3,null,null,4,5]",
+      "output": "\"1,2,#,#,3,4,#,#,5,#,#\"",
+      "explanation": "Level-order notation on the left: values level by level, null for a missing child. The output is a preorder walk with # standing for a null child. Read it aloud: 1, then 1's left subtree (2, whose two children are both absent), then 1's right subtree (3, whose left is 4 with two absences and whose right is 5 with two absences). Every node contributes its value; every missing child contributes a #."
+    },
+    {
+      "input": "root = []",
+      "output": "\"#\"",
+      "explanation": "The empty tree serialises to a single null marker, and deserialising it reads that one token and returns null. No special case is needed in either direction — the marker already is the representation of nothing."
+    },
+    {
+      "input": "p = root 1 with left child 2; q = root 2 with right child 1",
+      "output": "p -> \"1,2,#,#,#\", q -> \"2,#,1,#,#\"",
+      "explanation": "Two different trees whose inorder traversals are both 2,1. The values alone cannot tell them apart; the null markers can, and that is the whole idea of the format. Note the strings differ in the position of the #, not in the values."
+    }
+  ],
+  "constraints": [
+    "0 <= number of nodes <= 10^4",
+    "-1000 <= node.val <= 1000 — values may repeat, so a value cannot be used to identify a node",
+    "The tree is arbitrary: not a BST, not balanced, possibly a chain"
+  ],
+  "bruteForce": {
+    "idea": "Write down a traversal of the values, comma separated, and rebuild by reading them back.",
+    "code": [
+      "public static String serialize(TreeNode root) {",
+      "    StringBuilder out = new StringBuilder();",
+      "    inorder(root, out);",
+      "    return out.toString();",
+      "}",
+      "",
+      "private static void inorder(TreeNode node, StringBuilder out) {",
+      "    if (node == null) return;             // silently records nothing",
+      "    inorder(node.left, out);",
+      "    out.append(node.val).append(',');",
+      "    inorder(node.right, out);",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(n)"
+    },
+    "whySlow": "It is not slow — it is lossy, so all of its work is wasted. The tree 'root 1 with left child 2' and the tree 'root 2 with right child 1' both serialise to 2,1, which means no deserialiser can possibly exist: two distinct inputs collapse onto one string and the information needed to separate them is gone. What went missing is the absences. A traversal records where the nodes are and says nothing whatever about where they are not, and it is the missing children that pin down the shape. (The classic repair of storing two traversals, preorder plus inorder, does work — but only when every value is distinct, because it locates each subtree's root by searching for it inside the inorder list. With duplicates allowed, as here, that search can land on the wrong copy.)"
+  },
+  "patternIdentification": "To write a structure down, record exactly what a reader needs to rebuild it — and for a tree, the shape lives in the nulls, not in the values. Once nulls are written explicitly, preorder is the order to choose, because the first token of any subtree's encoding is that subtree's root: the parser can therefore consume the stream strictly left to right with a single cursor, no lookahead and no index. That is the property to look for in any serialisation format, not just this one. Formats where a single forward pass suffices (preorder with markers, length-prefixed records, anything self-delimiting) are trivial to parse; formats where it does not need an index or a second traversal, which is the difference between the two solutions here.",
+  "optimized": {
+    "idea": "Preorder with an explicit null marker. Serialising writes the node's value, then its left subtree, then its right subtree, and writes # for each absent child. Deserialising mirrors it exactly: take the next token; # means null, otherwise build a node and let the two recursive calls consume the rest of the stream in the same order it was written. The recursion in the two functions is the same recursion, run forwards and backwards.",
+    "code": [
+      "private static final String NULL = \"#\";",
+      "",
+      "public static String serialize(TreeNode root) {",
+      "    StringBuilder out = new StringBuilder();",
+      "    write(root, out);",
+      "    return out.substring(0, out.length() - 1);   // drop the trailing separator",
+      "}",
+      "",
+      "private static void write(TreeNode node, StringBuilder out) {",
+      "    if (node == null) {",
+      "        out.append(NULL).append(',');   // recording the ABSENCE is what makes this reversible",
+      "        return;",
+      "    }",
+      "    out.append(node.val).append(',');",
+      "    write(node.left, out);",
+      "    write(node.right, out);",
+      "}",
+      "",
+      "public static TreeNode deserialize(String data) {",
+      "    Deque<String> tokens = new ArrayDeque<>(Arrays.asList(data.split(\",\")));",
+      "    return read(tokens);",
+      "}",
+      "",
+      "private static TreeNode read(Deque<String> tokens) {",
+      "    String token = tokens.poll();",
+      "    if (token == null || token.equals(NULL)) return null;",
+      "    TreeNode node = new TreeNode(Integer.parseInt(token));",
+      "    node.left  = read(tokens);   // the stream order IS preorder, so one cursor is enough",
+      "    node.right = read(tokens);",
+      "    return node;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n) each way — every node and every null child is written and read exactly once",
+      "space": "O(n) for the string, plus O(h) of call stack"
+    }
+  },
+  "visualization": {
+    "engine": "treeTraversal",
+    "input": {
+      "tree": {
+        "value": 1,
+        "left": {
+          "value": 2
+        },
+        "right": {
+          "value": 3,
+          "left": {
+            "value": 4
+          },
+          "right": {
+            "value": 5
+          }
+        }
+      },
+      "order": "preorder"
+    },
+    "code": [
+      "void write(TreeNode node, StringBuilder out) {",
+      "    if (node == null) { out.append(\"#,\"); return; }",
+      "    out.append(node.val).append(',');",
+      "    write(node.left, out);",
+      "    write(node.right, out);",
+      "}"
+    ]
+  },
+  "commonMistakes": [
+    "Serialising the values only and assuming the shape can be inferred. Root 1 with left child 2 and root 2 with right child 1 both produce 2,1 under inorder, so deserialize returns whichever of the two it happens to construct and the round trip silently changes the tree — the symptom is a `tree.equals(deserialize(serialize(tree)))` test that fails on precisely the skewed inputs and passes on every symmetric one.",
+    "Reconstructing from preorder plus inorder without checking that values are distinct. It is a correct classic technique only under that assumption, because it identifies each subtree's root by searching for it in the inorder array; with duplicates the search finds the wrong copy and the rebuilt tree has the right values in the wrong shape.",
+    "Assigning the children in the wrong order in the parser — `node.right = read(tokens); node.left = read(tokens);`. Java runs those statements in order, so the stream is consumed right-child-first and the entire tree comes back mirrored. It passes on every symmetric test tree, which is the kind people write by hand."
+  ],
+  "similar": [
+    "binary-tree-inorder-traversal",
+    "same-tree",
+    "invert-binary-tree",
+    "binary-tree-level-order",
+    "validate-bst"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 297,
+      "slug": "serialize-and-deserialize-binary-tree",
+      "title": "Serialize and Deserialize Binary Tree",
+      "url": "https://leetcode.com/problems/serialize-and-deserialize-binary-tree/",
+      "premium": false
+    }
+  }
+}

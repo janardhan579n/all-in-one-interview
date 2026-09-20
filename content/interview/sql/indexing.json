@@ -1,0 +1,281 @@
+{
+  "id": "sql-indexing",
+  "trackId": "sql",
+  "topic": "indexing",
+  "title": "Indexing",
+  "summary": "What a B-tree does for you, what it costs, and why the index you added made the query slower.",
+  "questions": [
+    {
+      "id": "si-01",
+      "level": "junior",
+      "type": "concept",
+      "question": "How does a B-tree index actually work?",
+      "answer": "It is a balanced tree whose leaf level holds every indexed key in sorted order, with the internal levels acting as a directory that tells you which child page a key range lives in. Each page is small — 8KB in PostgreSQL — but holds hundreds of keys, so the fanout is huge and the depth is tiny: a table with hundreds of millions of rows typically has an index three or four levels deep. A lookup is therefore three or four page reads, and because the root and internal levels are read constantly they stay resident in the buffer cache, so in practice you pay for one leaf page.\n\nTwo consequences follow from \"the leaves are sorted and linked together\". First, a B-tree serves ranges, prefix matches and `ORDER BY`, not just equality — descend once to the start of the range, then walk the linked leaves. That is precisely what a hash index cannot do, and it is why B-tree is the default everywhere. Second, the order is the index's whole structure, which is what makes column order in a composite index matter so much.\n\nWhat the leaf entry points at depends on the engine. In PostgreSQL the table is a heap and the index stores a tuple identifier — page number and offset — so reading a non-indexed column means a second, random read into the heap. Those random heap fetches, not the tree descent, are what make an index scan lose to a sequential scan once it matches a large fraction of the table.",
+      "keyPoints": [
+        "All keys live at the sorted, linked leaf level; internal pages are a directory",
+        "High fanout means depth 3-4 even for hundreds of millions of rows",
+        "Sorted leaves give you ranges, prefixes and ORDER BY, which hash indexes cannot",
+        "In PostgreSQL the index entry points into the heap — one random fetch per row",
+        "The heap fetches, not the descent, are what make index scans expensive at scale"
+      ],
+      "followUps": [
+        {
+          "q": "When would you use something other than a B-tree?",
+          "a": "GIN for containment queries over arrays, JSONB and full-text search, where one row has many indexable values. GiST for geometric and range types and nearest-neighbour search. BRIN for very large, naturally ordered tables such as append-only time series — it stores only min/max per block range, so it is thousands of times smaller than a B-tree at the cost of being approximate. Hash indexes exist in PostgreSQL and are WAL-logged since version 10, but they only do equality, so the B-tree is rarely worse."
+        },
+        {
+          "q": "Does an index store NULLs?",
+          "a": "In PostgreSQL yes, so `WHERE x IS NULL` can use the index, and a partial index `WHERE x IS NOT NULL` is a way to exclude them deliberately. Oracle omits entirely-NULL entries from a B-tree, which is why the same query plans differently there. It is a good example of why \"how indexes work\" answers should name the engine."
+        }
+      ],
+      "redFlags": [
+        "Describing it as a binary tree, or as a sorted array",
+        "Not knowing the leaves are linked, hence no explanation of range scans",
+        "Believing an index scan is always cheaper than a table scan"
+      ],
+      "related": [
+        "trees",
+        "binary-search",
+        "database"
+      ]
+    },
+    {
+      "id": "si-02",
+      "level": "junior",
+      "type": "concept",
+      "question": "Why not just index every column?",
+      "answer": "Because an index is a second copy of the data that the database has to keep correct on every write. Each `INSERT` writes one entry into every index on the table. Each `DELETE` has to mark entries dead in all of them. Each `UPDATE` touches every index whose columns changed.\n\nThe cost is not only the extra writes. In PostgreSQL, MVCC means an `UPDATE` writes a whole new row version, and the engine can avoid updating the indexes only when the new version fits on the same heap page **and** no indexed column changed — the heap-only tuple optimisation. Index a column that is updated on every request, such as `last_seen_at` or a status flag, and you have switched HOT updates off for that table: now every update writes new entries into every index, the table and indexes bloat faster, autovacuum has more to do, and the write amplification shows up in the WAL, which means more disk and more replication traffic.\n\nThere are quieter costs too. Indexes compete with your data for the buffer cache, so a table with twelve indexes evicts the pages you actually wanted to read. Bulk loads slow down proportionally, which is why the standard advice for a large import is to drop indexes, load, then rebuild. And the planner has more options to cost, occasionally choosing badly among them.\n\nThe practical discipline is to index for the queries you actually run, then audit. `pg_stat_user_indexes.idx_scan` shows which indexes have never been used, and an index on `(a)` is redundant once `(a, b)` exists.",
+      "keyPoints": [
+        "Every index is another structure to maintain on insert, update and delete",
+        "Indexing a hot column disables HOT updates in PostgreSQL — much more write amplification",
+        "More WAL means more I/O and more replication traffic",
+        "Indexes compete for buffer cache and slow bulk loads",
+        "Audit with idx_scan; (a) is redundant when (a, b) exists"
+      ],
+      "followUps": [
+        {
+          "q": "How do you add an index to a busy production table safely?",
+          "a": "`CREATE INDEX CONCURRENTLY` in PostgreSQL, which avoids holding a write lock, at the cost of two table passes and a longer build. It can fail and leave an INVALID index behind that the planner ignores — check `pg_index.indisvalid` afterwards and drop and rebuild if needed. MySQL 5.6+ and SQL Server Enterprise have online index builds with similar caveats."
+        }
+      ],
+      "redFlags": [
+        "Answering only \"it takes disk space\"",
+        "No mention of write cost at all",
+        "Believing an unused index is harmless"
+      ]
+    },
+    {
+      "id": "si-03",
+      "level": "mid",
+      "type": "concept",
+      "question": "How do you decide the column order in a composite index?",
+      "answer": "An index on `(a, b, c)` is sorted by `a`, then by `b` within equal `a`, then by `c`. That single sentence gives you the leftmost-prefix rule: the index can serve predicates on `a`, on `a` and `b`, or on all three — but not on `b` alone, because the `b` values are scattered across the whole index with no locality.\n\nThe ordering heuristic that follows: **equality columns first, then the one range column, then columns you only need for ordering or output.** Once the scan hits a range predicate, everything after it in the index can no longer narrow the search, only filter rows you have already walked past. So for\n\n```sql\nWHERE tenant_id = ? AND status = ? AND created_at > ?\nORDER BY created_at\n```\n\nthe index is `(tenant_id, status, created_at)`. Put `created_at` first and you scan every tenant's recent rows and throw most of them away.\n\nThe failure mode you will meet in real code is an index that looks right and is not used. Someone indexed `(created_at, tenant_id)` because the query mentions dates, and the plan shows a sequential scan; the fix is a reorder, not another index.\n\nTwo refinements. Selectivity within the equality group matters less than people claim once the leading columns are equality-matched — pick the order that serves the most queries. And if an `ORDER BY` follows the filter, having the sort columns next in the index lets the engine skip the sort entirely, which on a large result set is often the larger win.\n\nSome engines — Oracle, MySQL 8, recent PostgreSQL — can \"skip scan\" a leading column with very few distinct values, but do not design against that; reason with the leftmost rule.",
+      "keyPoints": [
+        "An index on (a,b,c) is sorted by a, then b, then c — hence the leftmost-prefix rule",
+        "Equality columns first, then the range column, then ordering/output columns",
+        "After a range predicate, later columns only filter, they do not narrow the seek",
+        "Matching the ORDER BY in the index removes the sort node entirely",
+        "(a, b) makes a separate index on (a) redundant, but not one on (b)"
+      ],
+      "followUps": [
+        {
+          "q": "Does DESC in the index definition matter?",
+          "a": "Only for mixed-direction sorts. A B-tree can be walked backwards, so `ORDER BY x DESC` uses an ascending index fine. But `ORDER BY a ASC, b DESC` needs an index declared `(a ASC, b DESC)` — no single-direction walk produces that order, so otherwise you get an explicit sort."
+        },
+        {
+          "q": "When is a partial index better than a composite one?",
+          "a": "When one predicate is highly selective and constant across queries. `CREATE INDEX ... ON jobs (created_at) WHERE status = 'pending'` indexes only the rows you ever query, so on a table where 99% of jobs are done the index is a hundredth the size, stays cached, and costs nothing to maintain for the rows it excludes."
+        }
+      ],
+      "redFlags": [
+        "\"Most selective column first\" recited as an absolute rule with no reasoning",
+        "Not knowing the leftmost-prefix rule",
+        "Adding a second index instead of reordering the existing one"
+      ]
+    },
+    {
+      "id": "si-04",
+      "level": "mid",
+      "type": "concept",
+      "question": "What is a covering index, and what is an index-only scan?",
+      "answer": "An index covers a query when every column the query needs — in the `SELECT` list, the `WHERE`, the `ORDER BY` — is present in the index. The engine can then answer entirely from the index and never touch the table. PostgreSQL calls the resulting plan node an Index Only Scan, and on a wide table it commonly turns a query that was reading thousands of scattered heap pages into one that reads a handful of index pages.\n\nSince PostgreSQL 11 you can add payload columns that are stored only at the leaf level with `INCLUDE`:\n\n```sql\nCREATE INDEX idx_orders_lookup\n  ON orders (customer_id, created_at) INCLUDE (total, status);\n```\n\nThose columns make the scan index-only without widening the key, so they cannot be searched or sorted on, but they also do not bloat the internal pages or constrain uniqueness. SQL Server's `INCLUDE` works the same way.\n\nHere is the part that separates people who have read about this from people who have debugged it. A PostgreSQL index stores no visibility information — it cannot tell whether a row version is visible to your transaction. So an index-only scan is only allowed to skip the heap for pages marked all-visible in the visibility map, which is maintained by `VACUUM`. On a table being actively written, the plan still says Index Only Scan, but `EXPLAIN (ANALYZE, BUFFERS)` reports `Heap Fetches: 482193` and the performance is that of an ordinary index scan. The fix is vacuuming that table more aggressively, not changing the query.\n\nThe trade-off is the usual one: a wider index means fewer entries per page, a bigger structure, and more write cost.",
+      "keyPoints": [
+        "Covering means the index holds every column the query touches — no heap access",
+        "INCLUDE columns give coverage without widening the searchable key",
+        "PostgreSQL index-only scans need the visibility map, maintained by VACUUM",
+        "Heap Fetches in EXPLAIN ANALYZE reveals an index-only scan that is not",
+        "Wider indexes cost more to store, cache and maintain"
+      ],
+      "followUps": [
+        {
+          "q": "In InnoDB, is every secondary index partly covering already?",
+          "a": "In effect, yes — a secondary index leaf stores the primary key value, so any query needing only the indexed columns plus the PK is covered. That is also why a wide primary key in InnoDB is expensive: it is duplicated into every secondary index."
+        },
+        {
+          "q": "How do you tell whether coverage actually helped?",
+          "a": "`EXPLAIN (ANALYZE, BUFFERS)` before and after, comparing shared block reads. If the buffer counts barely move, the heap pages were already cached and coverage bought you little — worth knowing before you carry the extra write cost forever."
+        }
+      ],
+      "redFlags": [
+        "Not knowing why the heap must be consulted at all",
+        "Adding every column to the index and calling it covering",
+        "Blaming the query when Heap Fetches is the real problem"
+      ]
+    },
+    {
+      "id": "si-05",
+      "level": "mid",
+      "type": "concept",
+      "question": "What makes a predicate non-sargable, and how do you fix it?",
+      "answer": "Sargable is shorthand for \"can be used as a search argument\" — the engine can turn the predicate into a seek to a contiguous range of an index. A predicate stops being sargable when the column is no longer available in its indexed form on one side of the comparison.\n\nThe usual causes. A function wrapping the column: `WHERE DATE(created_at) = '2024-01-01'` or `WHERE UPPER(email) = ?`. The index is sorted on `created_at`, not on `DATE(created_at)`, so the engine has to compute the expression for every row. Rewrite as a range — `created_at >= '2024-01-01' AND created_at < '2024-01-02'` — or build an expression index: `CREATE INDEX ON users (lower(email))`. MySQL 8 has functional indexes; SQL Server needs a persisted computed column.\n\nArithmetic on the column: `WHERE amount * 100 > ?`. Move the arithmetic to the parameter side.\n\nA leading wildcard: `LIKE '%foo'` cannot seek because the index is ordered by first character. `LIKE 'foo%'` can — though in PostgreSQL only if the database is in the C locale or the index was built with `text_pattern_ops`, which catches people out constantly. Genuine substring search wants a trigram or full-text index.\n\nImplicit casts, which are the most insidious because nothing looks wrong. Comparing a `varchar` column to a numeric literal in MySQL forces the column to a number and the index is abandoned silently.\n\n`OR` across different columns usually prevents one index scan; PostgreSQL may combine two indexes with a BitmapOr, otherwise rewrite as `UNION ALL`.\n\nThe tell in a plan is always the same: a scan node with `Rows Removed by Filter` in the millions.",
+      "keyPoints": [
+        "Sargable means the predicate can seek a contiguous index range",
+        "Functions or arithmetic on the column defeat the index; move them to the constant side",
+        "Expression and functional indexes make the transformed value indexable",
+        "LIKE 'x%' can seek; '%x' cannot — and PostgreSQL needs text_pattern_ops off the C locale",
+        "Implicit casts silently disable an index; OR across columns often does too"
+      ],
+      "followUps": [
+        {
+          "q": "Is `WHERE status <> 'done'` sargable?",
+          "a": "Technically it can be evaluated against the index, but it is unselective — a negation usually matches most of the table, so the planner correctly prefers a sequential scan. If the matching set is genuinely small, a partial index `WHERE status <> 'done'` is the right answer, because it indexes only the rows you care about."
+        },
+        {
+          "q": "How do you find implicit casts in an existing system?",
+          "a": "Look for a plan with a seemingly perfect index that is not chosen, and check the column types against the parameter types your driver sends. In PostgreSQL the plan shows the cast explicitly, such as `(id)::text = '42'::text`, which is the moment it becomes obvious."
+        }
+      ],
+      "redFlags": [
+        "Not recognising a function on the column as the problem",
+        "Suggesting an index on the raw column for a query that wraps it in a function",
+        "Thinking LIKE is never indexable"
+      ]
+    },
+    {
+      "id": "si-06",
+      "level": "mid",
+      "type": "concept",
+      "question": "Clustered versus non-clustered — what is the difference, and what follows from it?",
+      "answer": "A clustered index is not a structure sitting beside the table; it **is** the table. The rows are stored in the leaf pages of the index, in key order. There can be only one, because data can only be physically ordered one way. A non-clustered index is a separate structure holding the key plus a pointer back to the row.\n\nSQL Server and MySQL's InnoDB are clustered by default — InnoDB always clusters on the primary key, inventing a hidden one if you do not declare it. Two consequences matter in practice. A range scan on the clustering key is sequential I/O with the row data already there, which is why ordering by primary key is cheap. And every secondary index stores the primary key value as its pointer, so a secondary lookup that needs other columns does a second descent through the clustered index — a bookmark lookup. That makes a wide primary key expensive twice over: it is duplicated into every secondary index, and a random primary key such as a UUIDv4 scatters inserts across the whole table, causing page splits and fragmentation where a monotonic key would simply append. This is the concrete reason UUIDv7 and similar time-ordered identifiers exist.\n\nPostgreSQL has no clustered index at all. Tables are heaps, every index is secondary, and `CLUSTER` is a one-off rewrite in index order that is not maintained afterwards — new rows go wherever there is space. What PostgreSQL does instead is track how well each column's order correlates with physical order, and cost range scans accordingly, so a naturally append-ordered timestamp column behaves much like a clustered key without being one.",
+      "keyPoints": [
+        "A clustered index stores the rows themselves in key order — one per table",
+        "InnoDB always clusters on the primary key; SQL Server does by default",
+        "Secondary indexes in InnoDB point via the PK, so lookups cost a second descent",
+        "Random UUID primary keys cause page splits and bloat every secondary index",
+        "PostgreSQL has heaps, not clustered indexes; CLUSTER is one-off and decays"
+      ],
+      "followUps": [
+        {
+          "q": "So should the primary key always be an auto-increment integer?",
+          "a": "In InnoDB it is the safe default, and if you need globally unique identifiers a time-ordered UUID (v7) gives you most of the locality back. The counter-argument is contention: a monotonic key makes every insert target the same rightmost page, which becomes a hotspot under very high concurrency and in a sharded system funnels writes to one shard."
+        },
+        {
+          "q": "What is a heap table good at?",
+          "a": "Inserts, because a row goes wherever there is free space with no ordering to maintain. The trade is that nothing is naturally ordered, so every lookup goes through an index and every index scan risks random I/O."
+        }
+      ],
+      "redFlags": [
+        "Claiming PostgreSQL has clustered indexes",
+        "Not knowing a table can have only one clustered index and why",
+        "Missing the write-side consequences of a random primary key"
+      ],
+      "related": [
+        "database",
+        "hashing"
+      ]
+    },
+    {
+      "id": "si-07",
+      "level": "senior",
+      "type": "tradeoff",
+      "question": "Give me a case where adding an index made a query slower.",
+      "answer": "Several, and they are worth separating because the fixes differ.\n\nThe common one is low selectivity. If a predicate matches ten percent of a large table, an index scan means ten percent of the rows fetched individually from the heap, in index order, which is random I/O. A sequential scan reads pages in physical order and the operating system prefetches ahead of it. Somewhere in the low single-digit percentages the curves cross, and past that the sequential scan wins by a lot. When the planner chooses the index anyway it is usually because its row estimate was wrong, not because indexes are bad.\n\nPhysical correlation shifts that crossover. The same one-percent index scan is cheap when the matching rows were appended together — a day of a time-series table — and expensive when they are scattered across every page. PostgreSQL records this as `pg_stats.correlation` and costs accordingly.\n\nThe case that actually takes systems down is the `ORDER BY` plus `LIMIT` trap. Given `WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 10`, the planner can either filter by tenant and sort, or walk the `created_at` index backwards expecting to find ten matching rows quickly. If the estimate says matches are common it picks the second — and if that tenant's most recent row is ten million entries back, it walks the entire index. The query that was fine for every other tenant takes minutes for one. The plan looks innocent; the giveaway is a backwards index scan with an enormous `Rows Removed by Filter`. The fix is a composite index on `(tenant_id, created_at DESC)` so one scan satisfies both.\n\nAnd then the honest one: the index made the reads faster and the writes slower, and the writes were the bottleneck.",
+      "keyPoints": [
+        "Low selectivity means random heap fetches lose to a prefetched sequential scan",
+        "Physical correlation moves the crossover point, and planners model it",
+        "ORDER BY + LIMIT can pick an index that walks to the end of the table",
+        "A bad plan usually means a bad row estimate, not a bad index",
+        "Read gains can be paid for in write cost on the hot path"
+      ],
+      "followUps": [
+        {
+          "q": "How do you prove which is faster rather than argue about it?",
+          "a": "Run both. `EXPLAIN (ANALYZE, BUFFERS)` with the index in place, then again with `SET enable_indexscan = off` in a session, and compare actual time and block counts. Those settings exist for exactly this kind of investigation and are safe at session scope. In SQL Server, an index hint on a test query does the same job."
+        },
+        {
+          "q": "What would you do about the one pathological tenant?",
+          "a": "Composite index first, since it fixes the cause. If the query shape cannot change, PostgreSQL's plan-cache behaviour is worth checking too — a generic plan chosen for the common tenant may be what is being applied to the outlier."
+        }
+      ],
+      "redFlags": [
+        "Insisting an index can only help reads",
+        "No mention of selectivity or estimates",
+        "Proposing hints as the first fix rather than diagnosing the estimate"
+      ],
+      "related": [
+        "big-o",
+        "database"
+      ]
+    },
+    {
+      "id": "si-08",
+      "level": "senior",
+      "type": "code",
+      "question": "Walk me through reading this execution plan. What would you fix?",
+      "answer": "First, what kind of plan it is. `EXPLAIN` alone gives estimates; `EXPLAIN (ANALYZE, BUFFERS)` runs the query and reports what really happened, which is the only version worth arguing about. Read the tree from the most indented node outwards — children feed their parents.\n\nThe first number I look at is never the time. It is estimated `rows=` against `actual rows=` on every node, starting from the deepest. In the plan below the sequential scan on `orders` estimated 1,200 rows and produced 1,148,233 — a thousandfold miss. Everything above that node was planned on a false premise, so there is no point tuning the join until that is explained. Here the cause is visible in the node itself: `Filter: (date_trunc('month', created_at) = ...)` is a non-sargable expression the planner cannot estimate, and `Rows Removed by Filter: 8,203,110` says it read the whole table to discard most of it.\n\nThe second number is `loops`. Reported times on an inner node are **per loop**, so `actual time=0.031..0.044 rows=1 loops=1148233` is not a fast node, it is thirty seconds. A nested loop with a million loops is almost always the symptom of the bad estimate above, not an independent problem.\n\nSo the fix here is a rewrite, not an index: replace the `date_trunc` with a half-open range on `created_at` so the existing index can seek, which also gives the planner a histogram to estimate from. If the expression genuinely cannot be rewritten, an expression index creates statistics for it as a side effect.\n\nWorth also checking: `Sort Method: external merge  Disk: 412MB` means `work_mem` was too small, and an Index Only Scan reporting nonzero `Heap Fetches` means vacuum is behind.",
+      "codeExample": {
+        "language": "sql",
+        "code": [
+          "EXPLAIN (ANALYZE, BUFFERS)",
+          "SELECT c.name, sum(o.total)",
+          "FROM orders o JOIN customers c ON c.id = o.customer_id",
+          "WHERE date_trunc('month', o.created_at) = date '2024-03-01'",
+          "GROUP BY c.name;",
+          "",
+          "-- HashAggregate  (cost=... rows=1200) (actual time=31204.9..31260.3 rows=48211 loops=1)",
+          "--   ->  Nested Loop  (cost=...) (actual time=0.09..29880.4 rows=1148233 loops=1)",
+          "--         ->  Seq Scan on orders o",
+          "--               (cost=... rows=1200)            <-- estimate",
+          "--               (actual rows=1148233 loops=1)   <-- reality: 957x out",
+          "--               Filter: (date_trunc('month', created_at) = '2024-03-01')",
+          "--               Rows Removed by Filter: 8203110",
+          "--               Buffers: shared read=204188",
+          "--         ->  Index Scan using customers_pkey on customers c",
+          "--               (actual time=0.003..0.003 rows=1 loops=1148233)  <-- per loop!",
+          "-- Planning Time: 0.4 ms",
+          "-- Execution Time: 31288.1 ms",
+          "",
+          "-- the fix is a sargable range, not another index:",
+          "WHERE o.created_at >= date '2024-03-01'",
+          "  AND o.created_at <  date '2024-04-01'"
+        ]
+      },
+      "keyPoints": [
+        "EXPLAIN is an estimate; EXPLAIN (ANALYZE, BUFFERS) is measurement",
+        "Find the deepest node where estimated and actual rows diverge — that is the cause",
+        "Inner-node times are per loop; multiply by loops before judging",
+        "Rows Removed by Filter shows work done and thrown away",
+        "Sort spilling to disk and nonzero Heap Fetches are separate, checkable signals"
+      ],
+      "followUps": [
+        {
+          "q": "What are the equivalents outside PostgreSQL?",
+          "a": "SQL Server has the actual execution plan plus `SET STATISTICS IO, TIME ON`, and the same estimated-versus-actual row comparison is the first thing to check there too. MySQL has `EXPLAIN ANALYZE` from 8.0.18 and `EXPLAIN FORMAT=JSON` before that. The vocabulary differs; the method does not."
+        },
+        {
+          "q": "Why is Planning Time worth glancing at?",
+          "a": "Because on a query touching many partitions or with a very large IN list it can dominate — hundreds of milliseconds of planning for a millisecond of execution. That points at partition pruning, a prepared statement, or trimming the parameter list rather than at the data access."
+        }
+      ],
+      "redFlags": [
+        "Reading only the total cost number at the top",
+        "Ignoring loops and calling a nested-loop inner node fast",
+        "Adding an index before explaining the row estimate"
+      ],
+      "related": [
+        "database",
+        "big-o"
+      ]
+    }
+  ]
+}

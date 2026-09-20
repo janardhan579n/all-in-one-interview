@@ -1,0 +1,165 @@
+{
+  "id": "max-area-of-island",
+  "title": "Max Area of Island",
+  "patternId": "dfs",
+  "difficulty": "intermediate",
+  "tags": [
+    "dfs",
+    "grid",
+    "flood-fill",
+    "connected-components"
+  ],
+  "statement": "Given an m x n binary grid where 1 is land and 0 is water, an island is a group of 1s connected 4-directionally (up, down, left, right). The area of an island is the number of cells in it. Return the area of the largest island, or 0 if there is no land.",
+  "realWorld": "Connected-component labelling in image processing: after thresholding a photo or a scan into a foreground mask, you take the largest blob as the object of interest — the text region in an OCR pipeline, the tumour in a segmented MRI slice, the contiguous defect on a manufacturing line camera. 'Largest connected region of the mask' is the same computation, in a straight line from this problem.",
+  "examples": [
+    {
+      "input": "grid = [[1,1,0],[1,0,0],[0,0,1]]  (rows of a matrix; 1 is land, 0 is water)",
+      "output": "3",
+      "explanation": "Two islands: {(0,0),(0,1),(1,0)} of area 3 and {(2,2)} of area 1. Note that (1,0) and (2,1) are diagonal neighbours and therefore not connected."
+    },
+    {
+      "input": "grid = [[0,0],[0,0]]",
+      "output": "0",
+      "explanation": "No land at all. The answer is 0, which is why the running maximum must start at 0 rather than at the first island's area."
+    },
+    {
+      "input": "grid = [[1,1,1],[1,1,1]]",
+      "output": "6",
+      "explanation": "One island covering the whole grid. The answer being the entire input is a useful check that the fill is not stopping early or counting a path instead of a region."
+    }
+  ],
+  "constraints": [
+    "m == grid.length, n == grid[i].length",
+    "1 <= m, n <= 50",
+    "grid[i][j] is 0 or 1"
+  ],
+  "bruteForce": {
+    "idea": "For every land cell, take a fresh copy of the grid and flood fill from that cell to measure the island it belongs to. Keep the largest measurement.",
+    "code": [
+      "int best = 0;",
+      "for (int r = 0; r < rows; r++) {",
+      "    for (int c = 0; c < cols; c++) {",
+      "        if (grid[r][c] != 1) continue;",
+      "        int[][] scratch = copyOf(grid);        // a clean grid for every single land cell",
+      "        best = Math.max(best, fill(scratch, r, c));",
+      "    }",
+      "}",
+      "return best;"
+    ],
+    "complexity": {
+      "time": "O((m * n)^2)",
+      "space": "O(m * n) for the copy"
+    },
+    "whySlow": "Every cell of an island triggers a full traversal of that island, so a region of k cells is traversed k times and produces the same number k every time — k-1 of those traversals exist only to confirm what the first one found. The grid copy makes it worse: a 50x50 grid of solid land does 2,500 copies of 2,500 cells before it does any flooding. The waste is that membership in a component is a fact about the component, and this code recomputes it once per member."
+  },
+  "patternIdentification": "The question is about connected regions, and a region has no natural 'owner' cell — any of its members would find the whole of it. That is the signal to make the traversal destructive: mark cells as you enter them, so a completed component can never be entered again, and the outer scan collapses from 'measure the island here' to 'if this cell is still land, it starts an island nobody has counted yet'. The transferable move is to let the visited marks turn an O(components x size) scan into a single pass in which every cell is touched a constant number of times. Whether you mark by writing into the input or into a separate boolean grid is a question about whether you may mutate the caller's data, not about the algorithm.",
+  "optimized": {
+    "idea": "Scan the grid once. When a 1 is found, flood fill from it with DFS, sinking each visited cell to 0 on entry so it is never counted or entered twice, and let the recursion return the size of the region it consumed. The outer scan then never sees a cell belonging to an island it has already measured, so the total work is one visit per cell.",
+    "code": [
+      "public static int maxAreaOfIsland(int[][] grid) {",
+      "    int best = 0;",
+      "    for (int r = 0; r < grid.length; r++) {",
+      "        for (int c = 0; c < grid[0].length; c++) {",
+      "            if (grid[r][c] == 1) best = Math.max(best, area(grid, r, c));",
+      "        }",
+      "    }",
+      "    return best;",
+      "}",
+      "",
+      "private static int area(int[][] grid, int r, int c) {",
+      "    if (r < 0 || r >= grid.length || c < 0 || c >= grid[0].length) return 0;",
+      "    if (grid[r][c] != 1) return 0;",
+      "    grid[r][c] = 0;   // sink on ENTRY: the grid is the visited set, so no cell is counted twice",
+      "    return 1",
+      "         + area(grid, r + 1, c)",
+      "         + area(grid, r - 1, c)",
+      "         + area(grid, r, c + 1)",
+      "         + area(grid, r, c - 1);",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(m * n)",
+      "space": "O(m * n) worst-case recursion depth on a grid of solid land"
+    }
+  },
+  "visualization": {
+    "engine": "gridDfs",
+    "input": {
+      "grid": [
+        [
+          1,
+          1,
+          0,
+          0,
+          0
+        ],
+        [
+          1,
+          1,
+          0,
+          0,
+          1
+        ],
+        [
+          0,
+          0,
+          0,
+          1,
+          1
+        ],
+        [
+          0,
+          1,
+          0,
+          0,
+          0
+        ],
+        [
+          1,
+          1,
+          0,
+          0,
+          1
+        ]
+      ]
+    },
+    "code": [
+      "int count = 0;",
+      "for (int r = 0; r < rows; r++) {",
+      "    for (int c = 0; c < cols; c++) {",
+      "        if (grid[r][c] == 1) {",
+      "            count++;                 // a cell no earlier fill reached starts a new region",
+      "            fill(grid, r, c);",
+      "        }",
+      "    }",
+      "}",
+      "",
+      "void fill(int[][] grid, int r, int c) {",
+      "    if (outOfBounds(r, c) || grid[r][c] != 1) return;",
+      "    grid[r][c] = 0;                  // sink on ENTRY — this is what terminates the recursion",
+      "    fill(grid, r + 1, c); fill(grid, r - 1, c);",
+      "    fill(grid, r, c + 1); fill(grid, r, c - 1);",
+      "}"
+    ]
+  },
+  "commonMistakes": [
+    "Sinking the cell after the four recursive calls instead of before them — the fill immediately walks back into the cell it came from, and any island with two adjacent cells causes infinite recursion and a StackOverflowError.",
+    "Combining the four recursive results with Math.max instead of addition — this measures the deepest branch of the DFS, which is a path length, not an area; example 1 returns 2 instead of 3 while example 3 happens to return 6, so the bug passes the obvious test.",
+    "Accumulating the area into a field or an outer variable that is never reset between islands — the second island's count continues from the first, so example 1 returns 4 (every land cell in the grid) rather than 3, and the reported maximum is always the total amount of land."
+  ],
+  "similar": [
+    "number-of-islands",
+    "surrounded-regions",
+    "pacific-atlantic-water-flow",
+    "number-of-provinces"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 695,
+      "slug": "max-area-of-island",
+      "title": "Max Area of Island",
+      "url": "https://leetcode.com/problems/max-area-of-island/",
+      "premium": false
+    }
+  }
+}

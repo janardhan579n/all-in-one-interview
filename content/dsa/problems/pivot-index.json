@@ -1,0 +1,130 @@
+{
+  "id": "pivot-index",
+  "title": "Find Pivot Index",
+  "patternId": "prefix-sum",
+  "difficulty": "beginner",
+  "tags": [
+    "array",
+    "prefix-sum",
+    "running-total"
+  ],
+  "statement": "Given an array of integers, return the leftmost index where the sum of all the values strictly to its left equals the sum of all the values strictly to its right. The element at the pivot index belongs to neither side. If no such index exists, return -1.",
+  "realWorld": "Splitting a stream of work so two consumers get equal load: the pivot is the first task that can be dropped from both halves while leaving them balanced. The same scan finds the balance point of a ledger — the entry where everything booked before it cancels everything booked after it.",
+  "examples": [
+    {
+      "input": "nums = [1,7,3,6,5,6]",
+      "output": "3",
+      "explanation": "Left of index 3: 1 + 7 + 3 = 11. Right of index 3: 5 + 6 = 11. The pivot value 6 itself is counted on neither side."
+    },
+    {
+      "input": "nums = [2,1,-1]",
+      "output": "0",
+      "explanation": "Index 0 has nothing to its left, and an empty sum is 0. To its right, 1 + (-1) = 0, so the two agree. Any solution that starts scanning at index 1 misses this."
+    },
+    {
+      "input": "nums = [1,2,3]",
+      "output": "-1",
+      "explanation": "No index balances, so the answer is -1 rather than any kind of nearest match."
+    }
+  ],
+  "constraints": [
+    "1 <= nums.length <= 10^4",
+    "-1000 <= nums[i] <= 1000",
+    "Values may be negative, so the sums are not monotone",
+    "Return the leftmost pivot if more than one exists"
+  ],
+  "bruteForce": {
+    "idea": "For each index, add up everything to its left and everything to its right, and compare.",
+    "code": [
+      "for (int i = 0; i < nums.length; i++) {",
+      "    int left = 0, right = 0;",
+      "    for (int l = 0; l < i; l++) left += nums[l];",
+      "    for (int r = i + 1; r < nums.length; r++) right += nums[r];",
+      "    if (left == right) return i;",
+      "}",
+      "return -1;"
+    ],
+    "complexity": {
+      "time": "O(n^2)",
+      "space": "O(1)"
+    },
+    "whySlow": "Testing index i adds up nums[0..i-1] from scratch, and testing index i + 1 adds up that same block again with one element appended. The left sum for the next index is the left sum for this one plus a single number, but the loop rebuilds it from the beginning every time, so nums[0] is added n times and nums[n-2] twice. The right sums are recomputed the same way from the other end, doubling the waste."
+  },
+  "patternIdentification": "Two sums that must be compared, one growing and one shrinking as a split point moves along the array. Compute the total once, then carry a single running left sum: the right sum is total - leftSum - nums[i], with no second loop at all. Whenever a scan needs 'everything before me' and 'everything after me', a total plus one running aggregate replaces both.",
+  "optimized": {
+    "idea": "One pass to get the total, one pass to sweep the split point. At index i the left sum is what has been accumulated so far, and the right sum is whatever is left once you remove the left part and the pivot element itself. Compare before folding nums[i] into the running sum, because the pivot belongs to neither side — and starting with leftSum = 0 makes index 0 a candidate for free, since the empty sum is genuinely 0.",
+    "code": [
+      "public static int pivotIndex(int[] nums) {",
+      "    int total = 0;",
+      "    for (int value : nums) {",
+      "        total += value;",
+      "    }",
+      "",
+      "    int leftSum = 0;",
+      "    for (int i = 0; i < nums.length; i++) {",
+      "        if (leftSum == total - leftSum - nums[i]) {   // the right sum, with no second loop",
+      "            return i;",
+      "        }",
+      "        leftSum += nums[i];   // fold the pivot in only AFTER the comparison",
+      "    }",
+      "    return -1;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(1)"
+    }
+  },
+  "visualization": {
+    "engine": "prefixSum",
+    "input": {
+      "array": [
+        1,
+        7,
+        3,
+        6,
+        5,
+        6
+      ],
+      "queries": [
+        [
+          0,
+          2
+        ],
+        [
+          4,
+          5
+        ]
+      ]
+    },
+    "code": [
+      "int[] prefix = new int[nums.length + 1];",
+      "for (int i = 0; i < nums.length; i++) {",
+      "    prefix[i + 1] = prefix[i] + nums[i];",
+      "}",
+      "// index 3 is the pivot exactly when these two ranges agree:",
+      "//   left  = sum(0..2) = prefix[3] - prefix[0]",
+      "boolean isPivot = prefix[3] - prefix[0] == prefix[6] - prefix[4];"
+    ]
+  },
+  "commonMistakes": [
+    "Adding nums[i] to the running sum before the comparison: the pivot element is then counted on the left, so [2,1,-1] returns -1 — and every array whose answer is index 0 fails the same way.",
+    "Writing the right sum as total - leftSum and forgetting to subtract nums[i]: the pivot is now counted on the right instead, and [1,7,3,6,5,6] returns -1 rather than 3.",
+    "Letting the loop run to the end and returning the last match instead of the first: [0,0,0] has a pivot at every index, the problem asks for the leftmost, and the method reports 2."
+  ],
+  "similar": [
+    "running-sum",
+    "range-sum-query",
+    "contiguous-array",
+    "subarray-sum-equals-k"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 724,
+      "slug": "find-pivot-index",
+      "title": "Find Pivot Index",
+      "url": "https://leetcode.com/problems/find-pivot-index/",
+      "premium": false
+    }
+  }
+}

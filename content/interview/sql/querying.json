@@ -1,0 +1,276 @@
+{
+  "id": "sql-querying",
+  "trackId": "sql",
+  "topic": "querying",
+  "title": "Querying",
+  "summary": "Joins, grouping, windows and NULLs — what the engine actually returns, and the queries that are quietly wrong.",
+  "questions": [
+    {
+      "id": "sq-01",
+      "level": "junior",
+      "type": "concept",
+      "question": "Explain the join types. What does an OUTER join really return?",
+      "answer": "A join pairs rows from two tables on a condition. `INNER JOIN` returns only the pairs that matched. `LEFT OUTER JOIN` returns every row from the left table, paired with its matches, and where there is no match the right-hand columns come back as NULL. `RIGHT` is the mirror image, `FULL OUTER` keeps unmatched rows from both sides. `CROSS JOIN` pairs everything with everything.\n\nThe phrase to hold on to is **NULL-extended**: an outer join does not skip the unmatched left row, it invents a right-hand row made entirely of NULLs. That single fact explains the most common bug in SQL:\n\n```sql\n-- silently an INNER join\nSELECT c.id, o.total\nFROM customers c\nLEFT JOIN orders o ON o.customer_id = c.id\nWHERE o.status = 'shipped';\n```\n\nFor a customer with no orders, `o.status` is NULL, `NULL = 'shipped'` is UNKNOWN, and `WHERE` keeps only TRUE — so the row you asked the LEFT JOIN to preserve is thrown away again. Move the condition into the `ON` clause and it filters which rows match rather than which rows survive.\n\nThe inverse of that accident is a useful idiom: `LEFT JOIN ... WHERE o.id IS NULL` is an anti-join, the set of customers with no orders at all.\n\nMySQL has no `FULL OUTER JOIN`; you emulate it with a `UNION` of the left and right joins. PostgreSQL and SQL Server support it directly.",
+      "keyPoints": [
+        "OUTER joins NULL-extend the unmatched side rather than dropping it",
+        "A filter on the outer table in WHERE demotes a LEFT JOIN to an INNER JOIN — put it in ON",
+        "LEFT JOIN ... WHERE right.id IS NULL is the anti-join idiom",
+        "A join duplicates left rows when the right side is not unique on the key",
+        "MySQL lacks FULL OUTER JOIN; emulate with UNION"
+      ],
+      "followUps": [
+        {
+          "q": "Why did my SUM double after adding a join?",
+          "a": "Because the join fanned out. If each order has three line items, joining orders to line items gives you three copies of every order row, and summing `orders.total` counts each order three times. Aggregate the child table in a subquery or a LATERAL first, then join the one-row-per-order result. Reaching for DISTINCT here hides the fan-out but does not fix the arithmetic."
+        },
+        {
+          "q": "Is there any difference between putting a condition in ON versus WHERE for an INNER join?",
+          "a": "Semantically no — for an inner join the two are equivalent and the planner treats them identically. For an outer join they mean completely different things, which is why it is worth being deliberate about placement even when it does not matter."
+        }
+      ],
+      "redFlags": [
+        "Describing LEFT JOIN as \"returns more rows\" without mentioning NULL extension",
+        "Not spotting that a WHERE on the outer table cancels the outer join",
+        "Assuming a join never changes the number of left-hand rows"
+      ],
+      "related": [
+        "database"
+      ]
+    },
+    {
+      "id": "sq-02",
+      "level": "junior",
+      "type": "concept",
+      "question": "WHERE, GROUP BY, HAVING — when do you use each?",
+      "answer": "They sit at different points in the query's logical processing order, and that order is the whole answer: `FROM` → `WHERE` → `GROUP BY` → `HAVING` → `SELECT` → `DISTINCT` → `ORDER BY` → `LIMIT`.\n\n`WHERE` filters individual rows before any grouping happens. `GROUP BY` then collapses the survivors into one row per distinct key combination. `HAVING` filters those groups, after the aggregates have been computed. So `WHERE` cannot reference `SUM(amount)` — at that point no group exists yet — and `HAVING` can.\n\n```sql\nSELECT customer_id, SUM(amount) AS total\nFROM orders\nWHERE status = 'completed'      -- drop rows first\nGROUP BY customer_id\nHAVING SUM(amount) > 1000;      -- then drop groups\n```\n\nThe mistake that costs marks is the reverse: writing `HAVING status = 'completed'`. Many engines accept it, and it returns the right answer, but it is strictly slower — you have made the database group and aggregate rows it was always going to throw away. Filter as early as the semantics allow.\n\nOne portability note: aliases defined in `SELECT` are not visible in `WHERE` or `HAVING` under the standard, because `SELECT` is evaluated later. PostgreSQL allows an output alias in `GROUP BY` and `ORDER BY` but not in `WHERE`; MySQL is more permissive and allows it in `HAVING` too. Repeating the expression is the portable option.",
+      "keyPoints": [
+        "Logical order: FROM, WHERE, GROUP BY, HAVING, SELECT, DISTINCT, ORDER BY, LIMIT",
+        "WHERE filters rows pre-aggregation; HAVING filters groups post-aggregation",
+        "Only HAVING can reference aggregate functions",
+        "Non-aggregate filters belong in WHERE — HAVING does the same work more expensively",
+        "SELECT aliases are not visible in WHERE; engines differ on GROUP BY and HAVING"
+      ],
+      "followUps": [
+        {
+          "q": "Can you GROUP BY a column that is not in the SELECT list, or vice versa?",
+          "a": "Grouping by a column you do not select is fine. The reverse is not: every selected column must be in the GROUP BY or inside an aggregate. PostgreSQL relaxes this when you group by a primary key, since every other column is then functionally dependent on it. MySQL historically allowed arbitrary non-aggregated columns and returned a value from an unspecified row — `ONLY_FULL_GROUP_BY` is on by default since 5.7 and rejects it."
+        }
+      ],
+      "redFlags": [
+        "Using HAVING for row-level filters that belong in WHERE",
+        "Not knowing why WHERE cannot see an aggregate",
+        "Believing the clauses execute in the order they are written"
+      ]
+    },
+    {
+      "id": "sq-03",
+      "level": "mid",
+      "type": "concept",
+      "question": "What are window functions, and when would you reach for ROW_NUMBER, RANK or LAG?",
+      "answer": "A window function computes a value across a set of related rows without collapsing them. That is the entire difference from `GROUP BY`: aggregation gives you one row per group, a window gives you every row plus the group-level answer alongside it.\n\n`OVER (PARTITION BY ... ORDER BY ...)` defines the window — partition splits the rows into independent groups, the order determines position inside each.\n\nThe three you will actually use: `ROW_NUMBER()` numbers rows 1..n with ties broken arbitrarily, so add a tiebreaker column if you need determinism. `RANK()` gives tied rows the same rank and then skips — 1, 1, 3. `DENSE_RANK()` ties without skipping — 1, 1, 2. `LAG(x)` and `LEAD(x)` reach into the previous or next row of the partition, which turns an awkward self-join into one line:\n\n```sql\nSELECT meter_id, read_at, reading,\n       reading - LAG(reading) OVER (PARTITION BY meter_id\n                                    ORDER BY read_at) AS consumed\nFROM meter_readings;\n```\n\nThe failure mode worth knowing: window functions are evaluated **after** `WHERE`, `GROUP BY` and `HAVING`, so you cannot filter on one in the same query level. `WHERE ROW_NUMBER() OVER (...) = 1` is a syntax error; wrap it in a CTE or subquery and filter outside.\n\nThe second trap is the frame. With an `ORDER BY` and no explicit frame the default is `RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`, which includes every row that ties with the current one. For a true row-by-row running total use `ROWS` instead of `RANGE`.",
+      "keyPoints": [
+        "Windows annotate rows; GROUP BY collapses them",
+        "ROW_NUMBER is always distinct, RANK skips after ties, DENSE_RANK does not",
+        "LAG/LEAD replace self-joins for row-to-row deltas and gap detection",
+        "Window functions run after WHERE/HAVING — filter in an outer query",
+        "Default frame is RANGE, which lumps ties together; use ROWS for running totals"
+      ],
+      "followUps": [
+        {
+          "q": "How would you find the most recent row per key?",
+          "a": "`ROW_NUMBER() OVER (PARTITION BY key ORDER BY ts DESC)` in a CTE, then filter to 1. In PostgreSQL `SELECT DISTINCT ON (key) ... ORDER BY key, ts DESC` does the same thing more cheaply, and a `LATERAL` join with `LIMIT 1` per key is often faster still when there is an index on (key, ts) — it can stop after the first match instead of ranking everything."
+        },
+        {
+          "q": "Are window functions expensive?",
+          "a": "They require the input sorted by the partition and order columns, so the cost is a sort unless an index already provides that order. One pass per distinct window specification — several functions sharing the same OVER clause are computed together, so it pays to make the clauses identical or name them with a WINDOW clause."
+        }
+      ],
+      "redFlags": [
+        "Confusing RANK and DENSE_RANK, or claiming ROW_NUMBER handles ties",
+        "Trying to filter on a window function in WHERE",
+        "Not knowing PARTITION BY is independent of GROUP BY"
+      ]
+    },
+    {
+      "id": "sq-04",
+      "level": "mid",
+      "type": "concept",
+      "question": "How does SQL handle NULL, and what breaks because of it?",
+      "answer": "NULL is not a value, it is the absence of one — \"unknown\". Comparing anything to unknown yields UNKNOWN, not TRUE or FALSE, so SQL is a three-valued logic. `WHERE` keeps only rows where the predicate is TRUE, which means both `x = NULL` and `x <> NULL` discard the row. You need `IS NULL` / `IS NOT NULL`, or PostgreSQL's `IS DISTINCT FROM` for a null-safe comparison (MySQL spells it `<=>`).\n\nThe bug that catches everyone is `NOT IN` against a subquery that can produce a NULL:\n\n```sql\n-- returns zero rows if any manager_id is NULL\nSELECT * FROM employees\nWHERE id NOT IN (SELECT manager_id FROM employees);\n```\n\nFor a candidate row, the engine evaluates `id <> m1 AND id <> m2 AND id <> NULL`. That last term is UNKNOWN, and TRUE AND UNKNOWN is UNKNOWN, so nothing is ever returned. `NOT EXISTS` has no such problem and usually gets a better plan; prefer it.\n\nThe rest of the surprises follow from the same rule. Aggregates skip NULLs, so `COUNT(col)` and `COUNT(*)` differ and `AVG` divides by the non-null count. `GROUP BY` and `DISTINCT` treat all NULLs as equal even though `=` does not. A UNIQUE constraint permits many NULLs, because two unknowns are not known to be duplicates — PostgreSQL 15 added `NULLS NOT DISTINCT` if you want the other behaviour. And `CHECK` constraints pass on UNKNOWN, unlike `WHERE`, so `CHECK (age > 0)` does not reject a NULL age.\n\nOrdering differs by engine: PostgreSQL sorts NULLs last ascending, MySQL sorts them first.",
+      "keyPoints": [
+        "NULL means unknown; comparisons yield UNKNOWN and WHERE keeps only TRUE",
+        "NOT IN with a NULL in the list returns nothing — use NOT EXISTS",
+        "Aggregates ignore NULLs; COUNT(col) is not COUNT(*)",
+        "UNIQUE allows multiple NULLs; CHECK passes on UNKNOWN",
+        "NULL ordering and null-safe equality syntax differ across engines"
+      ],
+      "followUps": [
+        {
+          "q": "COALESCE or a sentinel value — how do you decide?",
+          "a": "COALESCE at read time when the default is a presentation concern. A sentinel stored in the column (-1, '1970-01-01', the empty string) is usually a mistake: it makes the column non-nullable in name only, hides the missing data from aggregates, and someone will eventually sum it. Be aware that wrapping a column in COALESCE in a WHERE clause makes the predicate non-sargable, so the index stops being usable."
+        },
+        {
+          "q": "What does NULL do to a UNION or a join key?",
+          "a": "UNION deduplicates treating NULLs as equal, consistent with DISTINCT. Join conditions use `=`, so rows with NULL keys never match anything, including each other — a common reason an inner join quietly loses rows."
+        }
+      ],
+      "redFlags": [
+        "Saying NULL equals NULL",
+        "Not knowing why NOT IN with NULLs returns an empty set",
+        "Treating NULL as zero or the empty string"
+      ]
+    },
+    {
+      "id": "sq-05",
+      "level": "mid",
+      "type": "concept",
+      "question": "CTE, subquery, or temp table — how do you choose?",
+      "answer": "Start with what each one actually is. A subquery is an expression inlined where it appears. A CTE (`WITH`) is a named subquery, which buys readability and, with `WITH RECURSIVE`, the ability to walk hierarchies and graphs — the one thing the other two cannot do at all. A temporary table is a real table: it is materialised, you can index it, and you can `ANALYZE` it so the planner has genuine statistics about it.\n\nMost of the time CTE versus subquery is a style choice with no performance consequence, and it is worth knowing why the folklore says otherwise. PostgreSQL before version 12 treated every CTE as an optimisation fence — always materialised, predicates never pushed down into it. From 12 onwards a non-recursive CTE that is referenced once and has no side effects is inlined by default, and you can force either behaviour with `MATERIALIZED` / `NOT MATERIALIZED`. SQL Server has always inlined CTEs, with the opposite hazard: reference one three times and it is evaluated three times. MySQL 8 decides per query.\n\nThe temp table earns its place when the intermediate result is large, used repeatedly, and the planner is estimating it badly — because once it is a real table with real statistics, every plan above it improves. That is also the honest signal you have outgrown a single query.\n\n```sql\nWITH recent AS MATERIALIZED (\n  SELECT * FROM events WHERE occurred_at > now() - interval '1 day'\n)\nSELECT ... FROM recent r1 JOIN recent r2 ON ...;\n```",
+      "keyPoints": [
+        "CTEs add names and recursion; subqueries are inline expressions",
+        "PostgreSQL 12+ inlines single-use CTEs; before that every CTE was an optimisation fence",
+        "SQL Server inlines CTEs, so multiple references mean repeated evaluation",
+        "Temp tables give the planner statistics and let you index the intermediate result",
+        "Materialise deliberately, not by accident"
+      ],
+      "followUps": [
+        {
+          "q": "When is a correlated subquery a problem?",
+          "a": "When the planner cannot decorrelate it and runs it once per outer row. EXPLAIN shows a SubPlan with `loops=` equal to the outer row count. Rewriting as a join, a window function, or a LATERAL turns N executions into one pass. Modern planners decorrelate many cases automatically, so check the plan before assuming it is slow."
+        },
+        {
+          "q": "What is a recursive CTE good for?",
+          "a": "Anything with an unbounded depth: an org chart, a category tree, a bill of materials, or transitive closure over a graph. The anchor member seeds the result, the recursive member joins back to it until it produces no rows. Always add a depth counter and a bound — a cycle in the data turns it into an infinite loop."
+        }
+      ],
+      "redFlags": [
+        "\"CTEs are always slower in Postgres\" stated without the version caveat",
+        "Creating temp tables reflexively in OLTP paths, where they add catalogue churn",
+        "Assuming a CTE is evaluated once in every engine"
+      ]
+    },
+    {
+      "id": "sq-06",
+      "level": "mid",
+      "type": "concept",
+      "question": "DISTINCT or GROUP BY — is there a difference?",
+      "answer": "For the same column list and no aggregates, they are semantically identical and most planners produce the same plan — typically a hash aggregate, or a sort followed by unique. `SELECT DISTINCT a, b FROM t` and `SELECT a, b FROM t GROUP BY a, b` are the same query written twice.\n\nThe real differences are about what each one lets you express. `GROUP BY` establishes groups, so you can add aggregates and a `HAVING` clause; `DISTINCT` applies to the entire output row after `SELECT` has been evaluated, and deduplicates nothing more finely than that. PostgreSQL also has `DISTINCT ON (expr)`, which keeps the first row per key according to `ORDER BY` — genuinely useful for latest-row-per-group and not available elsewhere.\n\nWhat an interviewer is really probing is whether you know why `DISTINCT` appears in so much bad SQL. It is almost always a patch over a join that fanned out. Somebody joined orders to line items, saw each order three times, and reached for `DISTINCT` to make the duplicates go away. It does — and the query is still wrong, because the moment anyone adds `SUM(orders.total)` the totals triple, and `DISTINCT` cannot save that. The correct fixes are to aggregate the child side before joining, or to use `EXISTS` when you only needed to test for existence.\n\nCost matters too: deduplicating means hashing or sorting the whole result set. `EXISTS` can stop at the first matching row; `DISTINCT` cannot stop at all.",
+      "keyPoints": [
+        "Without aggregates they are equivalent and usually produce the same plan",
+        "GROUP BY enables aggregates and HAVING; DISTINCT operates on the whole select list",
+        "DISTINCT ON (PostgreSQL) picks the first row per key by ORDER BY",
+        "DISTINCT in application SQL usually signals an unintended join fan-out",
+        "EXISTS short-circuits; DISTINCT must materialise and deduplicate everything"
+      ],
+      "followUps": [
+        {
+          "q": "How do you spot a fan-out before it bites?",
+          "a": "Count rows before and after adding the join. If the count grew, the join is not many-to-one, and every aggregate downstream is now multiplied. It is worth running that check whenever a report number looks suspiciously round or suspiciously large."
+        },
+        {
+          "q": "Is COUNT(DISTINCT x) expensive?",
+          "a": "More than COUNT(x), because it must track the distinct set rather than a running number, and it does not parallelise as cleanly. For large cardinalities where an exact answer is not required, an approximate counter such as PostgreSQL's hll extension or `APPROX_COUNT_DISTINCT` in SQL Server trades a small error for a large constant-memory win."
+        }
+      ],
+      "redFlags": [
+        "Claiming one is categorically faster than the other",
+        "Using DISTINCT to suppress duplicates rather than fixing the join",
+        "Not knowing DISTINCT applies to the entire row"
+      ]
+    },
+    {
+      "id": "sq-07",
+      "level": "senior",
+      "type": "tradeoff",
+      "question": "How do you paginate a large result set correctly?",
+      "answer": "`LIMIT 20 OFFSET 200000` is the obvious answer and it fails in two separate ways.\n\nFirst, cost. The database has no way to jump to row 200,000 — it produces the first 200,020 rows in order and discards all but twenty. Page one is instant, page ten thousand reads a million rows, and the response time grows linearly with how deep the user has scrolled. Nothing about an index fixes this; the discarding is the work.\n\nSecond, correctness. The offset is computed against a result set that is changing underneath the user. Insert a row near the top between page one and page two and the last item of page one reappears as the first item of page two; delete one and an item is skipped entirely. Nobody notices this in testing and everybody hits it in an export job that silently drops records.\n\nKeyset pagination — the seek method — fixes both. Instead of counting rows to skip, you remember where you stopped and ask for what comes after:\n\n```sql\nSELECT id, created_at, title\nFROM articles\nWHERE (created_at, id) < (:last_created_at, :last_id)\nORDER BY created_at DESC, id DESC\nLIMIT 20;\n```\n\nThe row-value comparison is a single index range seek, so every page costs the same as the first. Two requirements: an index on exactly the `ORDER BY` columns in that order, and a tiebreaker that makes the ordering total — usually the primary key — or rows with identical timestamps will be skipped or repeated.\n\nThe cost of keyset is that there is no page 47. It suits infinite scroll and API cursors and does not suit numbered pagination, where the honest options are to cap the depth, or to accept the offset cost for a bounded set. Note too that the `COUNT(*)` for the page count is frequently the more expensive half of the request; an estimate from the planner's statistics is often good enough.",
+      "keyPoints": [
+        "OFFSET makes the engine produce and discard every skipped row — cost grows with depth",
+        "OFFSET is unstable under concurrent inserts and deletes: duplicates and skips",
+        "Keyset seeks on the last row's key — constant cost per page",
+        "Needs an index matching the ORDER BY and a unique tiebreaker for a total order",
+        "Keyset gives no random page access; the total COUNT is often the real cost"
+      ],
+      "followUps": [
+        {
+          "q": "How do you encode the cursor in an API?",
+          "a": "Opaque, base64 of the ordering key values, and validated server-side. Keeping it opaque means you can change the ordering columns without breaking clients, and it stops callers hand-crafting a cursor that reads someone else's data. Do not sign it and treat it as authorisation — check permissions on every request regardless."
+        },
+        {
+          "q": "The rows are ordered by a non-unique score. Does keyset still work?",
+          "a": "Yes, with the tiebreaker in both the ORDER BY and the comparison, as the row-value syntax above does. SQL Server does not support row-value comparison, so you expand it: `score < :s OR (score = :s AND id < :id)`, and you must index (score, id) for it to seek rather than scan."
+        }
+      ],
+      "redFlags": [
+        "Claiming an index makes deep OFFSET fast",
+        "Ignoring the correctness problem and treating it purely as performance",
+        "Proposing keyset without the unique tiebreaker"
+      ],
+      "related": [
+        "api",
+        "database"
+      ]
+    },
+    {
+      "id": "sq-08",
+      "level": "senior",
+      "type": "code",
+      "question": "Write a query returning the second-highest salary in each department. Then defend your choice of ranking function.",
+      "answer": "The window-function form is the one to write, because it generalises to top-N and reads cleanly:\n\n```sql\nWITH ranked AS (\n  SELECT department_id, name, salary,\n         DENSE_RANK() OVER (PARTITION BY department_id\n                            ORDER BY salary DESC) AS rnk\n  FROM employees\n)\nSELECT department_id, name, salary\nFROM ranked\nWHERE rnk = 2\nORDER BY department_id;\n```\n\nThe CTE is not decoration — you cannot reference a window function in `WHERE`, because windows are evaluated after the filter.\n\nNow the part that is actually being tested. Suppose two people tie for the top salary. `ROW_NUMBER` would hand rank 2 to one of those two top earners, which is wrong under any reading. `RANK` produces 1, 1, 3 — rank 2 does not exist, so the department returns nothing. `DENSE_RANK` produces 1, 1, 2 and gives you the second distinct salary level, which is what \"second-highest salary\" almost always means. There is no universally correct choice; the correct move in an interview is to say which interpretation you are implementing and why.\n\nFor genuine top-N per group with many partitions, a `LATERAL` join is usually faster in PostgreSQL, because with an index on `(department_id, salary DESC)` it seeks straight to the top rows of each department instead of ranking every employee:\n\n```sql\nSELECT d.id, e.name, e.salary\nFROM departments d\nCROSS JOIN LATERAL (\n  SELECT name, salary FROM employees e\n  WHERE e.department_id = d.id\n  ORDER BY salary DESC LIMIT 2\n) e;\n```\n\nMySQL 8 and SQL Server spell it `CROSS APPLY` / `LATERAL`; the shape is the same.",
+      "codeExample": {
+        "language": "sql",
+        "code": [
+          "-- second-highest salary per department, ties handled deliberately",
+          "WITH ranked AS (",
+          "  SELECT department_id,",
+          "         name,",
+          "         salary,",
+          "         DENSE_RANK() OVER (PARTITION BY department_id",
+          "                            ORDER BY salary DESC) AS rnk",
+          "  FROM employees",
+          ")",
+          "SELECT department_id, name, salary",
+          "FROM ranked",
+          "WHERE rnk = 2                -- must filter outside: windows run after WHERE",
+          "ORDER BY department_id;",
+          "",
+          "-- index-friendly top-N per group when there are many departments",
+          "SELECT d.id, e.name, e.salary",
+          "FROM departments d",
+          "CROSS JOIN LATERAL (",
+          "  SELECT name, salary",
+          "  FROM employees e",
+          "  WHERE e.department_id = d.id",
+          "  ORDER BY salary DESC",
+          "  LIMIT 2",
+          ") e;"
+        ]
+      },
+      "keyPoints": [
+        "Window function in a CTE, filtered outside — windows cannot appear in WHERE",
+        "DENSE_RANK for the second distinct salary; RANK returns nothing when the top is tied",
+        "ROW_NUMBER is wrong here because it breaks ties arbitrarily",
+        "State the tie interpretation out loud rather than guessing silently",
+        "LATERAL with an index on (department_id, salary DESC) avoids ranking every row"
+      ],
+      "followUps": [
+        {
+          "q": "What if a department has only one employee?",
+          "a": "It produces no row, which is usually correct. If the report needs a row per department regardless, start from `departments` and LEFT JOIN the ranked result — and remember that the filter on `rnk` then has to live in the ON clause, or you will collapse the outer join back to an inner one."
+        },
+        {
+          "q": "How would you do this without window functions?",
+          "a": "A correlated subquery counting how many distinct higher salaries exist in the same department, filtered to exactly one. It is portable to very old engines and it is O(n) subquery executions in the worst case — the window version does one sorted pass per partition. Worth knowing it exists, not worth preferring."
+        }
+      ],
+      "redFlags": [
+        "Using ROW_NUMBER without addressing ties",
+        "Trying to put the rank filter in WHERE alongside the window function",
+        "Hardcoding LIMIT 1 OFFSET 1, which silently assumes no ties and no partitioning"
+      ],
+      "related": [
+        "database"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,101 @@
+{
+  "id": "task-scheduler",
+  "title": "Task Scheduler",
+  "patternId": "greedy",
+  "difficulty": "intermediate",
+  "tags": [
+    "greedy",
+    "counting",
+    "math",
+    "scheduling"
+  ],
+  "statement": "You are given an array of tasks, each labelled with an uppercase letter, and an integer n. Each task takes exactly one interval to run, and two runs of the same task must be separated by at least n intervals. In any interval the CPU either runs one task or sits idle. Return the minimum number of intervals needed to finish every task.",
+  "realWorld": "Rate-limited job dispatch: every job carries a tenant id and the same tenant may not be called again for n ticks, so the question 'how long will this queue take?' is answered by the busiest tenant, not by the queue length. The same arithmetic sizes a maintenance window when each host needs a cooldown between reboots.",
+  "examples": [
+    {
+      "input": "tasks = [\"A\",\"A\",\"A\",\"B\",\"B\",\"B\"], n = 2",
+      "output": "8",
+      "explanation": "A B idle A B idle A B. A occurs 3 times, so it forces 2 complete blocks of size n + 1 = 3, plus a final row. B also occurs 3 times so it rides in that final row too: (3 - 1) * 3 + 2 = 8."
+    },
+    {
+      "input": "tasks = [\"A\",\"A\",\"A\",\"B\",\"B\",\"B\"], n = 0",
+      "output": "6",
+      "explanation": "With no cooldown the formula gives (3 - 1) * 1 + 2 = 4, which is nonsense: six tasks cannot finish in four intervals. This is exactly why the answer is max(formula, tasks.length)."
+    },
+    {
+      "input": "tasks = [\"A\",\"A\",\"A\",\"B\",\"B\",\"B\",\"C\",\"C\",\"C\",\"D\",\"D\",\"E\"], n = 2",
+      "output": "12",
+      "explanation": "The skeleton is (3 - 1) * 3 + 3 = 9, but there are 12 tasks and A, B and C already fill every slot of every block. D, D and E have nowhere to go except extra intervals, so the schedule runs with zero idle time and the answer is simply the number of tasks."
+    }
+  ],
+  "constraints": [
+    "1 <= tasks.length <= 10^4",
+    "tasks[i] is an uppercase English letter",
+    "0 <= n <= 100"
+  ],
+  "bruteForce": {
+    "idea": "Simulate the clock. Keep a max-heap of remaining counts and a cooldown queue; each interval, run the most frequent eligible task or idle, then release anything whose cooldown expired.",
+    "code": [
+      "PriorityQueue<Integer> ready = new PriorityQueue<>(Comparator.reverseOrder());",
+      "for (int c : counts) if (c > 0) ready.offer(c);",
+      "Deque<int[]> cooling = new ArrayDeque<>();   // {remainingCount, intervalItBecomesReady}",
+      "int time = 0;",
+      "while (!ready.isEmpty() || !cooling.isEmpty()) {",
+      "    time++;",
+      "    if (!ready.isEmpty()) {",
+      "        int left = ready.poll() - 1;",
+      "        if (left > 0) cooling.offer(new int[]{left, time + n});",
+      "    }",
+      "    if (!cooling.isEmpty() && cooling.peek()[1] == time) ready.offer(cooling.poll()[0]);",
+      "}",
+      "return time;"
+    ],
+    "complexity": {
+      "time": "O(total intervals * log 26), which is O(tasks.length * n) in the worst case",
+      "space": "O(26)"
+    },
+    "whySlow": "The loop materialises every idle interval individually. For a single task repeated 1000 times with n = 10^4 it spends about ten million iterations doing nothing but ticking a counter past idle slots, one at a time, to discover a number the input already determines. The waste is not the heap operations; it is enumerating a run of identical empty slots when the only thing that varies about them is how many there are."
+  },
+  "patternIdentification": "When a simulation's output is fixed by a count rather than by the order in which events happen, stop simulating and count. Here the bottleneck is the single most frequent task: it lays down a rigid skeleton and everything else either drops into the gaps or spills past the end, and neither case depends on the order you choose. Recognising 'one element's frequency pins the answer, the rest only fills in' is what turns a scheduling simulation into arithmetic — and the same recognition, in the other direction, is what tells you a greedy schedule is optimal.",
+  "optimized": {
+    "idea": "Let maxCount be the highest task frequency and countOfMax the number of tasks that hit it. The most frequent task A must appear maxCount times with at least n intervals between consecutive appearances, so the schedule contains maxCount - 1 complete blocks of width n + 1 — each an A plus the n slots that follow it — and then a final row. Every other task that also occurs maxCount times must share that final row, giving (maxCount - 1) * (n + 1) + countOfMax.\n\nWhy this local picture is globally optimal, in both directions. It is a lower bound: A alone forces that many intervals, whatever else you do. And it is achievable: fill the n slots of each block with distinct other tasks, and any task placed at the same slot offset in consecutive blocks is exactly n + 1 apart, which satisfies the cooldown. So the bound is tight — unless the other tasks overflow all the idle slots, in which case they are inserted by widening the blocks, which only pushes identical tasks *further* apart and never violates the cooldown. With no idle slots left, every interval runs a task and the answer is just tasks.length. Hence max(formula, tasks.length).",
+    "code": [
+      "public static int leastInterval(char[] tasks, int n) {",
+      "    int[] counts = new int[26];",
+      "    for (char task : tasks) counts[task - 'A']++;",
+      "    int maxCount = 0, countOfMax = 0;",
+      "    for (int c : counts) {",
+      "        if (c > maxCount) { maxCount = c; countOfMax = 1; }",
+      "        else if (c == maxCount) countOfMax++;",
+      "    }",
+      "    int skeleton = (maxCount - 1) * (n + 1) + countOfMax;   // blocks forced by the busiest task, plus its ties",
+      "    return Math.max(skeleton, tasks.length);",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(tasks.length + 26)",
+      "space": "O(26) = O(1)"
+    }
+  },
+  "commonMistakes": [
+    "Returning the formula without Math.max(..., tasks.length) — the skeleton only counts intervals the busiest task forces, and assumes the idle slots survive. With n = 0 and tasks A,A,A,B,B,B it returns 4 when six tasks obviously need six intervals.",
+    "Adding 1 instead of countOfMax for the final row — every task tied at the maximum frequency needs its own interval there, not just one of them. [\"A\",\"A\",\"A\",\"B\",\"B\",\"B\"] with n = 2 returns 7 instead of 8.",
+    "Writing (maxCount - 1) * n instead of (maxCount - 1) * (n + 1), forgetting that each block contains the task itself as well as the n cooldown slots. Every answer is then short by maxCount - 1, and the n = 0 case still looks correct because the term vanishes — so the bug passes the first test you are likely to write and fails the second: A,A,A,B,B,B with n = 2 returns 6 instead of 8."
+  ],
+  "similar": [
+    "reorganize-string",
+    "partition-labels",
+    "jump-game-ii",
+    "top-k-frequent",
+    "gas-station"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 621,
+      "slug": "task-scheduler",
+      "title": "Task Scheduler",
+      "url": "https://leetcode.com/problems/task-scheduler/",
+      "premium": false
+    }
+  }
+}

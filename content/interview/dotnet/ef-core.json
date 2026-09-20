@@ -1,0 +1,242 @@
+{
+  "id": "dotnet-ef-core",
+  "trackId": "dotnet",
+  "topic": "ef-core",
+  "title": "EF Core",
+  "summary": "A change tracker you pay for on every row, a JOIN you did not ask for, and a migration that locked the table at 3am.",
+  "questions": [
+    {
+      "id": "def-01",
+      "level": "junior",
+      "type": "concept",
+      "question": "What does the change tracker do, and what does AsNoTracking actually change?",
+      "answer": "When a query materialises an entity, the `DbContext` does two extra things. It puts the entity in an **identity map** keyed by primary key, so the same row always produces the same object instance within that context. And it takes a **snapshot** of every scalar property. `SaveChanges` then compares each tracked entity against its snapshot to work out which columns changed and emits only those in the `UPDATE`. That is how you can load an entity, set one property, call `SaveChanges`, and have the right SQL appear without writing any.\n\n`AsNoTracking` turns both off. No snapshot, no identity map entry. What that buys you is memory and CPU *on the client*: for a thousand-row read you skip a thousand snapshots and a thousand dictionary inserts, and the entities become garbage as soon as you drop them instead of being rooted by the context.\n\nThe thing people get wrong is thinking it changes the query. It does not — the generated SQL is byte-for-byte identical. It is purely a materialisation choice.\n\nTwo consequences follow. Untracked entities cannot be saved by mutating them; you have to `Attach` or `Update` them, which marks every column dirty. And without the identity map, the same row appearing twice in one result set produces two distinct objects — use `AsNoTrackingWithIdentityResolution()` if that matters.\n\nThe rule is simple: reads that you will not write back get `AsNoTracking`. A projection with `Select` to a DTO is not tracked at all, so it already has the benefit.\n\nJava engineers: this is Hibernate's persistence context and automatic dirty checking, with `AsNoTracking` as the read-only equivalent.",
+      "keyPoints": [
+        "Tracking = identity map by key + a property snapshot used to compute the UPDATE",
+        "AsNoTracking skips both; it changes materialisation, never the generated SQL",
+        "Saves client memory and CPU and lets the entities be collected immediately",
+        "Untracked entities need Attach/Update to be saved, and Update marks every column dirty",
+        "Projections to a DTO are already untracked — no attribute needed"
+      ],
+      "followUps": [
+        {
+          "q": "Should you just set QueryTrackingBehavior.NoTracking globally?",
+          "a": "It is a defensible default for a read-heavy API, but it makes the write paths surprising: someone loads an entity, changes a property, calls `SaveChanges`, and nothing happens — silently, with no error. If you do it, do it deliberately and add `.AsTracking()` on the command-side queries, so the exception to the rule is visible at the call site rather than in `OnConfiguring`."
+        },
+        {
+          "q": "Why does a long-lived context get slower over time?",
+          "a": "Change detection is proportional to the number of tracked entities, and `DetectChanges` runs before every `SaveChanges` and on several other operations. Load fifty thousand entities into one context and every save walks all of them. That, plus the fact that the identity map roots every one of those objects, is why a context is meant to be short-lived. `ChangeTracker.Clear()` exists for the batch cases where it cannot be."
+        }
+      ],
+      "redFlags": [
+        "Believing AsNoTracking changes the SQL or makes the database do less work",
+        "Using AsNoTracking on a query whose results are then modified and saved",
+        "Not knowing why SaveChanges only updates the columns that changed"
+      ],
+      "related": [
+        "java-jpa-hibernate",
+        "database"
+      ]
+    },
+    {
+      "id": "def-02",
+      "level": "junior",
+      "type": "concept",
+      "question": "How long should a DbContext live, and is it thread-safe?",
+      "answer": "Short, and no.\n\nA `DbContext` is a unit of work. It should be created for one logical operation, used, and disposed. In ASP.NET Core `AddDbContext` registers it as **scoped**, which means one per request, and that is the right default: it gives you a natural transaction boundary and it guarantees the change tracker starts empty each time. It is cheap to create — the expensive part, building the model, is cached at the service-provider level and built once per application, not per context. The underlying connection is pooled too, and by default is opened only for the duration of each command.\n\nIt is explicitly **not thread-safe**, and unlike many \"not thread-safe\" types EF actively detects misuse: overlapping operations throw `InvalidOperationException: A second operation was started on this context instance before a previous operation completed`. The usual cause is not raw threads — it is a missing `await`, or firing several queries with `Task.WhenAll` on the same context, or a `foreach` over a streaming query that issues another query in the body. If you want parallel queries, you want a context per query.\n\nThe two failure modes at the extremes are worth naming. Too long-lived — a singleton, or a context held across many operations — means an ever-growing change tracker, stale data served from the identity map, and one failed save poisoning everything after it. Too short is rarely a problem, but creating a context per repository call inside one request throws away the unit of work: you can no longer save several changes in a single transaction.\n\nJava engineers: same lifecycle rules as a Hibernate `Session`.",
+      "keyPoints": [
+        "One context per unit of work — scoped, i.e. per request, in ASP.NET Core",
+        "Creation is cheap; the model is built once per application and the connection comes from the pool",
+        "Not thread-safe, and EF throws \"a second operation was started\" rather than corrupting silently",
+        "That error usually means a missing await or Task.WhenAll over one context, not real threads",
+        "Long-lived contexts grow the change tracker, serve stale data and stay broken after a failed save"
+      ],
+      "followUps": [
+        {
+          "q": "What is DbContext pooling and when is it worth it?",
+          "a": "`AddDbContextPool` reuses context instances instead of constructing them, resetting their state between uses. It removes a small allocation and initialisation cost, which only shows up at high request rates. The catch is that your context must not carry custom mutable state in fields, because a pooled instance is reused across requests and only EF's own state is reset. Measure before adopting it."
+        },
+        {
+          "q": "Does SaveChanges create a transaction?",
+          "a": "Yes — `SaveChanges` wraps all its commands in a single transaction unless one is already open, so either every change in that call lands or none does. What it does *not* do is cover work spread across several `SaveChanges` calls, or anything non-database. For that you open one explicitly with `Database.BeginTransactionAsync`, and then you are responsible for its lifetime."
+        }
+      ],
+      "redFlags": [
+        "Registering DbContext as a singleton",
+        "Running Task.WhenAll over queries sharing one context",
+        "Thinking the \"second operation\" error is an EF bug or a connection-pool problem"
+      ],
+      "related": [
+        "sql-transactions",
+        "database"
+      ]
+    },
+    {
+      "id": "def-03",
+      "level": "mid",
+      "type": "concept",
+      "question": "Explain the N+1 problem in EF Core, and what Include, ThenInclude and split queries do about it.",
+      "answer": "N+1 is one query to fetch a list and then one more per item to fetch something related — 1 + N round trips where one or two would do. In EF Core it almost never comes from an explicit loop of queries; it comes from touching a navigation property that was not loaded, inside a `foreach`.\n\n`Include` fixes the round trips by asking for the related data in the same query, and `ThenInclude` continues down the graph:\n\n```csharp\nvar orders = await db.Orders\n    .Include(o => o.Lines).ThenInclude(l => l.Product)\n    .Include(o => o.Customer)\n    .AsNoTracking()\n    .ToListAsync();\n```\n\nBut `Include` of a *collection* is a JOIN, and the parent columns repeat once per child row. Include two collections and you get their cartesian product: fifty lines and twenty payments on one order is a thousand rows carrying the order's columns a thousand times. EF Core warns about this (`MultipleCollectionIncludeWarning`), and it is a much more common cause of slowness than N+1 itself. You have traded round trips for bandwidth, and past a certain fan-out that is the worse trade.\n\n`AsSplitQuery()` is the middle ground: EF issues one query per collection navigation and stitches the results together by key. No duplication, no cartesian blow-up, at the cost of several round trips — and, because they are separate statements, the results are not a consistent snapshot unless you wrap them in a transaction.\n\nThe option people forget is not loading the graph at all. `Select` into a DTO with exactly the fields the caller needs generates the joins EF thinks are necessary and nothing else, and needs no tracking. For read endpoints that is usually the right answer; `Include` is for when you are about to modify the graph.\n\nJava engineers: identical to Hibernate's `JOIN FETCH` versus `@BatchSize`, including the cartesian-product trap.",
+      "keyPoints": [
+        "N+1 comes from touching an unloaded navigation inside a loop, not from explicit query loops",
+        "Include of a collection is a JOIN — two collection includes multiply into a cartesian product",
+        "AsSplitQuery trades one big duplicated result for several round trips, losing snapshot consistency",
+        "EF Core raises MultipleCollectionIncludeWarning when a single query includes more than one collection",
+        "For read paths, projecting with Select to a DTO usually beats Include entirely"
+      ],
+      "followUps": [
+        {
+          "q": "How do you detect N+1 before a user does?",
+          "a": "Log the SQL. `LogTo(Console.WriteLine, LogLevel.Information)` in development, or watch the `Microsoft.EntityFrameworkCore.Database.Command` category, and then look at *counts* rather than individual statements — one endpoint emitting 200 near-identical `SELECT`s is unmistakable. In production, an APM trace showing hundreds of tiny database spans in one request is the same signal. A test that asserts the number of commands executed for a key endpoint is a cheap regression guard."
+        },
+        {
+          "q": "Can you filter an Include?",
+          "a": "Yes, since EF Core 5: `Include(o => o.Lines.Where(l => !l.Void).OrderBy(l => l.Id).Take(10))`. Only `Where`, `OrderBy`, `Skip` and `Take` are allowed, and the same navigation must be filtered identically everywhere in the query. Beware combining it with tracking: previously loaded entities in the change tracker are not removed just because the filter excludes them now."
+        }
+      ],
+      "redFlags": [
+        "Adding Include everywhere as a reflex without looking at the row count",
+        "Not knowing that two collection Includes multiply rows",
+        "Calling ToList early and then walking navigations to \"fix\" N+1"
+      ],
+      "related": [
+        "java-jpa-hibernate",
+        "sql-querying"
+      ]
+    },
+    {
+      "id": "def-04",
+      "level": "mid",
+      "type": "tradeoff",
+      "question": "Lazy-loading proxies are opt-in in EF Core. Why are they usually the wrong choice?",
+      "answer": "You enable them with the `Microsoft.EntityFrameworkCore.Proxies` package and `UseLazyLoadingProxies()`, and then every navigation property must be `virtual` so EF can subclass your entity and intercept the getter. Touch `order.Customer` and EF quietly issues a query.\n\n\"Quietly\" is the whole problem. The feature makes a database round trip look like a field access, which has four consequences that all show up in production rather than on your machine:\n\n- **Invisible N+1.** A `foreach` that reads one navigation per item becomes N queries, and nothing in the source code says so. This is the single most common cause of a slow EF endpoint.\n- **It loads synchronously.** There is no async lazy load — the interceptor cannot `await` inside a property getter. So every lazy load blocks a thread-pool thread on I/O inside an otherwise async request. Under load that is sync-over-async and it starves the pool.\n- **It fails after the context is gone.** Lazy-load a navigation on an entity that outlived its scope and you get `ObjectDisposedException` instead of data.\n- **Serialization walks the graph.** Hand a proxied entity to `System.Text.Json` and the serializer touches every navigation, triggering loads and often a cycle. What should have been a small DTO becomes half the database.\n\nThe replacements are all explicit and better: `Include` when you know you need the graph, `Select` into a DTO when you only need fields, and `context.Entry(e).Collection(x => x.Lines).LoadAsync()` when you genuinely need to decide at runtime — which is async and visible.\n\nJava engineers will recognise all of this: it is Hibernate's default, and `LazyInitializationException` is the same bug. EF Core learned from that and made it opt-in, which is the better default.",
+      "keyPoints": [
+        "Proxies require virtual navigations and turn a property read into a hidden query",
+        "The resulting N+1 is invisible in the source, which is why it reaches production",
+        "Lazy loads are synchronous — blocking I/O inside an async request path",
+        "Serializing a proxied entity walks and loads the whole graph",
+        "Prefer Include, projection, or explicit LoadAsync; EF made lazy opt-in for good reason"
+      ],
+      "followUps": [
+        {
+          "q": "Is there a way to lazy load without proxies?",
+          "a": "Yes — inject `ILazyLoader` (or an `Action<object, string>` load delegate) into the entity's constructor and call it from the property getter. It avoids the proxy type and the `virtual` requirement, but it puts a persistence dependency into your domain model and it is still synchronous. It solves the cosmetic problem, not the real one."
+        },
+        {
+          "q": "What breaks when an entity is a proxy rather than the real type?",
+          "a": "`GetType()` returns the generated subclass, so type checks, switch statements on the concrete type, and anything keyed by type name see something unexpected. Mapping libraries and serializers can pick the wrong configuration for it, and equality based on `GetType()` comparisons stops working between a proxied and a non-proxied instance of the same row."
+        }
+      ],
+      "redFlags": [
+        "Enabling lazy loading to \"fix\" a null navigation property",
+        "Not knowing lazy loading is synchronous",
+        "Returning entities (proxied or not) directly from a web API"
+      ],
+      "related": [
+        "java-jpa-hibernate"
+      ]
+    },
+    {
+      "id": "def-05",
+      "level": "mid",
+      "type": "tradeoff",
+      "question": "When do you drop to raw SQL in EF Core, and how do you do it safely?",
+      "answer": "EF translates a large but finite subset of LINQ. You drop to SQL when the thing you need is outside it, and the honest list is short: window functions and recursive CTEs, query hints and index hints, vendor features like full-text search or JSON operators, set-based bulk work over millions of rows, and stored procedures you do not own.\n\nBefore dropping, check whether EF already has it. `ExecuteUpdateAsync` and `ExecuteDeleteAsync` (EF Core 7 and later) issue a single set-based statement with no materialisation and no change tracking, which removes the most common reason people used to reach for SQL.\n\nThe APIs, and the safety rule:\n\n```csharp\n// parameterised automatically — the interpolation holes become SqlParameters\nvar rows = await db.Orders\n    .FromSql($\"SELECT * FROM Orders WHERE Region = {region}\")\n    .AsNoTracking().ToListAsync();\n\nawait db.Database.ExecuteSqlAsync($\"UPDATE Orders SET Status = {status} WHERE Id = {id}\");\n```\n\n`FromSql` and `ExecuteSql` take a `FormattableString` and parameterise every hole. `FromSqlRaw` does not — it takes a plain string, and a `$\"...\"` concatenated into it is a SQL injection hole that looks identical to the safe version. If you use `FromSqlRaw`, pass parameters explicitly and never concatenate. `Database.SqlQuery<T>` handles scalar and non-entity shapes.\n\nThings to know about `FromSql` specifically: the statement must return columns for every mapped property of the entity, results are tracked by default, and EF composes further LINQ by wrapping your SQL in a subquery — which fails for anything non-composable, such as a stored procedure on SQL Server.\n\nThe cost of dropping is real: no compile-time checking, no provider portability, and migrations know nothing about the SQL, so a renamed column breaks it at runtime. Keep the escape hatches few and covered by integration tests. For a read-heavy reporting surface, a small Dapper layer alongside EF is often cleaner than fighting the translator.",
+      "keyPoints": [
+        "Drop to SQL for window functions, CTEs, hints, vendor features, bulk set operations and stored procedures",
+        "ExecuteUpdateAsync/ExecuteDeleteAsync removed the most common reason to drop out",
+        "FromSql and ExecuteSql parameterise interpolated values; FromSqlRaw does not — that is the injection risk",
+        "FromSql must return all mapped columns, is tracked by default, and composes by wrapping in a subquery",
+        "Raw SQL is invisible to migrations and the compiler, so cover it with integration tests"
+      ],
+      "followUps": [
+        {
+          "q": "How do you call a stored procedure and then filter it with LINQ?",
+          "a": "On SQL Server you cannot — a procedure is not composable, so EF cannot wrap it in a subquery. Calling `.Where(...)` after it throws. Materialise first with `ToListAsync()` (or `AsEnumerable()`) and filter in memory, accepting that the filter no longer reaches the database, or push the filter into the procedure's parameters where it belongs."
+        },
+        {
+          "q": "Does raw SQL bypass the change tracker?",
+          "a": "No. `FromSql` returning an entity type tracks the results exactly like any other query, including identity resolution against entities already loaded — which can hand you a cached instance rather than the row you just read. `ExecuteSql`, `ExecuteUpdate` and `ExecuteDelete` are different: they run directly against the database and the change tracker never learns about them, so anything already loaded is now stale."
+        }
+      ],
+      "redFlags": [
+        "Using FromSqlRaw with string interpolation or concatenation",
+        "Reaching for SQL before checking whether the LINQ simply needed rewriting",
+        "Not knowing ExecuteUpdate/ExecuteDelete exist and hand-writing bulk updates"
+      ],
+      "related": [
+        "sql-querying",
+        "database"
+      ]
+    },
+    {
+      "id": "def-06",
+      "level": "senior",
+      "type": "scenario",
+      "question": "Your team of six is fighting constant migration conflicts, and last release a migration locked a table for twenty minutes. How do you run EF migrations properly?",
+      "answer": "Two separate problems: merge conflicts in the team, and unsafe application in production.\n\n**In the team.** A migration is a pair of `Up`/`Down` methods plus an update to `ModelSnapshot.cs`, and the snapshot is what conflicts — it is generated, so hand-merging it produces a snapshot that matches neither model. The resolution is always the same: `dotnet ef migrations remove` your own migration, pull, re-add it on top. Keep migrations small and merge often, because the conflict cost scales with how long a branch lives. And never edit a migration that has already been applied anywhere — the history table records it as done, so your edit runs nowhere.\n\n**In production.** Do not call `Database.Migrate()` at application startup. With more than one instance they race, every instance needs DDL permissions on the production database, and a failing migration takes the app down in a crash loop. Instead generate an artefact the deployment pipeline applies once: `dotnet ef migrations script --idempotent --from <last> --to <target>`, which someone can read and a DBA can review, or `dotnet ef migrations bundle`, a self-contained executable that runs as a deployment step or an init container.\n\n**The twenty-minute lock** is a separate discipline. Schema changes have to be safe for a rolling deploy, where old and new code run at the same time — so use expand/contract. Add the new nullable column and deploy code that writes both; backfill in batches *outside* the migration, with your own batching and no long transaction; make it non-nullable in a later migration; drop the old column in a release after that. Check generated migrations for drops and rewrites: EF will happily emit drop-then-create for what you meant as a rename, which loses data. Use `RenameColumn` explicitly.\n\nJava engineers: this is exactly the Flyway/Liquibase discipline, and EF's `__EFMigrationsHistory` is `flyway_schema_history`.",
+      "keyPoints": [
+        "ModelSnapshot.cs is generated — resolve conflicts by removing and re-adding your migration, never by hand-merging",
+        "Never edit a migration that has already been applied; the history table will skip it",
+        "Database.Migrate() at startup races across instances and needs DDL rights in production",
+        "Apply via an idempotent script or a migration bundle as a reviewed deployment step",
+        "Expand/contract plus batched backfills outside the migration keeps rolling deploys safe"
+      ],
+      "followUps": [
+        {
+          "q": "Why is EnsureCreated not an option?",
+          "a": "`EnsureCreated` builds the schema straight from the model and writes nothing to the migrations history, so the database can never be migrated afterwards — the first `migrations update` tries to create tables that already exist. It is fine for throwaway integration tests against a fresh database and wrong for anything that has to evolve."
+        },
+        {
+          "q": "How do you make a migration itself safe to run against a live table?",
+          "a": "Keep the DDL trivial and do the data work separately. Adding a nullable column is metadata-only on most engines; adding a `NOT NULL` column with a default, changing a column type, or updating every row rewrites the table and holds a lock for the duration. Split those: cheap DDL in the migration, data movement in a batched background job that commits every few thousand rows, and set `CommandTimeout` deliberately rather than discovering the default."
+        }
+      ],
+      "redFlags": [
+        "Calling Database.Migrate() in Program.cs and calling it a deployment strategy",
+        "Hand-editing ModelSnapshot.cs to resolve a conflict",
+        "Deleting and regenerating the whole migration history because it got messy",
+        "Treating a schema change as atomic with the deploy that uses it"
+      ],
+      "related": [
+        "database",
+        "sql-transactions"
+      ]
+    },
+    {
+      "id": "def-07",
+      "level": "senior",
+      "type": "scenario",
+      "question": "A query returns in 40ms when you paste it into SSMS but takes four seconds through EF Core. Walk me through finding out why.",
+      "answer": "First check you are comparing the same two things. Get the SQL EF actually sends — `ToQueryString()` on the `IQueryable`, or `LogTo` and the `Microsoft.EntityFrameworkCore.Database.Command` log category with `EnableSensitiveDataLogging` in development. Nine times out of ten it is not what you pasted.\n\nThen split the four seconds into database time and client time, because they have disjoint causes. Extended Events or `sys.dm_exec_query_stats` tells you what the server spent; if the server says 40ms, the query is innocent.\n\n**Client-side causes.**\n\n- **It never ran as one query.** An `AsEnumerable()`, `ToList()` or an untranslatable method call part-way down the chain materialises everything and does the rest in memory. The `WHERE` you expect is simply missing from the SQL.\n- **Over-fetching.** You selected the entity — every column, including the `nvarchar(max)` notes field — where in SSMS you selected three. Project to a DTO.\n- **Tracking.** Fifty thousand rows means fifty thousand snapshots, identity-map inserts and fix-up passes: pure client CPU that appears in no database metric.\n- **It ran N times.** A lazy load or a navigation in a loop — the database sees fast queries, the request sees the sum.\n\n**Server-side causes.**\n\n- **Different plan, same text.** SSMS connects with `ARITHABORT ON` and the ADO.NET client historically does not, so the two get separate cached plans and the app can be running a bad one. Inspect the app's actual cached plan, and try `OPTION (RECOMPILE)` to test for parameter sniffing.\n- **Parameter type mismatch.** EF sends strings as `nvarchar` by default; against a `varchar` column that is an implicit conversion and you lose the index seek. Map it with `HasColumnType(\"varchar(50)\")` or `IsUnicode(false)`.\n- **IN lists.** EF Core 8 translates `list.Contains(x)` through `OPENJSON` with one parameter rather than inlining constants — better plan reuse, sometimes worse cardinality estimates.\n\nThe discipline is the point: read the generated SQL, attribute the time, then fix where the time actually is.",
+      "keyPoints": [
+        "Start with ToQueryString or command logging — the SQL is usually not what you assumed",
+        "Split total time into server time and client time; they have disjoint causes",
+        "Client side: accidental client evaluation, over-fetching columns, tracking overhead, or the query running N times",
+        "Server side: ARITHABORT giving SSMS a different cached plan, and nvarchar parameters against varchar columns killing the seek",
+        "EF Core 8 sends Contains lists via OPENJSON, which changes plan shape and estimates"
+      ],
+      "followUps": [
+        {
+          "q": "How do you prove the time is client-side and not in the database?",
+          "a": "Capture the statement's duration at the server — Extended Events, or `sys.dm_exec_query_stats` total elapsed time divided by execution count — and compare it with the stopwatch around the EF call. A large gap is materialisation, tracking or round trips. Running the same query once with `AsNoTracking` and once projected to a DTO isolates it further: if either fixes it, it was never the query."
+        },
+        {
+          "q": "What if the SQL is fine and it is only slow the first time?",
+          "a": "That is startup cost, not query cost. The first query in a process builds the model and compiles the query plan through EF's own pipeline, and the connection pool has to open a real connection. Warm it at startup with a trivial query, and use compiled queries (`EF.CompileAsyncQuery`) for hot paths where translation cost is measurable."
+        }
+      ],
+      "redFlags": [
+        "Comparing timings without ever looking at the generated SQL",
+        "Adding indexes before knowing whether the time is in the database at all",
+        "Concluding \"EF is slow\" as the diagnosis",
+        "Enabling EnableSensitiveDataLogging in production to investigate"
+      ],
+      "related": [
+        "sql-indexing",
+        "sql-querying",
+        "sql-performance"
+      ]
+    }
+  ]
+}

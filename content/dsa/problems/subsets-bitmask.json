@@ -1,0 +1,142 @@
+{
+  "id": "subsets-bitmask",
+  "title": "Subsets via Bitmask",
+  "patternId": "bit-manipulation",
+  "difficulty": "intermediate",
+  "tags": [
+    "bits",
+    "bitmask",
+    "subsets",
+    "enumeration",
+    "combinatorics"
+  ],
+  "statement": "Given an array `nums` of distinct integers, return all possible subsets (the power set), in any order. Solve it iteratively with a bitmask rather than with recursion: treat each integer from 0 to 2ⁿ-1 as a subset, where bit i being set means `nums[i]` is included.",
+  "realWorld": "Any 'try every combination of options' job is this loop: which subset of features to enable in an A/B test, which subset of indexes a query planner should consider, which subset of machines to assign a job to. It is also the entry point to bitmask dynamic programming — `dp[mask]` storing the best answer for the set of items in `mask` is how the Travelling Salesman Problem is solved exactly for n ≤ 20, and how assignment and scheduling problems with small item counts are handled in practice.",
+  "examples": [
+    {
+      "input": "nums = [1,2,3]",
+      "output": "[[], [1], [2], [1,2], [3], [1,3], [2,3], [1,2,3]]",
+      "explanation": "Eight subsets = 2³. Counting masks 000 through 111 produces them in exactly this order: mask 101 is binary for 5 and selects nums[0] and nums[2], giving [1,3]."
+    },
+    {
+      "input": "nums = [0]",
+      "output": "[[], [0]]",
+      "explanation": "2¹ = 2 subsets. Note that the element's value being 0 has nothing to do with the mask being 0 — the mask indexes positions, not values."
+    },
+    {
+      "input": "nums = []",
+      "output": "[[]]",
+      "explanation": "2⁰ = 1. The power set of the empty set contains exactly one member: the empty set. The loop `mask < (1 << 0)` runs once, for mask = 0, which is correct."
+    }
+  ],
+  "constraints": [
+    "0 <= nums.length <= 20",
+    "-10 <= nums[i] <= 10",
+    "All elements of nums are distinct",
+    "The output has 2^n subsets, so n is small by necessity"
+  ],
+  "bruteForce": {
+    "idea": "Grow the answer set one element at a time: start with the empty subset, and for each new element append copies of every subset built so far with that element added. Correct, and a good way to convince yourself the count doubles.",
+    "code": [
+      "public static List<List<Integer>> subsets(int[] nums) {",
+      "    List<List<Integer>> out = new ArrayList<>();",
+      "    out.add(new ArrayList<>());               // the empty subset",
+      "",
+      "    for (int value : nums) {",
+      "        int existing = out.size();            // snapshot: do not iterate what we append",
+      "        for (int i = 0; i < existing; i++) {",
+      "            List<Integer> copy = new ArrayList<>(out.get(i));",
+      "            copy.add(value);",
+      "            out.add(copy);                    // every subset doubles into two",
+      "        }",
+      "    }",
+      "    return out;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n · 2^n)",
+      "space": "O(n · 2^n) for the output"
+    },
+    "whySlow": "The asymptotic cost is already optimal — there are 2ⁿ subsets averaging n/2 elements each, so any correct solution must produce O(n · 2ⁿ) output and cannot beat that. What this version wastes is constants and clarity. Every subset is copied into a fresh `ArrayList` as it grows, so an element that ends up in half the subsets is copied 2ⁿ⁻¹ times, and each subset carries object-header and boxing overhead. It also gives you no compact *name* for a subset — which matters the moment you want to memoise over subsets, because a `List` is a poor map key and an `int` is a perfect array index."
+  },
+  "patternIdentification": "`n ≤ 20` plus 'all possible subsets' is the clearest bitmask signal there is. The constraint is not stingy, it is a hint: 2²⁰ ≈ 10⁶ is small, so an exponential solution is intended, and the author chose 20 because that is roughly where a 32-bit mask stays comfortable. The structural insight is a bijection — a subset of n elements is a yes/no choice per element, an n-bit binary number is a yes/no per position, so there is exactly one mask per subset and counting from 0 to 2ⁿ-1 enumerates every one of them exactly once, with no recursion, no visited set and no duplicate checking.",
+  "optimized": {
+    "idea": "Count from 0 to 2ⁿ-1. Each integer *is* a subset: bit i of the mask says whether `nums[i]` is in it. Decode a mask by testing each position with `(mask & (1 << i)) != 0`, or equivalently `((mask >> i) & 1) == 1`.\n\nTwo details are worth the extra lines. Pre-sizing each subset with `Integer.bitCount(mask)` avoids the `ArrayList` growth copies. And the `mask & -mask` variant below iterates only the bits that are actually set, so a sparse mask costs one step per member instead of n — the idiom you want once masks become DP states rather than output.",
+    "code": [
+      "import java.util.*;",
+      "",
+      "/**",
+      " * Power set by bitmask enumeration.",
+      " * O(n · 2^n) time — the size of the output, so this is optimal.",
+      " * O(1) auxiliary space beyond the result.",
+      " */",
+      "public static List<List<Integer>> subsets(int[] nums) {",
+      "    int n = nums.length;",
+      "    int total = 1 << n;                        // 2^n masks; n <= 20 keeps this safe",
+      "    List<List<Integer>> out = new ArrayList<>(total);",
+      "",
+      "    for (int mask = 0; mask < total; mask++) {",
+      "        List<Integer> subset = new ArrayList<>(Integer.bitCount(mask));",
+      "        for (int i = 0; i < n; i++) {",
+      "            if ((mask & (1 << i)) != 0) {      // NOTE the parentheses: << binds loosest",
+      "                subset.add(nums[i]);",
+      "            }",
+      "        }",
+      "        out.add(subset);",
+      "    }",
+      "    return out;",
+      "}",
+      "",
+      "/**",
+      " * Decoding a single mask by walking only its set bits.",
+      " * One iteration per member instead of n — the idiom for bitmask DP.",
+      " */",
+      "public static List<Integer> decode(int[] nums, int mask) {",
+      "    List<Integer> subset = new ArrayList<>(Integer.bitCount(mask));",
+      "    while (mask != 0) {",
+      "        int lowest = mask & -mask;                          // isolate the lowest set bit",
+      "        subset.add(nums[Integer.numberOfTrailingZeros(lowest)]);   // its position",
+      "        mask ^= lowest;                                     // remove it and continue",
+      "    }",
+      "    return subset;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n · 2^n)",
+      "space": "O(1)"
+    }
+  },
+  "visualization": {
+    "engine": "bitOps",
+    "input": {
+      "value": 5
+    },
+    "code": [
+      "int mask = 5;                      // 0000 0101 -> the subset {nums[0], nums[2]}",
+      "int shiftUp = mask << 1;           // shift left  -> every member moves up one index",
+      "int shifted = mask >> 1;           // shift right -> step to the next bit to test",
+      "int hasZero = mask & 1;            // 1: is nums[0] a member of this subset?",
+      "int without = mask & (mask - 1);   // 0000 0100 -> drop the lowest member",
+      "int lowest  = mask & -mask;        // 0000 0001 -> the lowest member, isolated",
+      "int empty   = mask ^ mask;         // 0 -> the empty subset"
+    ]
+  },
+  "commonMistakes": [
+    "Writing `mask & 1 << i` without parentheses. Shift binds more loosely than `&` in Java, so it parses as `(mask & 1) << i` and tests the wrong bit. This is the number-one bitmask bug.",
+    "Testing membership with `(mask & (1 << i)) == 1`. The expression evaluates to `1 << i`, which equals 1 only when i is 0 — every other element silently vanishes. Compare with `!= 0` instead.",
+    "Looping `mask <= (1 << n)` instead of `<`. That produces 2ⁿ + 1 subsets, the last one a duplicate of the empty set.",
+    "Using `1 << n` for n ≥ 31. `1 << 31` is `Integer.MIN_VALUE`, so the loop never executes; and Java masks shift distances by 31, so `1 << 32` is 1, not 0. Use `1L << n` past 31 — though at that size the 2ⁿ loop is the real obstacle.",
+    "Confusing the mask with the values. Bit i refers to *position* i in `nums`, never to the value stored there — which is why `nums = [0]` still has a non-empty subset `[0]`.",
+    "Expecting the subsets in a particular order. Counting order interleaves sizes ([], [1], [2], [1,2], [3], …). If the grader wants them grouped by size, sort by `Integer.bitCount(mask)` first, or enumerate by size directly."
+  ],
+  "similar": [
+    "subsets",
+    "permutations",
+    "single-number",
+    "counting-bits"
+  ],
+  "practice": {
+    "leetcode": null,
+    "note": "Same LeetCode problem as Subsets (78) — this file exists to show the bitmask enumeration as an alternative to backtracking, so solving 78 covers both."
+  }
+}

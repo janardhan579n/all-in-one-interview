@@ -1,0 +1,250 @@
+{
+  "id": "search-engine",
+  "title": "Full-Text Search",
+  "group": "Data",
+  "level": 2,
+  "estimatedMinutes": 30,
+  "summary": "Instead of scanning documents for a word, invert the problem: build a map from every word to the list of documents containing it, and rank the results. The cost is a second system that is always slightly behind your database.",
+  "analogy": "The index at the back of a textbook. Nobody finds a topic by reading all 900 pages looking for the word; they turn to the index, which lists the word once and the pages after it. Two facts about that index carry the whole lesson: someone had to build it after the book was written, so if a chapter is revised the index is wrong until it is rebuilt — and it lists 'photosynthesis', not 'photosynthesising', so the index only works if the indexer and the reader agree on how words get reduced to their root form.",
+  "explanation": {
+    "beginner": "The obvious way to search a table of articles is WHERE body LIKE '%solar%'. This cannot use an index, because a database index is sorted by the beginning of the value and you are asking about the middle — so the database reads every row. With ten million articles that is seconds per query, and it gets slower as you add content. It is also wrong in a quieter way: it will not match 'solars' or 'solarly', it matches 'polar-solar-panel' inside a longer word, and it has no idea which of the 40,000 matching articles you actually wanted. A search engine instead pre-processes every document into words, and stores, for each word, the list of documents that contain it. A query then reads a few short lists and combines them.",
+    "interview": "A leading-wildcard LIKE forces a full scan because B-tree indexes are ordered by prefix, so cost is O(rows) and grows with the corpus; it also gets the semantics wrong — no stemming, no tokenisation, no relevance ordering. The fix is an inverted index: an analysis pipeline (tokenise, lowercase, remove stop words, stem) maps each document to terms, and the index maps each term to a sorted posting list of document ids, often with positions and term frequencies. A conjunctive query intersects posting lists — proportional to the shortest list, not the corpus — and skip pointers make the intersection sublinear. Results are ranked by TF-IDF or, in practice, BM25, which adds term-frequency saturation and document-length normalisation. Because this is a separate system fed from the database, it is eventually consistent with the source of truth; you must plan reindexing, and shards split by document so every query fans out to all shards and merges, making p99 the slowest shard's latency."
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "client",
+        "label": "Client",
+        "type": "client",
+        "x": 110,
+        "y": 300,
+        "note": "Types 'running shoes' and expects the best few results, not all of them."
+      },
+      {
+        "id": "app",
+        "label": "App server",
+        "type": "server",
+        "x": 380,
+        "y": 300,
+        "note": "Writes go to the database; queries go to the search index. Two different systems, two different guarantees."
+      },
+      {
+        "id": "db",
+        "label": "Database",
+        "type": "db",
+        "x": 660,
+        "y": 470,
+        "note": "The source of truth. Great at exact lookups by id or indexed column; hopeless at 'find the word anywhere'."
+      },
+      {
+        "id": "indexer",
+        "label": "Indexer",
+        "type": "worker",
+        "x": 920,
+        "y": 470,
+        "note": "Reads changes from the database, runs the analysis pipeline, writes terms into the index. Also the thing that runs a full reindex when the pipeline changes."
+      },
+      {
+        "id": "search",
+        "label": "Search index",
+        "type": "search",
+        "x": 660,
+        "y": 130,
+        "note": "The inverted index: term -> sorted posting list of document ids.",
+        "why": {
+          "without": [
+            "LIKE '%shoe%' cannot use any index, so the database reads every row — hundreds of milliseconds to seconds over ten million rows, and it degrades linearly as the corpus grows",
+            "Those scans hold the database busy on the same machine serving your transactional traffic, so a search box becomes a load generator against checkout",
+            "It also gets the meaning wrong: no stemming ('running' misses 'run'), no stop words, no relevance — 40,000 matches come back in whatever order the scan found them"
+          ],
+          "with": [
+            "A query reads the posting lists for its terms and intersects them; cost is proportional to the shortest list, not to the corpus",
+            "Analysis at index time means 'running shoes' matches 'run shoe' because both sides were stemmed the same way",
+            "BM25 orders results so the top ten are worth showing — rare terms count for more, and a term's value saturates rather than rewarding keyword stuffing"
+          ],
+          "conclusion": "The inverted index makes query cost depend on how many documents match rather than on how many exist. The price is that this index is a separate system that is always a little behind the database."
+        }
+      }
+    ],
+    "edges": [
+      {
+        "from": "client",
+        "to": "app",
+        "label": "1. search 'running shoes'"
+      },
+      {
+        "from": "app",
+        "to": "search",
+        "label": "2. query terms"
+      },
+      {
+        "from": "search",
+        "to": "app",
+        "label": "3. ranked doc ids",
+        "dashed": true
+      },
+      {
+        "from": "app",
+        "to": "db",
+        "label": "4. hydrate by id"
+      },
+      {
+        "from": "db",
+        "to": "indexer",
+        "label": "change stream",
+        "dashed": true
+      },
+      {
+        "from": "indexer",
+        "to": "search",
+        "label": "analyse + index",
+        "dashed": true
+      }
+    ]
+  },
+  "why": {
+    "without": [
+      "LIKE '%term%' has a leading wildcard, so no B-tree index applies and the database scans every row — query time grows linearly with the corpus and a ten-million-row table costs hundreds of milliseconds to seconds per search",
+      "Those scans run on the transactional database, so a user typing in a search box evicts your working set from the buffer pool and slows every other query on the system",
+      "The semantics are wrong independently of the speed: no stemming, so 'running' does not match 'run'; no tokenisation, so the pattern matches inside unrelated words; no stop-word handling, so searching 'the' matches everything",
+      "There is no notion of relevance, so a query with 40,000 matches returns them in scan order and the user has to find the good one themselves"
+    ],
+    "with": [
+      "An analysis pipeline — tokenise, lowercase, drop stop words, stem — turns documents and queries into the same normalised terms, so the two sides can match",
+      "The inverted index maps each term to a sorted posting list of document ids; a multi-term query intersects those lists, bounded by the shortest one rather than by corpus size",
+      "TF-IDF and BM25 score matches so the top results are the useful ones: a term appearing in fewer documents is worth more, and BM25 additionally saturates term frequency and normalises for document length",
+      "Search runs on its own machines, so heavy queries cannot starve the transactional database"
+    ],
+    "conclusion": "You move search out of the database and into a system built for it, and in exchange you accept a second copy of your data that is eventually consistent, must be kept in sync, and occasionally has to be rebuilt from scratch."
+  },
+  "whenToUse": [
+    "Users type words and expect the best matches, not all matches — relevance ranking is the requirement, not a nicety",
+    "Matching must survive word variation: stemming, case, punctuation, accents, synonyms",
+    "The corpus is large enough that a scan per query is not viable, and it is growing",
+    "Facets, filters and aggregations over text-heavy documents — counts by category alongside the results",
+    "You want search traffic isolated from the transactional database's resources"
+  ],
+  "whenNotToUse": [
+    "Exact-match lookups on structured fields — 'where user_id = 8812' or 'status = shipped'. A plain database index is faster, exact, transactional, and needs no second system; putting these in a search index buys you staleness for nothing",
+    "The corpus is small — a few thousand rows scanned with a LIKE or the database's own built-in full-text index costs a millisecond or two and needs no separate deployment, no indexer and no reindex plan",
+    "Results must reflect a write that just happened, in the same request — the index is eventually consistent, typically seconds behind, and a user who edits a document and immediately searches for it will not find it",
+    "Search results are the source of truth for something that must be correct, such as billing or access control — an eventually consistent derived index is the wrong place to make an authoritative decision",
+    "Nobody will own it. A search cluster is a stateful system with its own capacity planning, upgrades, reindexes and failure modes; adding one to a team that cannot operate it makes availability worse, not search better"
+  ],
+  "tradeoffs": [
+    {
+      "option": "LIKE '%term%' in the database",
+      "pros": [
+        "Zero extra infrastructure and no synchronisation to get wrong",
+        "Always perfectly consistent, because it reads the live rows",
+        "Entirely adequate up to a few thousand rows"
+      ],
+      "cons": [
+        "Full scan on every query; cost grows linearly with the table and it never gets better",
+        "No stemming, no ranking, no relevance — substring matching is not searching",
+        "Competes for the transactional database's CPU and buffer pool, so a search box degrades unrelated queries"
+      ]
+    },
+    {
+      "option": "The database's built-in full-text index",
+      "pros": [
+        "A real inverted index with stemming and ranking, inside a system you already run and back up",
+        "Transactionally consistent with the rows it indexes — no sync lag and no reindex pipeline",
+        "No second cluster to operate, secure or pay for"
+      ],
+      "cons": [
+        "Analysis, ranking and language support are less capable and less tunable than a dedicated engine",
+        "Indexing work lands on the same machine as your writes, so heavy update rates cost you transactional throughput",
+        "Scales with the database rather than separately, so you cannot grow search capacity on its own"
+      ]
+    },
+    {
+      "option": "A dedicated search cluster fed from the database",
+      "pros": [
+        "Purpose-built analysis, relevance tuning, faceting and aggregations",
+        "Scales and fails independently of the transactional database",
+        "Query cost tracks the number of matching documents, not the corpus size"
+      ],
+      "cons": [
+        "A second copy of the data, eventually consistent with the source of truth — typically seconds behind, and unboundedly behind when the pipeline breaks",
+        "Reindexing is a planned operation: changing the analyser or mapping means rebuilding the whole index, usually into a new one behind an alias",
+        "Sharding splits by document, so every query fans out to every shard and merges — p99 is the slowest shard's latency, and adding shards adds tail risk",
+        "A whole stateful system to operate: capacity, upgrades, recovery, and a sync pipeline that can silently drift"
+      ]
+    }
+  ],
+  "keyNumbers": [
+    {
+      "label": "LIKE '%term%' over ~10M rows",
+      "value": "hundreds of ms to seconds — and linear in row count"
+    },
+    {
+      "label": "Inverted index query",
+      "value": "single-digit to tens of ms — proportional to matches, not corpus"
+    },
+    {
+      "label": "Index-to-database lag in a healthy pipeline",
+      "value": "seconds — never assume read-your-own-write"
+    },
+    {
+      "label": "IDF, the weight of a term",
+      "value": "~log(N / documents containing the term) — rarer terms count for more"
+    },
+    {
+      "label": "Stop words",
+      "value": "a few dozen commonest words are a third to a half of all tokens"
+    },
+    {
+      "label": "Query fan-out",
+      "value": "1 query -> all S shards, merged; latency is the slowest shard's"
+    }
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "mcq",
+      "question": "Why can a B-tree index not serve WHERE body LIKE '%solar%'?",
+      "options": [
+        "Text columns cannot be indexed at all",
+        "The index is ordered by the start of the value, so a pattern that may begin anywhere in the string gives no place to start the search — the database must examine every row",
+        "LIKE is a function call and functions disable indexes",
+        "The index is only used when the query returns few rows"
+      ],
+      "answerIndex": 1,
+      "explanation": "A B-tree is a sorted structure keyed on the value's prefix. 'solar%' can be answered by seeking to that prefix; '%solar%' cannot, because a match may start at any offset, so there is no range to seek to and the planner falls back to a scan. Note that the same query also gets the semantics wrong — it matches inside unrelated words, misses 'solars', and returns matches in no meaningful order — which is why the fix is an inverted index rather than a cleverer index on the same column."
+    },
+    {
+      "id": "q2",
+      "type": "architecture",
+      "question": "A seller edits a product title, sees it updated on the product page, then searches for the new title and gets nothing. Support escalates it as data loss. What is actually happening?",
+      "options": [
+        "The database write was rolled back",
+        "The search index is a separate system kept in sync from the database, so it is eventually consistent — the edit is in the source of truth but has not been indexed yet, typically a lag of seconds",
+        "The new title contains a stop word and was dropped",
+        "The search shards disagree and the query hit the wrong one"
+      ],
+      "answerIndex": 1,
+      "explanation": "The product page reads the database, which is immediately consistent; search reads a derived index fed by an indexing pipeline, which is not. Seconds of lag is normal and unbounded lag means the pipeline is broken, so this gap is worth monitoring explicitly. Two design consequences follow: never promise read-your-own-writes through search, and when a UI needs it, read the just-written document from the database by id and merge it into the results rather than waiting on the index."
+    },
+    {
+      "id": "q3",
+      "type": "architecture",
+      "question": "Your search index is sharded across 8 machines by document. A colleague proposes adding 8 more to cut p99 latency in half. What is wrong with that reasoning?",
+      "options": [
+        "Nothing — more shards always means less work per shard and lower latency",
+        "Sharding a search index is impossible; it must live on one machine",
+        "Every query fans out to all shards and the results are merged, so a query is only as fast as its slowest shard. Doubling shards halves the work each does but doubles the number of chances to hit a slow one, so p99 often gets worse, not better",
+        "Adding shards requires changing the analyser and reindexing"
+      ],
+      "answerIndex": 2,
+      "explanation": "A document-sharded index cannot route a query to one shard, because any shard might hold a matching document — so every query is a scatter-gather and its latency is a maximum, not an average. With more shards you take the maximum over more samples, so tail latency is pushed up even as per-shard work falls. More shards genuinely buys corpus capacity and throughput; for tail latency the levers are replicas (to spread load and route around a slow node), fewer shards with more memory each, and hedged requests."
+    }
+  ],
+  "related": [
+    "database",
+    "replication",
+    "sharding",
+    "message-queue",
+    "cap-theorem"
+  ]
+}

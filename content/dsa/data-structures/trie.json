@@ -1,0 +1,382 @@
+{
+  "id": "trie",
+  "kind": "data-structure",
+  "title": "Tries (Prefix Trees)",
+  "group": "Trees",
+  "level": 3,
+  "difficulty": "intermediate",
+  "estimatedMinutes": 35,
+  "summary": "A tree whose edges are characters, so words that begin the same way share the same path — making a lookup cost the length of the query rather than the size of the dictionary, and making 'what starts with this?' a walk rather than a scan.",
+  "prerequisites": [
+    "hashing",
+    "trees"
+  ],
+  "tags": [
+    "trie",
+    "prefix-tree",
+    "string",
+    "autocomplete",
+    "tree",
+    "level-3"
+  ],
+  "analogy": {
+    "beginner": "A paper dictionary with thumb tabs, taken to its logical conclusion. To find 'cartoon' you do not read every entry; you flip to the C tab, then within C to CA, then CAR. Each letter you know eliminates almost everything, and the work you did for 'car' is work you did not have to repeat for 'card', 'cargo' and 'carton' — they live behind the same tabs. A trie is a dictionary where every prefix has its own tab.",
+    "interview": "An m-ary tree in which the edge labels, not the nodes, carry the data: the string associated with a node is the concatenation of the edge labels on the path from the root to it. A boolean terminal flag on each node distinguishes a stored key from an internal prefix. Lookup, insert and delete are all Θ(L) in the key length L and independent of n, the number of stored keys; the subtree rooted at the node reached by a prefix is exactly the set of keys carrying that prefix, which makes prefix enumeration output-sensitive."
+  },
+  "intuition": "Start with the observation that makes the whole structure obvious: **in any real dictionary, the words are not independent.**\n\n`cat`, `car`, `card` — these three words are not three unrelated strings. They are one string, `ca`, with three different endings. A `HashSet<String>` stores them as three separate, fully-spelled-out keys and hashes each one from scratch. It has thrown away the relationship before it starts.\n\nA trie keeps it. Characters become edges, and words that begin the same way walk the same edges:\n\n```\n        (root)\n        /    \\\n       c      d\n       |      |\n       a      o\n      / \\     |\n     t•  r•   g•\n         |\n         d•\n\n• = terminal: a word ends here\n```\n\nFour words, and the letters `c` and `a` are stored **once**, not three times. Reading the picture: `cat`, `car`, `card`, `dog`.\n\nTwo consequences fall out, and they are the two reasons to use the structure.\n\n**First: lookup time stops depending on how much you have stored.** To check `card` you take four steps — one per character — and each step is a single child lookup. It costs exactly the same whether the trie holds four words or four million, because you never touch anything outside your own path. Compare that with scanning a list, where every extra word is extra work.\n\n**Second — and this is the one that actually justifies the structure — prefix queries become navigation instead of search.** Walk `c`, `a`, and stop. You are now standing on a node, and *everything reachable below it* is a word starting with `ca`. Not 'a filtered subset of the dictionary' — the subtree literally is the answer. Collecting `cat`, `car`, `card` costs time proportional to the answer, not to the dictionary.\n\nA `HashMap` cannot do that at any price. Hashing deliberately destroys the relationship between similar keys: `car` and `card` are designed to land in unrelated buckets, and there is no operation that recovers 'all keys beginning with ca' short of examining every key. That is the trade in one sentence: **a hash map answers 'is this exact key present?' faster; a trie answers a question the hash map cannot answer at all.**\n\nWhat you pay is space. A node per character per *distinct* prefix, each node carrying a child map. Shared prefixes claw a lot of that back — a dictionary of English words shares its first two or three characters heavily — but for a set of long, unrelated keys (UUIDs, hashes) nothing is shared and a trie is simply a larger, slower hash set.",
+  "problemFirst": {
+    "motivatingProblem": "A search box must suggest completions as the user types. The dictionary holds 500,000 words, and a suggestion has to appear before the next keystroke — under ~50 ms, on every keystroke.",
+    "bruteForce": {
+      "idea": "Keep the dictionary in a list. On each keystroke, scan every word and keep the ones that start with what has been typed so far.",
+      "code": [
+        "List<String> suggest(List<String> dictionary, String typed) {",
+        "    List<String> matches = new ArrayList<>();",
+        "    for (String word : dictionary) {          // all 500,000, every keystroke",
+        "        if (word.startsWith(typed)) {         // itself O(typed.length)",
+        "            matches.add(word);",
+        "        }",
+        "    }",
+        "    return matches;",
+        "}"
+      ],
+      "complexity": {
+        "time": "O(n · L) per keystroke — effectively O(total characters in the dictionary)",
+        "space": "O(1) beyond the dictionary"
+      },
+      "whySlow": "Every keystroke re-reads the entire dictionary. `startsWith` is not free either — it compares up to L characters — so the real cost is on the order of the total number of characters stored, roughly 4 million character comparisons for a 500,000-word list. And it is *the same* 4 million every time: typing `c`, then `ca`, then `car` scans the whole dictionary three times, even though each scan is strictly a subset of the previous one. Worse, the cost grows with the dictionary, which is exactly backwards — adding rare words should not slow down suggestions for common ones."
+    },
+    "observation": "Every word the scan rejects for the prefix `ca` was already rejected for the prefix `c`. The scan has no memory: it re-discovers that `dog` is irrelevant on every keystroke. And the words it accepts all begin with the same characters — it is comparing the same leading letters over and over, once per word.",
+    "leap": "Store the dictionary so that a shared prefix is stored once and can be walked once. Make each character an edge in a tree: after typing `c` you are on a node, and the next keystroke is a single step from there, not a fresh scan. Lookup then costs the length of what was typed — five steps for five characters — and is **completely independent of how many words the dictionary holds**. The candidate list is not computed at all; it is the subtree you are standing in.",
+    "optimizedSketch": [
+      "TrieNode node = root;",
+      "for (char c : typed.toCharArray()) {        // one step per typed character",
+      "    node = node.children.get(c);",
+      "    if (node == null) return List.of();      // nothing in the dictionary starts this way",
+      "}",
+      "// `node` now roots the subtree of every word beginning with `typed`.",
+      "List<String> matches = new ArrayList<>();",
+      "collect(node, typed, matches);               // cost proportional to the ANSWER, not the dictionary",
+      "return matches;"
+    ]
+  },
+  "howItWorks": [
+    "**The edges carry the characters, not the nodes** — a node has no letter of its own; it is *defined* by the path taken to reach it. The root therefore holds nothing, and the string at any node is the concatenation of the edge labels above it. Implementations usually stash the character in the child map's key rather than in the child.",
+    "**The terminal flag is not optional** — without a boolean marking 'a word ends here', a trie containing `card` would report `car` as present, because the path exists. The flag is the only thing separating a stored word from an internal waypoint. Storing a value there instead of a boolean turns the set into a map.",
+    "**Children: `HashMap<Character, TrieNode>` or `TrieNode[26]`** — the array is faster and simpler when the alphabet is small, fixed and dense (lowercase a–z), and wasteful when it is sparse or Unicode. The map costs a hash per step but adapts to any alphabet. Say which you chose and why; interviewers ask.",
+    "**insert(word)** — walk from the root, creating a node for any character that has no child yet, reusing the child when it exists. That reuse *is* the prefix sharing. Mark the final node terminal. Θ(L).",
+    "**search(word)** — walk the same path. Falling off the tree means absent; arriving at a node means the prefix exists, and the word is present only if that node is terminal. Θ(L), and you often know the answer long before L characters — a miss on the first character costs one step.",
+    "**startsWith(prefix)** — identical walk, but you do not check the terminal flag. If the walk survives, at least one word has that prefix, and the subtree below enumerates all of them via DFS in time proportional to the output.",
+    "**delete(word) is the fiddly one** — clear the terminal flag, then unlink nodes on the way back up only while they have no children and are not themselves terminal. Deleting `card` must leave `car` intact; deleting `car` when `card` exists must remove nothing but the flag.",
+    "**Space is a node per character per distinct prefix** — in the worst case Σ(length of every word) nodes, each carrying a child map. Compression fixes this when it matters: a radix tree (Patricia trie) collapses any chain of single-child nodes into one edge labelled with the whole substring, which is what routing tables and `etcd` actually use.",
+    "**Search with wildcards falls out naturally** — at a `.` you recurse into *every* child instead of one. That turns Θ(L) into a bounded backtracking search, and it is the basis of `word-search-ii`, regex prefix matching and spell-check within an edit distance."
+  ],
+  "patternRecognition": {
+    "signals": [
+      "The words **prefix**, **starts with**, **autocomplete**, **typeahead**, or **dictionary** in the statement",
+      "Many queries against **one fixed set of strings** — the build cost is amortised over the queries, which is what makes the structure pay",
+      "You must **search a grid or a stream against a whole word list at once** rather than one word at a time (word-search-ii, streaming stream-checker)",
+      "Queries with **wildcards** or 'match any single character' over a fixed dictionary",
+      "The brute force is 'loop over every word and call `startsWith`'",
+      "Longest common prefix, longest word built from other words, or replacing words by their shortest root"
+    ],
+    "antiSignals": [
+      "You only ever ask **'is this exact string present?'** → a `HashSet` is O(L) to hash plus O(1) to probe, uses far less memory and is one line of code. Do not build a trie for membership alone",
+      "The keys are **long and share nothing** (UUIDs, hashes, random tokens) → no prefixes are shared, so a trie is a bigger, slower hash set",
+      "You need **suffix** or **substring** matching, not prefix matching → a trie of suffixes, a suffix automaton, or Aho–Corasick, not a plain trie",
+      "You need keys in **sorted order with range queries on whole keys** → `TreeMap` is simpler; a trie gives lexicographic order only if you iterate children in sorted order, which a `HashMap` of children does not",
+      "The dictionary **changes constantly** and is queried rarely → you pay the full build cost to answer almost nothing"
+    ]
+  },
+  "visualizations": [
+    {
+      "id": "trie-build-search",
+      "title": "Build, search, and the prefix query a HashMap cannot answer",
+      "engine": "trieOps",
+      "input": {
+        "words": [
+          "cat",
+          "car",
+          "card",
+          "dog"
+        ],
+        "search": "car",
+        "prefix": "ca"
+      },
+      "code": [
+        "TrieNode root = new TrieNode();                               // the root holds no character",
+        "TrieNode node = root;                                         // --- insert(word) ---",
+        "for (char c : word.toCharArray())                             // an existing child is reused",
+        "    node = node.children.computeIfAbsent(c, x -> new TrieNode());  // a missing one is created",
+        "node.isWord = true;                                           // terminal: a word, not a prefix",
+        "",
+        "node = root;                                                  // --- search(word) ---",
+        "for (char c : word.toCharArray()) { node = node.children.get(c); if (node == null) break; }",
+        "boolean found = node != null && node.isWord;                  // present AND marked terminal",
+        "",
+        "node = root;                                                  // --- startsWith(prefix) ---",
+        "for (char c : prefix.toCharArray()) node = node.children.get(c);   // then collect everything below"
+      ]
+    }
+  ],
+  "implementations": [
+    {
+      "label": "Simple",
+      "language": "java",
+      "explanation": "The whole structure in one class. Notice how little there is: three public methods that differ by one line, and a node with two fields. `search` and `startsWith` are the *same walk* — they diverge only in whether the terminal flag matters, which is worth saying out loud because it is the clearest statement of what the flag is for.",
+      "code": [
+        "import java.util.HashMap;",
+        "import java.util.Map;",
+        "",
+        "public class Trie {",
+        "",
+        "    /** A node carries no character of its own — the path to it spells the string. */",
+        "    private static final class TrieNode {",
+        "        final Map<Character, TrieNode> children = new HashMap<>();",
+        "        boolean isWord = false;   // without this, \"car\" looks present once \"card\" is stored",
+        "    }",
+        "",
+        "    private final TrieNode root = new TrieNode();",
+        "",
+        "    /** O(L) in the word length, independent of how many words are stored. */",
+        "    public void insert(String word) {",
+        "        TrieNode node = root;",
+        "        for (char c : word.toCharArray()) {",
+        "            // computeIfAbsent IS the prefix sharing: an existing child is reused.",
+        "            node = node.children.computeIfAbsent(c, unused -> new TrieNode());",
+        "        }",
+        "        node.isWord = true;",
+        "    }",
+        "",
+        "    /** True only if the path exists AND a word ends there. O(L). */",
+        "    public boolean search(String word) {",
+        "        TrieNode node = walk(word);",
+        "        return node != null && node.isWord;",
+        "    }",
+        "",
+        "    /** True if the path exists at all — the flag is irrelevant here. O(L). */",
+        "    public boolean startsWith(String prefix) {",
+        "        return walk(prefix) != null;",
+        "    }",
+        "",
+        "    /** The node reached by spelling out `s`, or null if we fall off the tree. */",
+        "    private TrieNode walk(String s) {",
+        "        TrieNode node = root;",
+        "        for (char c : s.toCharArray()) {",
+        "            node = node.children.get(c);",
+        "            if (node == null) return null;   // a miss costs one step, not a scan",
+        "        }",
+        "        return node;",
+        "    }",
+        "}"
+      ]
+    },
+    {
+      "label": "Optimized",
+      "language": "java",
+      "explanation": "Two upgrades that matter in practice. First, a fixed `TrieNode[26]` array instead of a `HashMap`: for a known dense alphabet it removes a hash computation per character and is markedly faster and more compact — at the cost of 26 references per node even for a node with one child. Second, the operation the structure actually exists for: autocomplete, which walks to the prefix node and then DFS-collects the subtree. Note the complexity of `autocomplete` — O(P + size of the answer). The dictionary size appears nowhere.",
+      "code": [
+        "import java.util.ArrayList;",
+        "import java.util.List;",
+        "",
+        "public class Autocomplete {",
+        "",
+        "    private static final int ALPHABET = 26;",
+        "",
+        "    private static final class Node {",
+        "        final Node[] next = new Node[ALPHABET];   // dense alphabet ⇒ array beats HashMap",
+        "        boolean isWord;",
+        "    }",
+        "",
+        "    private final Node root = new Node();",
+        "",
+        "    public void insert(String word) {",
+        "        Node node = root;",
+        "        for (int i = 0; i < word.length(); i++) {",
+        "            int c = word.charAt(i) - 'a';",
+        "            if (node.next[c] == null) node.next[c] = new Node();",
+        "            node = node.next[c];",
+        "        }",
+        "        node.isWord = true;",
+        "    }",
+        "",
+        "    /**",
+        "     * Every stored word beginning with `prefix`, capped at `limit`.",
+        "     * O(P + output), where P = prefix.length(). The dictionary size never enters.",
+        "     */",
+        "    public List<String> autocomplete(String prefix, int limit) {",
+        "        List<String> out = new ArrayList<>();",
+        "        Node node = root;",
+        "        for (int i = 0; i < prefix.length(); i++) {",
+        "            int c = prefix.charAt(i) - 'a';",
+        "            node = node.next[c];",
+        "            if (node == null) return out;        // nothing starts this way — stop immediately",
+        "        }",
+        "        collect(node, new StringBuilder(prefix), out, limit);",
+        "        return out;",
+        "    }",
+        "",
+        "    /** DFS over the subtree. Children are visited a..z, so results come out sorted. */",
+        "    private void collect(Node node, StringBuilder path, List<String> out, int limit) {",
+        "        if (out.size() >= limit) return;",
+        "        if (node.isWord) out.add(path.toString());",
+        "        for (int c = 0; c < ALPHABET; c++) {",
+        "            Node child = node.next[c];",
+        "            if (child == null) continue;",
+        "            path.append((char) ('a' + c));",
+        "            collect(child, path, out, limit);",
+        "            path.deleteCharAt(path.length() - 1);   // undo — standard backtracking",
+        "        }",
+        "    }",
+        "}"
+      ]
+    }
+  ],
+  "complexity": {
+    "time": "insert O(L) · search O(L) · startsWith O(L) · delete O(L) · enumerate a prefix O(P + total characters in the output) — where L is the key length and n, the number of stored keys, appears nowhere",
+    "space": "O(total characters across all distinct prefixes) nodes — worst case Σ L over all words, best case far less when prefixes are heavily shared. Each node additionally costs a child map (a `HashMap` of ~48 bytes plus entries, or a fixed 26-reference array)",
+    "why": "Every operation is one walk down one path, and the path has exactly one step per character of the key — so the cost is the key's length and nothing else. This is the property worth stating precisely: **the dictionary size does not appear in the time bound**, because the walk never touches a node outside its own path. Adding a millionth word cannot slow down a lookup of `cat`. Contrast the scan, which is Θ(total characters stored) per query, and a `HashSet`, which is also O(L) — it must read the whole key to hash it — but with a much smaller constant and no per-character pointer chase. So a trie does not beat a hash map at membership; it wins by answering a different question. Prefix enumeration is Θ(P + output) because after P steps you are *standing on* the answer set: the subtree rooted there contains every key with that prefix and no others, so a DFS pays only for what it emits. No amount of hashing can produce that, because a hash function is designed to scatter similar keys, which destroys exactly the adjacency a prefix query needs. The price is memory and locality: a node per character means many small objects and a pointer dereference per step, so a trie's constant factor is worse than an array scan's even where its asymptotics are far better."
+  },
+  "commonMistakes": [
+    {
+      "mistake": "Omitting the terminal flag",
+      "fix": "Without it you cannot distinguish a stored word from a prefix of one: after inserting `card`, `search(\"car\")` returns true. The flag is the whole difference between 'this path exists' and 'a word ends here'."
+    },
+    {
+      "mistake": "Storing a character inside the node it labels",
+      "fix": "It is harmless but confuses the model, and it makes the root awkward — the root labels nothing. The character belongs on the *edge*, which in practice means it is the key in the parent's child map."
+    },
+    {
+      "mistake": "Checking `isWord` inside `startsWith`",
+      "fix": "`startsWith` asks whether the path exists, nothing more. Returning `node.isWord` there makes `startsWith(\"ca\")` false for a trie containing `cat` — a bug that passes any test using only whole words."
+    },
+    {
+      "mistake": "Using `TrieNode[26]` for input that is not lowercase a–z",
+      "fix": "Digits, uppercase, spaces or Unicode all index out of bounds or collide silently. Check the constraints; if the alphabet is not dense and small, use a `HashMap<Character, TrieNode>`."
+    },
+    {
+      "mistake": "Deleting a word by unlinking its whole path",
+      "fix": "Removing the path for `car` destroys `card`. Clear the terminal flag first, then unlink a node on the way back up only if it has no children and is not itself terminal."
+    },
+    {
+      "mistake": "Building a trie to answer exact-membership queries",
+      "fix": "A `HashSet<String>` is faster, smaller and one line. The trie earns its keep only when prefixes are queried, shared, or searched with wildcards — otherwise you have paid memory for a feature you never use."
+    },
+    {
+      "mistake": "Rebuilding the trie per query",
+      "fix": "The build is O(total characters); the queries are O(L). Amortising the build over many queries is the entire economic argument. Build once, outside the loop."
+    },
+    {
+      "mistake": "In grid/backtracking problems, keeping only the matched word and re-searching the trie from the root each step",
+      "fix": "Carry the current `TrieNode` along with the DFS position, so each step is one child lookup. Re-walking from the root turns Θ(1) per cell into Θ(L) and loses the pruning that made the trie worth using."
+    }
+  ],
+  "realWorldUses": [
+    "Search box autocomplete and IDE code completion — the canonical use, and the one the structure is named for.",
+    "IP routing tables: longest-prefix match on a binary trie over address bits, compressed into a Patricia/radix trie so a router can forward at line rate.",
+    "T9 and predictive keyboards, where each key maps to several letters and the trie is walked down multiple branches at once.",
+    "Spell checkers and fuzzy matching: walk the trie while allowing a bounded number of edits, pruning whole subtrees the moment the budget is exceeded.",
+    "Aho–Corasick multi-pattern matching — a trie of all patterns plus failure links — used by intrusion detection, content filters and `grep -F` with many patterns.",
+    "Key-value stores and filesystems: radix trees back `etcd`'s key space, Linux's page cache index, and prefix-scan APIs like S3's `list-objects --prefix`."
+  ],
+  "interviewNotes": [
+    "Lead with the complexity claim that defines the structure: 'lookup is O(length of the key) and does not depend on how many keys are stored.' That one sentence shows you know why a trie exists.",
+    "Expect 'why not a HashMap?' and answer it in both directions — a hash set is faster and smaller for exact membership, and cannot do prefix queries at all. An answer that only praises the trie sounds rehearsed.",
+    "Be explicit about the children representation and its trade: `TrieNode[26]` for a stated lowercase-only constraint, `HashMap<Character, TrieNode>` otherwise.",
+    "The standard escalation is: implement-trie → add `.` wildcard search (recurse into all children) → word-search-ii (DFS a grid against the trie). Recognising that they are the same structure under three questions is most of the value.",
+    "If memory is raised, name radix/Patricia compression — collapse single-child chains into one edge — rather than saying 'tries use a lot of memory' and stopping there.",
+    "Mention pruning in the backtracking version: the trie lets you abandon a grid path the instant no word has that prefix, which is the actual reason it beats searching for each word separately."
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "identify-pattern",
+      "question": "'Given 200,000 product names, return every name beginning with the text typed so far, on each keystroke.' Which structure?",
+      "options": [
+        "HashSet of the names",
+        "Trie",
+        "Min-heap keyed by name",
+        "Sorted array with binary search on the full name"
+      ],
+      "answerIndex": 1,
+      "explanation": "'Beginning with' plus 'a fixed set queried many times' is the trie signal. A HashSet answers exact membership only. (A sorted array is a genuine runner-up — binary search for the prefix range works — but it is O(log n · L) per query and awkward to update, and it cannot prune wildcard searches.)"
+    },
+    {
+      "id": "q2",
+      "type": "mcq",
+      "question": "A trie contains only the word `card`. What does `search(\"car\")` return, and why?",
+      "options": [
+        "True — the path c→a→r exists",
+        "False — the path exists but its final node is not marked terminal",
+        "True — every prefix of a stored word is stored",
+        "It throws, because `car` was never inserted"
+      ],
+      "answerIndex": 1,
+      "explanation": "The walk succeeds: the nodes for c, a and r all exist, because they are on the way to `card`. The terminal flag is the only thing that distinguishes 'a word ends here' from 'you are passing through', and it is false at `r`. Drop the flag from your implementation and this returns true — the classic trie bug."
+    },
+    {
+      "id": "q3",
+      "type": "complexity",
+      "question": "A trie holds 1,000,000 words. How long does `search(\"cat\")` take?",
+      "options": [
+        "O(1,000,000) — it may have to check every word",
+        "O(log 1,000,000) — the tree is balanced",
+        "Three steps — one per character; the number of stored words does not appear in the bound",
+        "O(3 × 1,000,000) — three characters against every word"
+      ],
+      "answerIndex": 2,
+      "explanation": "Θ(L) where L is the length of the query. The walk touches exactly one node per character and never looks at anything outside its own path, so the dictionary could hold ten words or ten million and the cost is identical. That independence from n is the defining property."
+    },
+    {
+      "id": "q4",
+      "type": "mcq",
+      "question": "Why can a HashMap not replace a trie for autocomplete?",
+      "options": [
+        "HashMap lookups are slower than trie lookups",
+        "HashMap cannot store strings as keys",
+        "Hashing scatters similar keys deliberately, so there is no way to find 'all keys starting with ca' without examining every key",
+        "HashMaps have no iteration order"
+      ],
+      "answerIndex": 2,
+      "explanation": "A good hash function sends `car` and `card` to unrelated buckets on purpose — that is what prevents clustering. The relationship a prefix query needs is destroyed at insert time, so the only way back is a full scan. Note the first option is false in the other direction: a hash lookup is typically *faster* than a trie walk for an exact key."
+    },
+    {
+      "id": "q5",
+      "type": "mcq",
+      "question": "What does a trie cost that a HashSet does not?",
+      "options": [
+        "Time: lookups grow with the number of stored words",
+        "Space: a node per character per distinct prefix, each with its own child map, plus a pointer dereference per character",
+        "Correctness: a trie can report false positives",
+        "Nothing — a trie strictly dominates a HashSet"
+      ],
+      "answerIndex": 1,
+      "explanation": "Memory and locality. Shared prefixes recover some of it, but a set of long unrelated keys shares nothing and a trie becomes a bigger, cache-hostile hash set. Radix (Patricia) compression, which collapses single-child chains into one labelled edge, is the standard fix."
+    },
+    {
+      "id": "q6",
+      "type": "mcq",
+      "question": "You extend the trie so that `.` matches any single character. What changes in the walk?",
+      "options": [
+        "Nothing — `.` is stored as an ordinary edge at insert time",
+        "At a `.` you recurse into every child instead of following one, turning the walk into a bounded backtracking search",
+        "You must rebuild the trie with the wildcard included",
+        "You fall back to scanning the word list"
+      ],
+      "answerIndex": 1,
+      "explanation": "Insertion is unchanged; only the query branches. A `.` splits the walk across all children and the search becomes DFS with backtracking — worst case O(26^d) for d wildcards, but heavily pruned in practice because a branch dies the moment no word carries that prefix. This is exactly the machinery word-search-ii uses over a grid."
+    }
+  ],
+  "practiceProblems": [
+    "implement-trie",
+    "longest-common-prefix",
+    "design-add-search-words",
+    "longest-word-in-dictionary",
+    "word-search-ii"
+  ],
+  "related": [
+    "trees",
+    "hashing",
+    "arrays",
+    "dfs"
+  ]
+}

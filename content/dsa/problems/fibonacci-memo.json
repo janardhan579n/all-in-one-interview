@@ -1,0 +1,120 @@
+{
+  "id": "fibonacci-memo",
+  "title": "Fibonacci with Memoisation",
+  "patternId": "recursion",
+  "difficulty": "beginner",
+  "tags": [
+    "recursion",
+    "memoisation",
+    "dynamic-programming"
+  ],
+  "statement": "F(0) = 0, F(1) = 1, and F(n) = F(n-1) + F(n-2) for n >= 2. Given n, return F(n). Write the direct recursion first, look at what it costs, then fix it.",
+  "realWorld": "Fibonacci itself is rarely the thing you need; its call tree is. The same recompute-the-same-subproblem shape turns up the first time anyone writes a recursive cost estimator, a naive 'in how many ways can this be assembled' counter, or a dependency resolver that walks a DAG as if it were a tree. Fibonacci is the smallest program in which the problem is visible in full, which is why every dynamic-programming course begins here — this file is the origin story for coin-change, climbing-stairs, house-robber and everything after them.",
+  "examples": [
+    {
+      "input": "n = 5",
+      "output": "5",
+      "explanation": "The sequence is 0,1,1,2,3,5. Worth counting the naive call tree by hand: fib(5) makes 15 calls covering only 6 distinct inputs. fib(3) is evaluated twice, fib(2) three times, fib(1) five times and fib(0) three times — and each of those extra fib(3) and fib(2) evaluations drags its own subtree along with it."
+    },
+    {
+      "input": "n = 10",
+      "output": "55",
+      "explanation": "The naive version makes 177 calls for 11 distinct inputs. Memoised, it makes 11 — one per distinct argument, plus lookups. The ratio is already 16x at n = 10 and it is only getting worse, which is the point of looking at a small case first."
+    },
+    {
+      "input": "n = 50",
+      "output": "12586269025",
+      "explanation": "About 2.5 x 10^10 naive calls: minutes of CPU for a number a human could compute on paper in a few minutes of addition. Memoised, 50 additions and it returns instantly. Note also that the answer exceeds Integer.MAX_VALUE, so the return type has to be long."
+    }
+  ],
+  "constraints": [
+    "0 <= n <= 90 — F(91) overflows a signed 64-bit long",
+    "F(47) already exceeds Integer.MAX_VALUE, so int is not a safe return type",
+    "The recursion depth is n, which matters once n gets into the tens of thousands"
+  ],
+  "bruteForce": {
+    "idea": "Write the definition down as code. Two base cases, one recursive line.",
+    "code": [
+      "public static long fib(int n) {",
+      "    if (n < 2) return n;                 // F(0) = 0 and F(1) = 1, two different values",
+      "    return fib(n - 1) + fib(n - 2);",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(phi^n), roughly O(1.618^n)",
+      "space": "O(n) of call stack"
+    },
+    "whySlow": "Look at what the call tree actually contains. fib(5) calls fib(4) and fib(3); fib(4) then calls fib(3) all over again — and that second fib(3) re-expands its entire subtree from scratch, having no idea the first one ever happened. For n = 5 that is 15 calls covering 6 distinct inputs, with fib(1) alone evaluated 5 separate times. For n = 50 it is about 2.5 x 10^10 calls covering 51 distinct inputs. The waste is not that the numbers get large: it is that fewer than n different questions are ever asked, and the program keeps asking them, because the answer to each one is discarded the instant its stack frame returns."
+  },
+  "patternIdentification": "Two signals have to appear together. First, the recursion branches — one call makes more than one subcall. Second, the branches overlap — the same argument turns up in different branches. Branching alone is harmless: merge sort branches and never repeats a subproblem, which is why it is n log n and not exponential. Overlap is the tell, and the fix never changes: give the function a memory. Write each answer down the first time it is computed and look it up ever after, and the running time collapses from 'number of paths through the tree' to 'number of distinct arguments'. That single change is what dynamic programming is. Every DP problem you will meet afterwards is this same observation applied to a state more complicated than one integer.",
+  "optimized": {
+    "idea": "Cache each answer the first time it is computed. Top-down, the code barely changes: check the table, compute on a miss, store before returning. Then notice that the table is only ever read at n-1 and n-2, which means the whole array is unnecessary — bottom-up, two variables suffice, and the recursion depth disappears with it.",
+    "code": [
+      "public static long fib(int n) {",
+      "    long[] memo = new long[n + 1];",
+      "    Arrays.fill(memo, -1);        // -1 means 'not computed'; 0 is a real answer, F(0)",
+      "    return fib(n, memo);",
+      "}",
+      "",
+      "private static long fib(int n, long[] memo) {",
+      "    if (n < 2) return n;",
+      "    if (memo[n] >= 0) return memo[n];          // answered before — do not rebuild the subtree",
+      "    memo[n] = fib(n - 1, memo) + fib(n - 2, memo);",
+      "    return memo[n];",
+      "}",
+      "",
+      "/** Bottom-up in O(1) space: nothing but the last two answers is ever needed again. */",
+      "public static long fibIterative(int n) {",
+      "    if (n < 2) return n;",
+      "    long previous = 0;",
+      "    long current = 1;",
+      "    for (int i = 2; i <= n; i++) {",
+      "        long next = previous + current;",
+      "        previous = current;",
+      "        current = next;",
+      "    }",
+      "    return current;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(n) for the memoised version (table plus stack), O(1) for the iterative one"
+    }
+  },
+  "visualization": {
+    "engine": "recursionTrace",
+    "input": {
+      "kind": "fib",
+      "n": 6
+    },
+    "code": [
+      "long fib(int n) {",
+      "    if (n < 2) {",
+      "        return n;",
+      "    }",
+      "    return fib(n - 1) + fib(n - 2);",
+      "}"
+    ]
+  },
+  "commonMistakes": [
+    "Leaving the memo at its default of 0 and treating 0 as 'not computed'. F(0) is 0, so that entry is recomputed on every lookup — and in a real DP table any legitimate zero has the same problem. The symptom is code that is correct but mysteriously no faster than the naive version; use -1, a Long[] of nulls, or a separate 'computed' flag.",
+    "Returning int. F(47) = 2971215073 exceeds Integer.MAX_VALUE, so the result wraps silently to -1323752223 — the function looks perfect up to n = 46 and then returns a negative Fibonacci number with no exception and no warning.",
+    "Memoising the time but not the depth. A top-down memo on n = 10^5 does only O(n) work and still pushes 10^5 stack frames, so it dies with a StackOverflowError on a problem whose bottom-up form needs two variables. Memoisation removes the repeated work, not the recursion."
+  ],
+  "similar": [
+    "climbing-stairs",
+    "coin-change",
+    "house-robber",
+    "power-function",
+    "tower-of-hanoi"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 509,
+      "slug": "fibonacci-number",
+      "title": "Fibonacci Number",
+      "url": "https://leetcode.com/problems/fibonacci-number/",
+      "premium": false
+    }
+  }
+}

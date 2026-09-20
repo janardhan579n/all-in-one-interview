@@ -1,0 +1,338 @@
+[
+  {
+    "id": "pr-01",
+    "prompt": "Find the longest substring containing at most K distinct characters.",
+    "options": [
+      "sliding-window",
+      "binary-search",
+      "dfs",
+      "dynamic-programming-basics"
+    ],
+    "answer": "sliding-window",
+    "signals": [
+      "substring (contiguous)",
+      "longest",
+      "a constraint that can be violated then repaired"
+    ],
+    "explanation": "Contiguity plus an optimum plus a repairable constraint is the variable-size sliding window. Keep a frequency map inside the window and shrink while it has too many distinct keys."
+  },
+  {
+    "id": "pr-02",
+    "prompt": "Given a sorted array, find two numbers adding to a target using O(1) extra space.",
+    "options": [
+      "two-pointers",
+      "hashing",
+      "sliding-window",
+      "binary-search"
+    ],
+    "answer": "two-pointers",
+    "signals": [
+      "sorted input",
+      "a pair",
+      "O(1) space required"
+    ],
+    "explanation": "Sorted plus a pair suggests converging pointers; the O(1) space requirement rules out the HashMap solution explicitly."
+  },
+  {
+    "id": "pr-03",
+    "prompt": "Given an unsorted array, return the indices of two numbers adding to a target.",
+    "options": [
+      "hashing",
+      "two-pointers",
+      "binary-search",
+      "sliding-window"
+    ],
+    "answer": "hashing",
+    "signals": [
+      "unsorted",
+      "original indices required",
+      "complement is computable"
+    ],
+    "explanation": "Sorting would destroy the indices. A map from value to index answers 'have I seen target - x?' in O(1)."
+  },
+  {
+    "id": "pr-04",
+    "prompt": "Determine whether a linked list has a cycle using constant extra space.",
+    "options": [
+      "fast-slow-pointer",
+      "hashing",
+      "dfs",
+      "two-pointers"
+    ],
+    "answer": "fast-slow-pointer",
+    "signals": [
+      "linked list",
+      "cycle",
+      "O(1) space"
+    ],
+    "explanation": "A HashSet solves it in O(n) space. The constant-space constraint points directly at Floyd's tortoise and hare."
+  },
+  {
+    "id": "pr-05",
+    "prompt": "Find the minimum eating speed so that all banana piles are finished within h hours.",
+    "options": [
+      "binary-search",
+      "dynamic-programming-basics",
+      "sliding-window",
+      "backtracking"
+    ],
+    "answer": "binary-search",
+    "signals": [
+      "minimum X such that a condition holds",
+      "feasibility is monotonic in X"
+    ],
+    "explanation": "No sorted array appears anywhere. The search space is the range of speeds, and canFinish(speed) flips from false to true exactly once."
+  },
+  {
+    "id": "pr-06",
+    "prompt": "Count the subarrays summing to k, where the array may contain negative numbers.",
+    "options": [
+      "prefix-sum",
+      "sliding-window",
+      "two-pointers",
+      "binary-search"
+    ],
+    "answer": "prefix-sum",
+    "signals": [
+      "subarray sum",
+      "negatives allowed",
+      "count rather than a single answer"
+    ],
+    "explanation": "Negatives break the sliding window's monotonicity. Prefix sums plus a HashMap of previously seen prefix values counts them in one pass."
+  },
+  {
+    "id": "pr-07",
+    "prompt": "Return the values of a binary tree grouped by level.",
+    "options": [
+      "bfs",
+      "dfs",
+      "backtracking",
+      "recursion"
+    ],
+    "answer": "bfs",
+    "signals": [
+      "level by level",
+      "tree"
+    ],
+    "explanation": "Level-order is breadth-first by definition. Freeze queue.size() before the inner loop so each iteration drains exactly one level."
+  },
+  {
+    "id": "pr-08",
+    "prompt": "Count the islands in a grid of land and water cells.",
+    "options": [
+      "dfs",
+      "bfs",
+      "dynamic-programming-basics",
+      "prefix-sum"
+    ],
+    "answer": "dfs",
+    "signals": [
+      "grid",
+      "connected regions",
+      "count the groups"
+    ],
+    "explanation": "Connected components. Flood fill from each unvisited land cell; BFS works equally well, but DFS is shorter to write."
+  },
+  {
+    "id": "pr-09",
+    "prompt": "Given course prerequisites, decide whether all courses can be completed.",
+    "options": [
+      "dfs",
+      "bfs",
+      "dynamic-programming-basics",
+      "two-pointers"
+    ],
+    "answer": "dfs",
+    "signals": [
+      "dependencies",
+      "is this possible",
+      "implicit directed graph"
+    ],
+    "explanation": "Cycle detection on a directed graph. DFS with three-colour marking or Kahn's in-degree algorithm, both O(V+E)."
+  },
+  {
+    "id": "pr-10",
+    "prompt": "Return every subset of a set of 10 distinct numbers.",
+    "options": [
+      "backtracking",
+      "dynamic-programming-basics",
+      "bfs",
+      "hashing"
+    ],
+    "answer": "backtracking",
+    "signals": [
+      "all subsets",
+      "small n",
+      "enumerate rather than count"
+    ],
+    "explanation": "'Find all' means the output itself is exponential. Choose, explore, unchoose — and remember to store a copy, not the live list."
+  },
+  {
+    "id": "pr-11",
+    "prompt": "Count the distinct ways to climb n stairs taking 1 or 2 steps at a time.",
+    "options": [
+      "dynamic-programming-basics",
+      "backtracking",
+      "bfs",
+      "binary-search"
+    ],
+    "answer": "dynamic-programming-basics",
+    "signals": [
+      "how many ways",
+      "count only, not the list",
+      "overlapping subproblems"
+    ],
+    "explanation": "Backtracking would enumerate exponentially many paths just to count them. ways(n) = ways(n-1) + ways(n-2) memoises to O(n)."
+  },
+  {
+    "id": "pr-12",
+    "prompt": "Check whether a string of brackets is correctly nested.",
+    "options": [
+      "stack",
+      "queue",
+      "hashing",
+      "two-pointers"
+    ],
+    "answer": "stack",
+    "signals": [
+      "matching",
+      "nesting",
+      "most recent unmatched"
+    ],
+    "explanation": "A closer can only match the most recent unmatched opener — LIFO. Remember both failure modes: popping empty, and leftovers at the end."
+  },
+  {
+    "id": "pr-13",
+    "prompt": "For each day, find how many days until a warmer temperature.",
+    "options": [
+      "stack",
+      "sliding-window",
+      "binary-search",
+      "prefix-sum"
+    ],
+    "answer": "stack",
+    "signals": [
+      "next greater element",
+      "most recent unresolved items resolve first"
+    ],
+    "explanation": "Monotonic stack of indices awaiting a warmer day. Each index is pushed and popped once, giving O(n) despite the nested while loop."
+  },
+  {
+    "id": "pr-14",
+    "prompt": "Find the maximum sum of any 5 consecutive elements in a large array.",
+    "options": [
+      "sliding-window",
+      "prefix-sum",
+      "two-pointers",
+      "dynamic-programming-basics"
+    ],
+    "answer": "sliding-window",
+    "signals": [
+      "consecutive",
+      "fixed size",
+      "maximum"
+    ],
+    "explanation": "Fixed-size window: add the entering element, subtract the leaving one. O(n) regardless of the window width."
+  },
+  {
+    "id": "pr-15",
+    "prompt": "Find the middle node of a singly linked list in a single pass.",
+    "options": [
+      "fast-slow-pointer",
+      "two-pointers",
+      "hashing",
+      "stack"
+    ],
+    "answer": "fast-slow-pointer",
+    "signals": [
+      "linked list",
+      "middle",
+      "one pass"
+    ],
+    "explanation": "When the fast pointer has moved 2k steps, the slow pointer has moved k. No length count needed."
+  },
+  {
+    "id": "pr-16",
+    "prompt": "Answer 100,000 queries of the form 'sum of elements between index i and j' on a static array.",
+    "options": [
+      "prefix-sum",
+      "sliding-window",
+      "binary-search",
+      "hashing"
+    ],
+    "answer": "prefix-sum",
+    "signals": [
+      "repeated range queries",
+      "static array",
+      "sum"
+    ],
+    "explanation": "O(n) preprocessing makes every query a single subtraction. Note the caveat: if the array were mutable you would need a Fenwick tree."
+  },
+  {
+    "id": "pr-17",
+    "prompt": "Find the shortest path through a maze grid where every move costs the same.",
+    "options": [
+      "bfs",
+      "dfs",
+      "dynamic-programming-basics",
+      "backtracking"
+    ],
+    "answer": "bfs",
+    "signals": [
+      "shortest",
+      "unweighted",
+      "grid"
+    ],
+    "explanation": "Uniform cost plus shortest path is BFS. DFS finds a path but offers no guarantee that it is the shortest."
+  },
+  {
+    "id": "pr-18",
+    "prompt": "Group words that are anagrams of one another.",
+    "options": [
+      "hashing",
+      "sliding-window",
+      "two-pointers",
+      "backtracking"
+    ],
+    "answer": "hashing",
+    "signals": [
+      "group by a shared property",
+      "compare many against many"
+    ],
+    "explanation": "Derive a canonical key per word — sorted letters, or a 26-length count — and bucket by it in a map. O(n·k) beats pairwise O(n²·k)."
+  },
+  {
+    "id": "pr-19",
+    "prompt": "Find the fewest coins needed to make an amount, with denominations [1,3,4].",
+    "options": [
+      "dynamic-programming-basics",
+      "backtracking",
+      "binary-search",
+      "two-pointers"
+    ],
+    "answer": "dynamic-programming-basics",
+    "signals": [
+      "minimum",
+      "compounding choices",
+      "greedy provably fails here"
+    ],
+    "explanation": "Greedy gives 4+1+1 for amount 6; the optimum is 3+3. Overlapping subproblems plus an optimum means unbounded-knapsack DP."
+  },
+  {
+    "id": "pr-20",
+    "prompt": "Find all unique triplets in an array that sum to zero.",
+    "options": [
+      "two-pointers",
+      "hashing",
+      "backtracking",
+      "sliding-window"
+    ],
+    "answer": "two-pointers",
+    "signals": [
+      "triplet",
+      "values not indices, so sorting is allowed",
+      "duplicates must be suppressed"
+    ],
+    "explanation": "Sort, fix an anchor, two-point the suffix. Sorting also makes duplicates adjacent, which is how the deduplication requirement is met."
+  }
+]

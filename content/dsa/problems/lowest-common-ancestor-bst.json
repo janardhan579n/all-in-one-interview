@@ -1,0 +1,145 @@
+{
+  "id": "lowest-common-ancestor-bst",
+  "title": "Lowest Common Ancestor of a BST",
+  "patternId": "trees",
+  "difficulty": "intermediate",
+  "tags": [
+    "tree",
+    "bst",
+    "binary-search"
+  ],
+  "statement": "Given a binary search tree and two nodes p and q that are both present in it, return their lowest common ancestor: the deepest node that has both p and q somewhere in its subtree. A node is allowed to be its own ancestor.",
+  "realWorld": "The LCA of two keys in an index is the root of the smallest subtree containing both, which is where a range scan between them should start — descending from the real root would re-walk everything above it. In any hierarchy stored as a search tree (a path namespace, a numbered org chart, a nested-set category table) it is 'the nearest enclosing node that contains both of these'.",
+  "examples": [
+    {
+      "input": "root = [6,2,8,0,4,7,9,null,null,3,5], p = 2, q = 8",
+      "output": "6",
+      "explanation": "Level-order notation: values level by level, left to right, null for a missing child. So the tree is 6 with children 2 and 8; 2 has children 0 and 4; 4 has children 3 and 5; 8 has children 7 and 9. Here 2 < 6 < 8, so the two targets sit on opposite sides of the root — the root is the deepest node that still has both beneath it."
+    },
+    {
+      "input": "root = [6,2,8,0,4,7,9,null,null,3,5], p = 2, q = 4",
+      "output": "2",
+      "explanation": "4 lies inside 2's right subtree, so 2 is its own ancestor and the answer. This is the case most implementations get wrong: the descent must stop at the node whose value equals one of the targets, not step past it."
+    },
+    {
+      "input": "root = [6,2,8,0,4,7,9,null,null,3,5], p = 3, q = 5",
+      "output": "4",
+      "explanation": "Both targets are below 6 (go left) and both above 2 (go right), and at 4 they split because 3 < 4 < 5. Three comparisons for a tree of eleven nodes, and seven of those nodes were never examined at all."
+    }
+  ],
+  "constraints": [
+    "2 <= number of nodes <= 10^5",
+    "All node values are unique",
+    "p and q are different nodes and both exist in the tree"
+  ],
+  "bruteForce": {
+    "idea": "Ignore the ordering and solve it as a general binary tree. Search both subtrees for p and q; if they come back from different sides, this node is the meeting point, otherwise pass up whichever side found something.",
+    "code": [
+      "public static TreeNode lca(TreeNode node, TreeNode p, TreeNode q) {",
+      "    if (node == null || node == p || node == q) return node;",
+      "    TreeNode left  = lca(node.left,  p, q);",
+      "    TreeNode right = lca(node.right, p, q);",
+      "    if (left != null && right != null) return node;   // they split here",
+      "    return left != null ? left : right;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(h)"
+    },
+    "whySlow": "It searches both subtrees at every node, including the one the ordering has already ruled out. Standing at 6 with targets 3 and 5, a single comparison tells you both are smaller and therefore both are to the left — and this version walks into 8, 7 and 9 anyway, asking a question the tree already answered. In a million-node index, finding the LCA of two neighbouring keys touches all million nodes when twenty comparisons would do. The wasted work is every subtree that could have been discarded by a comparison and was instead searched."
+  },
+  "patternIdentification": "In an ordered structure a comparison is a decision, not a test: it does not merely check a value, it eliminates an entire region. So whenever you are locating something in something sorted, the answer is a descent rather than a search — you walk down, never back up, and never look at both sides. That is binary search with pointers instead of indices, and it is the reason every BST operation is O(h). The complement is just as important: on a plain binary tree there is no ordering to exploit, so you genuinely must search both subtrees and combine the results on the way back up, which is the O(n) version above. Recognising which of the two you are in is the whole question here.",
+  "optimized": {
+    "idea": "Walk down from the root. If both targets are smaller than the current node, the answer is entirely to the left; if both are larger, entirely to the right. The first node where that stops being true is the node where the two paths diverge — or a node equal to one of the targets, which is the same thing — and that is the LCA.",
+    "code": [
+      "public static TreeNode lowestCommonAncestor(TreeNode root, TreeNode p, TreeNode q) {",
+      "    TreeNode node = root;",
+      "    while (node != null) {",
+      "        if (p.val < node.val && q.val < node.val) {",
+      "            node = node.left;",
+      "        } else if (p.val > node.val && q.val > node.val) {",
+      "            node = node.right;",
+      "        } else {",
+      "            return node;   // they split here, or this node IS one of them — either way, done",
+      "        }",
+      "    }",
+      "    return null;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(h) — O(log n) for a balanced tree, O(n) only if it has degenerated into a chain",
+      "space": "O(1) — the descent needs no stack at all"
+    }
+  },
+  "visualization": {
+    "engine": "bstOps",
+    "input": {
+      "tree": {
+        "value": 6,
+        "left": {
+          "value": 2,
+          "left": {
+            "value": 0
+          },
+          "right": {
+            "value": 4,
+            "left": {
+              "value": 3
+            },
+            "right": {
+              "value": 5
+            }
+          }
+        },
+        "right": {
+          "value": 8,
+          "left": {
+            "value": 7
+          },
+          "right": {
+            "value": 9
+          }
+        }
+      },
+      "operations": [
+        {
+          "op": "search",
+          "value": 3
+        },
+        {
+          "op": "search",
+          "value": 5
+        }
+      ]
+    },
+    "code": [
+      "TreeNode lca(TreeNode node, TreeNode p, TreeNode q) {",
+      "    if (p.val < node.val && q.val < node.val) return lca(node.left, p, q);",
+      "    if (p.val > node.val && q.val > node.val) return lca(node.right, p, q);",
+      "    return node;",
+      "}"
+    ]
+  },
+  "commonMistakes": [
+    "Forgetting that a node may be its own ancestor, and only returning when the targets are on strictly opposite sides. With p = 2 and q = 4 the loop reaches 2 and then tries to keep descending, so the answer comes back one level too deep or as null whenever one target is an ancestor of the other.",
+    "Using non-strict comparisons on one side only, such as `p.val <= node.val && q.val <= node.val`. When one target equals the current node the descent steps past it into the subtree that no longer contains it, and the returned node is not an ancestor of both — the symptom is a wrong answer confined to the cases where p or q sits on the path.",
+    "Assuming p and q are present without checking, in a variant that does not guarantee it. The descent always terminates on some node, so the function confidently returns an 'ancestor' of a value that is not in the tree; when presence is not guaranteed you have to search for both first, and the symptom otherwise is a plausible node returned for a missing key."
+  ],
+  "similar": [
+    "validate-bst",
+    "kth-smallest-in-bst",
+    "binary-search-basic",
+    "binary-tree-inorder-traversal",
+    "max-depth-binary-tree"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 235,
+      "slug": "lowest-common-ancestor-of-a-binary-search-tree",
+      "title": "Lowest Common Ancestor of a Binary Search Tree",
+      "url": "https://leetcode.com/problems/lowest-common-ancestor-of-a-binary-search-tree/",
+      "premium": false
+    }
+  }
+}

@@ -1,0 +1,259 @@
+{
+  "id": "proxy",
+  "title": "Forward and Reverse Proxies",
+  "group": "Foundations",
+  "level": 1,
+  "estimatedMinutes": 22,
+  "summary": "A middleman that speaks for one side of a connection. A forward proxy acts for the client; a reverse proxy acts for the server. Same machinery, opposite loyalty — and that single word decides everything else about it.",
+  "analogy": "A receptionist and a personal assistant do the same job — take the call, decide where it goes — but they work for different people. Your assistant screens what you send out; the company's receptionist screens what comes in and never tells callers which floor you sit on. Either way there is now one more person who has to be at their desk, who has their own idea of how long to hold a call before hanging up, and who can quietly ruin your day by getting a rule slightly wrong.",
+  "explanation": {
+    "beginner": "A proxy is a server that sits in the middle of a connection and passes traffic through, usually changing something on the way. Which side it belongs to is the whole distinction. A forward proxy is configured by the client: every machine in an office sends its outbound traffic through it, so the company can block sites, log usage, or present one shared address to the outside world. A reverse proxy is deployed by the service: the outside world thinks it is the website, and behind it sit the real application servers, which the caller never sees or addresses directly.",
+    "interview": "Both terminate one connection and open another; the difference is who configured them and who they represent. A forward proxy is the client's agent — egress control, allowlists, content filtering, shared NAT-style egress, and audit logging. A reverse proxy is the origin's agent — TLS termination, virtual hosting and path- or header-based routing, response caching, compression, request buffering, header rewriting, connection multiplexing onto a small pool of upstream sockets, and hiding origin topology. A load balancer is a reverse proxy with a distribution policy: at L4 it forwards TCP segments and knows only address and port; at L7 it parses HTTP and can route on path, host, cookie or header, at the cost of terminating TLS and holding the whole request. The failure modes to name are buffering changing perceived timeouts (a slow upstream looks fine until the proxy's own read timeout fires), X-Forwarded-For handling that either lies or gets spoofed, and the proxy becoming a single point of failure with its own connection and file-descriptor limits."
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "client",
+        "label": "Client",
+        "type": "client",
+        "x": 80,
+        "y": 290,
+        "note": "Knows about the forward proxy — it is configured on the machine. Does not know the reverse proxy is a proxy at all."
+      },
+      {
+        "id": "fwd",
+        "label": "Forward proxy",
+        "type": "proxy",
+        "x": 330,
+        "y": 290,
+        "note": "Works for the client. Filters and logs what leaves the network; the destination sees the proxy's address, not the user's."
+      },
+      {
+        "id": "rev",
+        "label": "Reverse proxy",
+        "type": "proxy",
+        "x": 600,
+        "y": 260,
+        "note": "Works for the origin. Terminates TLS, routes by path or host, caches, compresses, and keeps the backends unaddressable from outside.",
+        "why": {
+          "without": [
+            "Every app server terminates its own TLS and needs its own certificate and renewal",
+            "Routing rules, gzip, request size limits and header handling are re-implemented in every service",
+            "Backend addresses are public, so a mistake in one service is directly reachable from the internet"
+          ],
+          "with": [
+            "One place terminates TLS and holds the certificate; backends speak plain HTTP inside the network",
+            "Routing, caching and compression become configuration instead of application code",
+            "Backends are reachable only through the proxy, so you have one front door to defend and to instrument"
+          ],
+          "conclusion": "You trade one more hop and one more thing to configure for a single place to enforce everything that is not business logic."
+        }
+      },
+      {
+        "id": "cache",
+        "label": "Response cache",
+        "type": "cache",
+        "x": 600,
+        "y": 500,
+        "note": "Cacheable responses never reach an app server. This is why a reverse proxy absorbs spikes an app tier could not."
+      },
+      {
+        "id": "app1",
+        "label": "App server /api",
+        "type": "server",
+        "x": 880,
+        "y": 150,
+        "note": "Private address. Speaks plain HTTP and trusts the forwarded-for header only because the proxy sets it."
+      },
+      {
+        "id": "app2",
+        "label": "App server /static",
+        "type": "server",
+        "x": 880,
+        "y": 400,
+        "note": "A second upstream chosen by path. The client used one hostname for both."
+      }
+    ],
+    "edges": [
+      {
+        "from": "client",
+        "to": "fwd",
+        "label": "1. all egress"
+      },
+      {
+        "from": "fwd",
+        "to": "rev",
+        "label": "2. out to the internet (TLS)"
+      },
+      {
+        "from": "rev",
+        "to": "cache",
+        "label": "3. hit?",
+        "dashed": true
+      },
+      {
+        "from": "rev",
+        "to": "app1",
+        "label": "4a. route /api"
+      },
+      {
+        "from": "rev",
+        "to": "app2",
+        "label": "4b. route /static"
+      }
+    ]
+  },
+  "why": {
+    "without": [
+      "Each app server terminates TLS itself: every service needs a certificate, a renewal process, and a correct cipher configuration, and one service being misconfigured is a public vulnerability",
+      "Cross-cutting concerns — compression, request size caps, slow-client protection, access logging, header normalisation — get written three times in three languages and disagree in three ways",
+      "Application processes spend time on byte-shuffling work they are bad at: a slow client uploading over a phone connection holds an expensive worker thread for seconds",
+      "Backend hosts are directly addressable, so the blast radius of any one of them being wrong is the whole internet"
+    ],
+    "with": [
+      "One certificate, one TLS configuration, one place to audit; internal hops can stay plain HTTP",
+      "Routing by host and path is configuration, so adding a service is a config change rather than a deployment of every client",
+      "The proxy buffers slow clients and multiplexes many inbound connections onto a small upstream pool, so app workers are only busy while actually computing",
+      "Cacheable responses are served without waking an app server at all"
+    ],
+    "conclusion": "A reverse proxy is how you stop app servers doing work that is not their job. You pay for it with an extra hop, an extra configuration surface, and an extra place that can be the reason everything is down."
+  },
+  "whenToUse": [
+    "More than one service or version needs to live behind a single hostname, routed by path, host or header",
+    "You want TLS terminated, certificates renewed and ciphers configured in exactly one place",
+    "Responses are cacheable or compressible and you would rather not spend app CPU on it",
+    "Backends must not be directly reachable from the internet, and you want one front door to rate-limit, log and instrument",
+    "Clients are slow or unreliable and you want their slowness absorbed before it occupies an application worker"
+  ],
+  "whenNotToUse": [
+    "A single service, a single hostname, no caching and no TLS work worth centralising — you have added a hop, a config file and a component that can fail, and bought routing you are not using",
+    "Latency budgets so tight that an extra hop matters: the proxy costs roughly a millisecond in the same availability zone, and far more if you place it across a region boundary without thinking",
+    "You deploy exactly one instance of it in front of everything and never plan its own redundancy — you have converted several independent failures into one total one",
+    "Protocols the proxy does not understand at L7. Putting an HTTP-parsing proxy in front of a raw TCP or non-HTTP protocol either fails outright or silently mangles it; that case wants L4 pass-through instead",
+    "You need the origin to see the true client IP and neither you nor the proxy handles forwarded-for headers carefully — you will either lose the real address entirely or trust one a caller can forge"
+  ],
+  "tradeoffs": [
+    {
+      "option": "Forward proxy (client-side)",
+      "pros": [
+        "One enforcement point for everything leaving a network: allowlists, content filtering, malware scanning, audit logs",
+        "Destinations see one egress identity instead of every internal machine",
+        "Can cache repeated outbound fetches shared across many users"
+      ],
+      "cons": [
+        "Must be configured on every client, and clients can often be reconfigured around it",
+        "Sees plaintext only if it breaks TLS, which means installing a trusted certificate on every machine and accepting that you are now a man in the middle",
+        "When it is down, nothing in the network can reach the outside world"
+      ]
+    },
+    {
+      "option": "Reverse proxy at L7 (HTTP-aware)",
+      "pros": [
+        "Routes on path, host, header or cookie; enables canaries, blue/green and per-route rules",
+        "Can cache, compress, rewrite headers and enforce request limits without touching application code",
+        "Terminates TLS once and multiplexes onto a small pool of keep-alive connections upstream"
+      ],
+      "cons": [
+        "Must decrypt and parse every request, so it costs CPU and roughly a millisecond per hop",
+        "Buffering changes timeout behaviour: the client sees a healthy connection while the proxy waits on a stalled upstream until its own read timeout fires, so client-side and proxy-side timeouts must be reasoned about together",
+        "A rich configuration language is a rich place to make a mistake that is invisible until traffic hits it"
+      ]
+    },
+    {
+      "option": "L4 load balancing (TCP pass-through)",
+      "pros": [
+        "Very low overhead and very high throughput; forwards segments without parsing them",
+        "Works for any TCP protocol, not just HTTP",
+        "TLS can pass through untouched, so the origin keeps the end-to-end encrypted session"
+      ],
+      "cons": [
+        "Knows only address and port, so no path routing, no header-based rules, no response caching",
+        "Health checks can only tell whether the port accepts a connection, not whether the application behind it is actually serving",
+        "Distribution is per connection, so one long-lived connection carrying heavy traffic cannot be rebalanced"
+      ]
+    },
+    {
+      "option": "No proxy — the app server faces the internet directly",
+      "pros": [
+        "One fewer hop, one fewer component, one fewer configuration surface",
+        "Nothing between you and the client to misinterpret a header or buffer a response",
+        "Perfectly reasonable for a small internal service or a single-instance system"
+      ],
+      "cons": [
+        "TLS, compression, request limits and slow-client handling become the application's problem, in every service",
+        "Backend addresses are public and each one is its own attack surface",
+        "Adding a second service behind the same name later means retrofitting a proxy under live traffic"
+      ]
+    }
+  ],
+  "keyNumbers": [
+    {
+      "label": "Added latency per proxy hop, same availability zone",
+      "value": "~1 ms"
+    },
+    {
+      "label": "TLS handshake the proxy absorbs instead of the app",
+      "value": "1 network round trip on TLS 1.3, 2 on TLS 1.2"
+    },
+    {
+      "label": "Typical size reduction from gzip/brotli on text responses",
+      "value": "roughly 60–80%"
+    },
+    {
+      "label": "Concurrent connections a tuned single reverse proxy instance handles",
+      "value": "tens of thousands, bounded by file descriptors and memory before CPU"
+    },
+    {
+      "label": "Common default upstream read timeout in reverse proxies",
+      "value": "60 s — usually far longer than the client is willing to wait"
+    }
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "mcq",
+      "question": "What is the defining difference between a forward proxy and a reverse proxy?",
+      "options": [
+        "A forward proxy caches responses; a reverse proxy does not",
+        "A forward proxy acts on behalf of the client and is configured by the client; a reverse proxy acts on behalf of the server and is invisible to the client",
+        "A forward proxy works at L4 and a reverse proxy works at L7",
+        "A forward proxy runs inside the data centre; a reverse proxy runs at the network edge"
+      ],
+      "answerIndex": 1,
+      "explanation": "It is about loyalty, not location or feature set. Both terminate one connection and open another, and both can cache, log and filter. What differs is who deployed it and who it represents: a forward proxy is configured on client machines to control what leaves a network, while a reverse proxy is deployed by the service, answers on the service's behalf, and the client usually has no idea it exists."
+    },
+    {
+      "id": "q2",
+      "type": "architecture",
+      "question": "You put a reverse proxy in front of an API. One endpoint takes about 90 seconds. Clients now report that the request appears to hang and then returns a 504 rather than the old, slow-but-successful response. What is going on and what do you change?",
+      "options": [
+        "The proxy is caching the error; disable caching for that route",
+        "The proxy buffers the upstream response and enforces its own read timeout — commonly 60 s by default — so it gives up on the backend before the backend finishes; raise the proxy's upstream timeout for that route, or better, make the endpoint asynchronous",
+        "TLS termination adds enough overhead to push the request past its deadline; terminate TLS at the app instead",
+        "The client's own timeout fires and the proxy reports it as 504; increase the client timeout"
+      ],
+      "answerIndex": 1,
+      "explanation": "Adding a proxy inserts a second, independent timeout that nobody chose deliberately. The client is still waiting happily, but the proxy has decided the upstream is dead and synthesised a gateway error. The lesson generalises: every hop you add has its own timeout and its own buffering behaviour, and they must be reasoned about as a chain — outermost longest is not automatically right, but outermost shorter than the work it is fronting is always wrong. A 90-second synchronous request is also a design smell; returning a job id and polling or pushing the result removes the problem instead of tuning around it."
+    },
+    {
+      "id": "q3",
+      "type": "mcq",
+      "question": "Your team says 'we have a load balancer, so we don't need a reverse proxy'. What is the most accurate response?",
+      "options": [
+        "Correct — they solve different problems and both are needed",
+        "A load balancer is a reverse proxy with a distribution policy. If it is an L7 load balancer, it already is the reverse proxy; if it is L4 pass-through, it cannot route by path, cache or terminate TLS, so those jobs still need a home",
+        "Incorrect — a load balancer operates below the proxy and cannot terminate connections",
+        "Correct, because load balancers always terminate TLS and cache responses"
+      ],
+      "answerIndex": 1,
+      "explanation": "The categories overlap by design, and treating them as separate boxes is where the confusion starts. Every reverse proxy that fans out to more than one backend is doing load balancing; every L7 load balancer is doing reverse proxying. The question worth asking is not 'proxy or load balancer' but 'does this thing parse HTTP?' — because that is what determines whether path routing, header rules, response caching and application-aware health checks are available to you at all."
+    }
+  ],
+  "related": [
+    "load-balancer",
+    "api-gateway",
+    "http",
+    "cache",
+    "client-server"
+  ]
+}

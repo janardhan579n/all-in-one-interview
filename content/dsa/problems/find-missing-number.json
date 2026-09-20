@@ -1,0 +1,108 @@
+{
+  "id": "find-missing-number",
+  "title": "Missing Number",
+  "patternId": "arrays",
+  "difficulty": "beginner",
+  "tags": [
+    "array",
+    "xor",
+    "math"
+  ],
+  "statement": "An array nums contains n distinct numbers drawn from the range [0, n] — that is, n + 1 candidate values with exactly one of them absent. Return the missing number, ideally in O(n) time and O(1) extra space.",
+  "realWorld": "Finding the one sequence number a consumer never acknowledged. A producer stamps messages 0..n, the sink reports back which ids it durably stored, and the gap has to be located without sorting the list or building a set the size of the stream — which is the whole point when the ids number in the millions.",
+  "examples": [
+    {
+      "input": "nums = [3,0,1]",
+      "output": "2",
+      "explanation": "n = 3, so the candidates are 0,1,2,3. Every one of them appears except 2."
+    },
+    {
+      "input": "nums = [0,1]",
+      "output": "2",
+      "explanation": "n = 2, so the candidates are 0,1,2 and the missing value is n itself. This is the case that breaks every solution that only ever looks at indices 0..n-1."
+    },
+    {
+      "input": "nums = [9,6,4,2,3,5,7,0,1]",
+      "output": "8",
+      "explanation": "Order tells you nothing here — the answer has to come from an aggregate over the whole array, not from a position."
+    }
+  ],
+  "constraints": [
+    "n == nums.length",
+    "1 <= n <= 10^4",
+    "0 <= nums[i] <= n",
+    "All values in nums are distinct, and exactly one value from [0, n] is missing"
+  ],
+  "bruteForce": {
+    "idea": "For every candidate value from 0 to n, scan the array to see whether it is present; return the first one that is not.",
+    "code": [
+      "for (int candidate = 0; candidate <= nums.length; candidate++) {",
+      "    boolean found = false;",
+      "    for (int value : nums) {",
+      "        if (value == candidate) { found = true; break; }",
+      "    }",
+      "    if (!found) return candidate;",
+      "}",
+      "return -1;"
+    ],
+    "complexity": {
+      "time": "O(n^2)",
+      "space": "O(1)"
+    },
+    "whySlow": "n + 1 candidates each trigger a full scan, and every scan walks past the same values the previous scan has already rejected. The array is read n times end to end to extract a single fact — which of the n + 1 values never appears — and that fact is an aggregate one pass could have accumulated. Sorting first is the same trade in a nicer wrapper: n log n comparisons to establish an order the answer does not depend on."
+  },
+  "patternIdentification": "The input is a known, closed set with one element removed. That means you never have to search for the absentee: compare the whole input against what a complete set would look like, using an aggregate where everything present cancels out. XOR cancels because a ^ a == 0 and a ^ 0 == a; sums cancel because the complete total has the closed form n(n+1)/2. The same move solves 'find the duplicate', 'find the element that appears once', and 'find the two swapped values'.",
+  "optimized": {
+    "idea": "XOR every index together with every value. Each present value v sits at some index and also appears as a candidate index somewhere in 0..n, so it is XORed an even number of times and cancels to 0; the missing value appears only as an index and survives. Seed the accumulator with n, since the index n has no nums[n] to pair with. The sum formula n(n+1)/2 - sum(nums) is the other classic answer and is just as short, but its accumulator can overflow for large n while XOR never can, because every intermediate value stays inside the same bit width as the inputs.",
+    "code": [
+      "public static int missingNumber(int[] nums) {",
+      "    int n = nums.length;",
+      "    int missing = n;                // index n exists as a candidate but has no element",
+      "    for (int i = 0; i < n; i++) {",
+      "        missing ^= i ^ nums[i];     // every value that IS present cancels with its twin index",
+      "    }",
+      "    return missing;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(1)"
+    }
+  },
+  "visualization": {
+    "engine": "bitOps",
+    "input": {
+      "value": 6
+    },
+    "code": [
+      "int present = 6;                        // 0000 0110 — a value that DOES appear in nums",
+      "int doubled = present << 1;             // shift left  -> multiply by 2",
+      "int halved  = present >> 1;             // shift right -> divide by 2",
+      "int isOdd   = present & 1;              // keep the lowest bit only",
+      "int dropped = present & (present - 1);  // clear the lowest set bit",
+      "int lowest  = present & -present;       // isolate the lowest set bit",
+      "int gone    = present ^ present;        // <-- a ^ a == 0: this is why every present value cancels"
+    ]
+  },
+  "commonMistakes": [
+    "Seeding the XOR with 0 instead of n: the index n is then never folded in, and the result is the true answer XORed with n — so [0,1] returns 0 instead of 2, and [3,0,1] returns 1 instead of 2. The failing case is any input, but the one people notice is when the missing value is n itself and the method returns 0.",
+    "Using n * (n + 1) / 2 - sum with an int accumulator: past roughly n = 65,000 the total exceeds 2^31 and wraps, so the method is right on every small test and returns a negative or nonsensical index on the large one. Either use long, or use XOR, whose intermediate values never grow.",
+    "Marking presence in a boolean[] of size n rather than n + 1 and indexing seen[nums[i]] — the first input that actually contains the value n throws ArrayIndexOutOfBoundsException, which is exactly the [0,1] case."
+  ],
+  "similar": [
+    "single-number",
+    "contains-duplicate",
+    "find-duplicate-number",
+    "single-number-ii"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 268,
+      "slug": "missing-number",
+      "title": "Missing Number",
+      "url": "https://leetcode.com/problems/missing-number/",
+      "premium": false
+    },
+    "note": "LeetCode 268 uses the range 0..n; this lesson also covers the 1..n variant, where the sum formula shifts by n but the XOR approach is unchanged."
+  }
+}

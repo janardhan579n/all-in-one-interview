@@ -1,0 +1,96 @@
+{
+  "id": "max-depth-binary-tree",
+  "title": "Maximum Depth of Binary Tree",
+  "patternId": "dfs",
+  "difficulty": "beginner",
+  "tags": [
+    "tree",
+    "dfs",
+    "recursion"
+  ],
+  "statement": "Given the root of a binary tree, return its maximum depth: the number of nodes along the longest path from the root down to a leaf.",
+  "realWorld": "Measuring nesting depth — of a JSON payload before accepting it (deeply nested input is a denial-of-service vector), of a category hierarchy, or of a call tree in a profiler.",
+  "examples": [
+    {
+      "input": "root = [3,9,20,null,null,15,7]",
+      "output": "3",
+      "explanation": "3 -> 20 -> 15 is three nodes."
+    },
+    {
+      "input": "root = []",
+      "output": "0",
+      "explanation": ""
+    }
+  ],
+  "constraints": [
+    "0 <= number of nodes <= 10^4"
+  ],
+  "bruteForce": {
+    "idea": "Enumerate every root-to-leaf path, measure each, keep the longest.",
+    "code": [
+      "void allPaths(TreeNode node, int depth) {",
+      "    if (node == null) return;",
+      "    if (node.left == null && node.right == null) best = Math.max(best, depth);",
+      "    allPaths(node.left,  depth + 1);",
+      "    allPaths(node.right, depth + 1);",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(h)"
+    },
+    "whySlow": "This is actually already O(n) and perfectly fine — it is just phrased awkwardly, tracking a mutable best rather than returning a value. The cleaner formulation makes the recursion return the answer, which generalises to every other tree aggregation."
+  },
+  "patternIdentification": "The classic tree question: what do I need from my children, and what do I return to my parent? Here: the deeper of the two subtree depths, plus one for myself. That is post-order DFS.",
+  "optimized": {
+    "idea": "depth(node) = 1 + max(depth(left), depth(right)), with depth(null) = 0. Three lines, and the shape generalises to sums, balance checks, diameters and subtree sizes.",
+    "code": [
+      "public static int maxDepth(TreeNode root) {",
+      "    if (root == null) return 0;                // base case",
+      "    return 1 + Math.max(maxDepth(root.left), maxDepth(root.right));",
+      "}",
+      "",
+      "/** Iterative BFS alternative — useful when the tree could be 10^5 deep. */",
+      "public static int maxDepthIterative(TreeNode root) {",
+      "    if (root == null) return 0;",
+      "    Queue<TreeNode> queue = new ArrayDeque<>();",
+      "    queue.offer(root);",
+      "    int depth = 0;",
+      "    while (!queue.isEmpty()) {",
+      "        int levelSize = queue.size();",
+      "        for (int i = 0; i < levelSize; i++) {",
+      "            TreeNode node = queue.poll();",
+      "            if (node.left  != null) queue.offer(node.left);",
+      "            if (node.right != null) queue.offer(node.right);",
+      "        }",
+      "        depth++;",
+      "    }",
+      "    return depth;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(h) — O(log n) balanced, O(n) skewed"
+    }
+  },
+  "commonMistakes": [
+    "Returning 1 for a null node, which over-counts by one at every leaf.",
+    "Confusing depth in nodes (this problem) with height in edges — state your convention.",
+    "Assuming O(1) space because the code is three lines; the call stack is O(h).",
+    "Recursing on an untrusted deeply nested structure in production — use the iterative version there."
+  ],
+  "similar": [
+    "binary-tree-level-order",
+    "number-of-islands",
+    "path-sum"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 104,
+      "slug": "maximum-depth-of-binary-tree",
+      "title": "Maximum Depth of Binary Tree",
+      "url": "https://leetcode.com/problems/maximum-depth-of-binary-tree/",
+      "premium": false
+    }
+  }
+}

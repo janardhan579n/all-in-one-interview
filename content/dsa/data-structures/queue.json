@@ -1,0 +1,316 @@
+{
+  "id": "queue",
+  "kind": "data-structure",
+  "title": "Queue",
+  "group": "Stack & Queue",
+  "level": 1,
+  "difficulty": "beginner",
+  "estimatedMinutes": 22,
+  "summary": "First in, first out. Add at the back, remove from the front — the shape of fairness, of buffering, and of exploring level by level.",
+  "prerequisites": [
+    "arrays"
+  ],
+  "tags": [
+    "queue",
+    "fifo",
+    "data-structure",
+    "level-1"
+  ],
+  "analogy": {
+    "beginner": "A queue at a ticket counter. You join at the back; the person who has been waiting longest is served next. Nobody jumps in at the middle. That is the entire rule.",
+    "interview": "A FIFO collection with O(1) enqueue and dequeue. Implemented as a circular buffer over an array (head and tail indices wrapping with modulo) or a linked list with head and tail pointers. Java: `ArrayDeque` for general use, `LinkedList` when you need `List` semantics too, `ArrayBlockingQueue` for producer/consumer."
+  },
+  "intuition": "A queue is the data structure of *waiting in order* — and, less obviously, of *breadth*.\n\nThe FIFO rule means every item is processed in arrival order, which is what makes a queue the right tool for fairness (job scheduling), for smoothing bursts (buffering), and for decoupling a fast producer from a slow consumer (message queues — see the System Design track, where the same idea reappears at the scale of whole services).\n\nThe algorithmic use is subtler. If you explore a graph or tree using a queue, you necessarily finish everything one step away before you look at anything two steps away. That gives you breadth-first search, and with it the shortest path in an unweighted graph — for free, purely as a consequence of the ordering.",
+  "problemFirst": {
+    "motivatingProblem": "Print a binary tree one level at a time: the root, then both of its children, then all four grandchildren.",
+    "bruteForce": {
+      "idea": "Recurse. But recursion goes *deep* first — it will print the whole left subtree before touching the right child, which is the wrong order. You could compute the height, then loop over levels and re-walk the tree once per level to print just that depth.",
+      "code": [
+        "for (int level = 0; level < height(root); level++) {",
+        "    printAtDepth(root, level);   // re-walks the tree from the top every time",
+        "}",
+        "",
+        "void printAtDepth(Node n, int d) {",
+        "    if (n == null) return;",
+        "    if (d == 0) { System.out.print(n.value + \" \"); return; }",
+        "    printAtDepth(n.left,  d - 1);",
+        "    printAtDepth(n.right, d - 1);",
+        "}"
+      ],
+      "complexity": {
+        "time": "O(n·h) — up to O(n²) for a skewed tree",
+        "space": "O(h)"
+      },
+      "whySlow": "Every level re-traverses everything above it. The root is visited h times, its children h-1 times, and so on."
+    },
+    "observation": "While printing a node, we already hold references to its children. We just need somewhere to park them until the current level is finished.",
+    "leap": "Park them in a queue. Because children are added at the back and nodes are taken from the front, depth d is always fully processed before depth d+1. One pass, O(n) — and this is exactly breadth-first search."
+  },
+  "howItWorks": [
+    "**offer(x) / add(x)** — put x at the back. O(1).",
+    "**poll() / remove()** — take from the front. O(1). `poll` returns null when empty; `remove` throws.",
+    "**peek()** — look at the front without removing. O(1).",
+    "Naive array implementation: dequeue from index 0 shifts everything left — O(n). Unacceptable.",
+    "**Circular buffer** fixes it: keep `head` and `tail` indices and wrap with `(i + 1) % capacity`. Nothing moves; both ends are O(1).",
+    "**Deque** (double-ended queue) allows push/pop at both ends — it is a queue and a stack in one class, which is why `ArrayDeque` is the recommended implementation of both.",
+    "**PriorityQueue** is a different thing wearing the name: it serves the *smallest* element, not the oldest, in O(log n) via a binary heap."
+  ],
+  "patternRecognition": {
+    "signals": [
+      "'Level by level', 'layer by layer', 'shortest path in an unweighted graph' → BFS with a queue",
+      "Processing in arrival order; fairness; scheduling",
+      "Buffering between a fast producer and a slow consumer",
+      "'Sliding window maximum' → monotonic deque"
+    ],
+    "antiSignals": [
+      "You need most-recent-first (that is a Stack)",
+      "You need highest-priority-first (that is a PriorityQueue)",
+      "You need random access by index"
+    ],
+    "decisionTreeId": "which-data-structure"
+  },
+  "visualizations": [
+    {
+      "id": "queue-ops",
+      "title": "enqueue · dequeue · peek",
+      "engine": "queueOps",
+      "input": {
+        "operations": [
+          {
+            "op": "enqueue",
+            "value": 10
+          },
+          {
+            "op": "enqueue",
+            "value": 20
+          },
+          {
+            "op": "enqueue",
+            "value": 30
+          },
+          {
+            "op": "peek"
+          },
+          {
+            "op": "dequeue"
+          },
+          {
+            "op": "enqueue",
+            "value": 40
+          },
+          {
+            "op": "dequeue"
+          },
+          {
+            "op": "dequeue"
+          }
+        ]
+      },
+      "code": [
+        "Queue<Integer> q = new ArrayDeque<>();",
+        "q.offer(x);            // add at the back",
+        "int front = q.peek();  // look at the front",
+        "int out = q.poll();    // remove from the front"
+      ]
+    },
+    {
+      "id": "circular-buffer",
+      "title": "Why a circular buffer keeps both ends O(1)",
+      "engine": "circularQueue",
+      "input": {
+        "capacity": 5,
+        "operations": [
+          {
+            "op": "enqueue",
+            "value": 1
+          },
+          {
+            "op": "enqueue",
+            "value": 2
+          },
+          {
+            "op": "enqueue",
+            "value": 3
+          },
+          {
+            "op": "dequeue"
+          },
+          {
+            "op": "dequeue"
+          },
+          {
+            "op": "enqueue",
+            "value": 4
+          },
+          {
+            "op": "enqueue",
+            "value": 5
+          },
+          {
+            "op": "enqueue",
+            "value": 6
+          }
+        ]
+      },
+      "code": [
+        "void enqueue(int x) {",
+        "    items[tail] = x;",
+        "    tail = (tail + 1) % capacity;   // wrap around instead of shifting",
+        "    size++;",
+        "}",
+        "int dequeue() {",
+        "    int x = items[head];",
+        "    head = (head + 1) % capacity;",
+        "    size--;",
+        "    return x;",
+        "}"
+      ]
+    }
+  ],
+  "implementations": [
+    {
+      "label": "Simple",
+      "language": "java",
+      "explanation": "A circular-buffer queue. The only interesting line is the modulo: it is what lets the front index move forward forever without any element ever being copied.",
+      "code": [
+        "class IntQueue {",
+        "    private final int[] items;",
+        "    private int head = 0, tail = 0, size = 0;",
+        "",
+        "    IntQueue(int capacity) { items = new int[capacity]; }",
+        "",
+        "    void enqueue(int x) {",
+        "        if (size == items.length) throw new IllegalStateException(\"queue is full\");",
+        "        items[tail] = x;",
+        "        tail = (tail + 1) % items.length;",
+        "        size++;",
+        "    }",
+        "",
+        "    int dequeue() {",
+        "        if (size == 0) throw new NoSuchElementException(\"queue is empty\");",
+        "        int x = items[head];",
+        "        head = (head + 1) % items.length;",
+        "        size--;",
+        "        return x;",
+        "    }",
+        "",
+        "    boolean isEmpty() { return size == 0; }",
+        "}"
+      ]
+    },
+    {
+      "label": "Optimized",
+      "language": "java",
+      "explanation": "Use `ArrayDeque` in real code — it is a growable circular buffer already. The level-order traversal below is the pattern that makes queues worth learning: capturing `q.size()` before the inner loop is what separates one level from the next.",
+      "code": [
+        "public List<List<Integer>> levelOrder(TreeNode root) {",
+        "    List<List<Integer>> levels = new ArrayList<>();",
+        "    if (root == null) return levels;",
+        "",
+        "    Queue<TreeNode> q = new ArrayDeque<>();",
+        "    q.offer(root);",
+        "",
+        "    while (!q.isEmpty()) {",
+        "        int levelSize = q.size();          // freeze the count for THIS level",
+        "        List<Integer> level = new ArrayList<>(levelSize);",
+        "        for (int i = 0; i < levelSize; i++) {",
+        "            TreeNode node = q.poll();",
+        "            level.add(node.val);",
+        "            if (node.left  != null) q.offer(node.left);",
+        "            if (node.right != null) q.offer(node.right);",
+        "        }",
+        "        levels.add(level);",
+        "    }",
+        "    return levels;",
+        "}"
+      ]
+    }
+  ],
+  "complexity": {
+    "time": "enqueue O(1) · dequeue O(1) · peek O(1) · search O(n)",
+    "space": "O(n)",
+    "why": "Both ends are O(1) only because of the circular indices — a naive 'remove from index 0 and shift' implementation is O(n) per dequeue and turns an O(n) BFS into O(n²). This is the most common hand-rolled-queue bug. `PriorityQueue` differs: its operations are O(log n) because it maintains heap order."
+  },
+  "commonMistakes": [
+    {
+      "mistake": "Using `ArrayList.remove(0)` as a queue",
+      "fix": "That is O(n) per removal. Use `ArrayDeque`."
+    },
+    {
+      "mistake": "Not freezing `q.size()` before the level loop",
+      "fix": "The size changes as you enqueue children, so levels bleed into each other. Capture it first."
+    },
+    {
+      "mistake": "Confusing `PriorityQueue` with a FIFO queue",
+      "fix": "`PriorityQueue` orders by value, not arrival. Iterating it does not give sorted order either — only repeated `poll()` does."
+    },
+    {
+      "mistake": "Enqueueing a node without marking it visited",
+      "fix": "In graph BFS the same node gets queued many times. Mark visited at enqueue time, not at dequeue time."
+    }
+  ],
+  "realWorldUses": [
+    "Thread pools and job schedulers hold pending tasks in a queue.",
+    "Kafka, RabbitMQ and SQS are queues at the distributed-system scale — same FIFO idea, different failure modes (see the Message Queue lesson).",
+    "Network routers buffer packets in queues; the queue length is literally what latency under load measures.",
+    "Rate limiters, print spoolers, and request admission control."
+  ],
+  "interviewNotes": [
+    "BFS with a queue gives the shortest path in an *unweighted* graph. Say 'unweighted' — for weighted graphs you need Dijkstra, which is BFS with a priority queue.",
+    "'Implement a queue using two stacks' is a classic; the amortised O(1) argument is the point of the question."
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "predict-output",
+      "question": "enqueue(1); enqueue(2); dequeue(); enqueue(3); dequeue();\nWhich value was returned by the second dequeue?",
+      "options": [
+        "1",
+        "2",
+        "3",
+        "null"
+      ],
+      "answerIndex": 1,
+      "explanation": "FIFO: the first dequeue returns 1, leaving [2]; enqueue 3 gives [2,3]; the second dequeue returns 2."
+    },
+    {
+      "id": "q2",
+      "type": "mcq",
+      "question": "Why does BFS use a queue rather than a stack?",
+      "options": [
+        "Queues are faster",
+        "FIFO order guarantees all nodes at distance d are processed before any at distance d+1",
+        "Stacks cannot hold graph nodes",
+        "It does not matter which you use"
+      ],
+      "answerIndex": 1,
+      "explanation": "That ordering is what makes the first time you reach a node also the shortest way to reach it. Swap in a stack and you get DFS, which offers no such guarantee."
+    },
+    {
+      "id": "q3",
+      "type": "mcq",
+      "question": "What is wrong with implementing dequeue as `array.remove(0)` on an ArrayList?",
+      "options": [
+        "Nothing",
+        "It is O(n) because every remaining element shifts left, making BFS O(n²)",
+        "It returns the wrong element",
+        "It throws on a non-empty list"
+      ],
+      "answerIndex": 1,
+      "explanation": "Removing from the front of an array-backed list shifts the whole tail. A circular buffer avoids this by moving an index instead of the data."
+    }
+  ],
+  "practiceProblems": [
+    "implement-queue-using-stacks",
+    "moving-average-stream",
+    "design-circular-queue",
+    "binary-tree-level-order",
+    "rotting-oranges"
+  ],
+  "related": [
+    "stack",
+    "bfs",
+    "trees",
+    "message-queue"
+  ]
+}

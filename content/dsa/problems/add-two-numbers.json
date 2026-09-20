@@ -1,0 +1,110 @@
+{
+  "id": "add-two-numbers",
+  "title": "Add Two Numbers",
+  "patternId": "linked-list",
+  "difficulty": "intermediate",
+  "tags": [
+    "linked-list",
+    "math",
+    "carry"
+  ],
+  "statement": "Two non-empty linked lists represent two non-negative integers. The digits are stored in reverse order — the head is the least significant digit — one digit per node. Add the two numbers and return the sum as a linked list in the same reversed-digit form.",
+  "realWorld": "Arbitrary-precision arithmetic. This is how BigInteger, a ledger that refuses to round cents away, and every cryptographic library add numbers that do not fit in a 64-bit register: the digits (or 32-bit limbs) live in a chunked sequence, least significant first, and a single carry propagates upwards. The reversed storage order is not an artificial twist — it is what real implementations use, because addition starts at the least significant end.",
+  "examples": [
+    {
+      "input": "l1 = [2,4,3], l2 = [5,6,4]",
+      "output": "[7,0,8]",
+      "explanation": "342 + 465 = 807. Position by position: 2+5=7 carry 0; 4+6=10 so digit 0 carry 1; 3+4+1=8 carry 0."
+    },
+    {
+      "input": "l1 = [9,9], l2 = [1]",
+      "output": "[0,0,1]",
+      "explanation": "99 + 1 = 100. Position 1: 9+1=10, digit 0, carry 1. Position 2: 9+0+1=10, digit 0, carry 1. Both lists are now exhausted but the carry is still 1, so the loop runs a third time on nothing but the carry and appends the leading 1."
+    },
+    {
+      "input": "l1 = [0], l2 = [0]",
+      "output": "[0]",
+      "explanation": "The loop runs once because both lists have a node, produces digit 0 with no carry, and then stops. A loop guarded only on the carry would emit nothing at all here."
+    }
+  ],
+  "constraints": [
+    "1 <= number of nodes in each list <= 100",
+    "0 <= Node.val <= 9",
+    "neither number has a leading zero, except the number 0 itself"
+  ],
+  "bruteForce": {
+    "idea": "Reassemble each list into a numeric value, add the two values with ordinary arithmetic, then emit the digits of the sum back into a list.",
+    "code": [
+      "long a = 0;",
+      "long place = 1;",
+      "for (Node n = l1; n != null; n = n.next) { a += n.val * place; place *= 10; }",
+      "long b = 0;",
+      "place = 1;",
+      "for (Node n = l2; n != null; n = n.next) { b += n.val * place; place *= 10; }",
+      "long sum = a + b;",
+      "Node dummy = new Node(0);",
+      "Node tail = dummy;",
+      "do {",
+      "    tail.next = new Node((int) (sum % 10));",
+      "    tail = tail.next;",
+      "    sum /= 10;",
+      "} while (sum > 0);",
+      "return dummy.next;"
+    ],
+    "complexity": {
+      "time": "O(n + m)",
+      "space": "O(1) beyond the output"
+    },
+    "whySlow": "This one is not slow, it is wrong — and silently so. The wasted work is packing both lists into a single fixed-width integer whose only contribution is letting the CPU perform the carry for us, then immediately unpacking it again: every digit is written into a register and read straight back out. Worse, the constraints allow 100 digits and a long holds 19, so `place` overflows, the accumulator wraps, and the function returns a plausible-looking number instead of throwing. The carry the register was borrowed for is a single bit of state we can carry ourselves."
+  },
+  "patternIdentification": "Two sequences whose positions are already aligned, combined position by position, where the only coupling between positions is one bounded piece of state flowing in one direction. That is the signal for a single synchronised walk carrying that state — no reversal, no conversion to a wider type, no second data structure. Generalise it beyond addition: running totals, difference streams, a parity or borrow bit, and base-b arithmetic all have this shape. The tell is that position i's output depends on position i's inputs plus a constant-size summary of everything before it.",
+  "optimized": {
+    "idea": "Walk both lists at once. At each position add the two digits — a list that has run out contributes 0 — plus the incoming carry. The output digit is sum % 10 and the outgoing carry is sum / 10, which is always 0 or 1 because the largest possible sum is 9 + 9 + 1 = 19. The loop condition is the part worth staring at: it continues while either list has nodes OR the carry is still set, and that last clause is exactly what grows the result by one digit for 5 + 5 = 10. A dummy head keeps the first append from being a special case.",
+    "code": [
+      "public static Node addTwoNumbers(Node l1, Node l2) {",
+      "    Node dummy = new Node(0);",
+      "    Node tail = dummy;",
+      "    int carry = 0;",
+      "    while (l1 != null || l2 != null || carry != 0) {   // carry != 0 is what grows the result",
+      "        int sum = carry;",
+      "        if (l1 != null) {",
+      "            sum += l1.val;",
+      "            l1 = l1.next;",
+      "        }",
+      "        if (l2 != null) {",
+      "            sum += l2.val;",
+      "            l2 = l2.next;",
+      "        }",
+      "        carry = sum / 10;",
+      "        tail.next = new Node(sum % 10);",
+      "        tail = tail.next;",
+      "    }",
+      "    return dummy.next;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(max(n, m))",
+      "space": "O(max(n, m)) for the output, O(1) extra"
+    }
+  },
+  "commonMistakes": [
+    "Looping while (l1 != null || l2 != null) and dropping the final carry. [9,9] + [1] returns [0,0] — that is, 99 + 1 = 0 — while the sample [2,4,3] + [5,6,4] passes, because it never carries out of its last digit.",
+    "Swapping the two halves of the split: digit = sum / 10 and carry = sum % 10. 7 + 8 then stores 1 and carries 5, so every sum that stays under 10 looks perfectly correct and the bug only appears on the first carry.",
+    "Converting the lists to int or long first. Twenty nines overflow silently, so the function returns a well-formed list holding a completely wrong number rather than raising anything — the class of bug that survives code review because nothing looks broken."
+  ],
+  "similar": [
+    "merge-two-sorted-lists",
+    "reverse-linked-list",
+    "merge-k-sorted-lists",
+    "remove-nth-from-end"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 2,
+      "slug": "add-two-numbers",
+      "title": "Add Two Numbers",
+      "url": "https://leetcode.com/problems/add-two-numbers/",
+      "premium": false
+    }
+  }
+}

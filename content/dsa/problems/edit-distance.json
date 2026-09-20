@@ -1,0 +1,144 @@
+{
+  "id": "edit-distance",
+  "title": "Edit Distance",
+  "patternId": "dp-patterns",
+  "difficulty": "advanced",
+  "tags": [
+    "dp",
+    "string",
+    "two-sequence",
+    "lcs",
+    "levenshtein"
+  ],
+  "statement": "Given two strings `word1` and `word2`, return the minimum number of single-character operations needed to turn `word1` into `word2`. The permitted operations are insert a character, delete a character, and replace a character.",
+  "realWorld": "Spell checkers rank suggestions by edit distance from the misspelling. Fuzzy search, record deduplication and address matching use the same measure, and DNA sequence alignment (Needleman–Wunsch) is edit distance with per-operation scores rather than a flat cost of one.",
+  "examples": [
+    {
+      "input": "word1 = \"horse\", word2 = \"ros\"",
+      "output": "3",
+      "explanation": "horse → rorse (replace 'h' with 'r') → rose (delete 'r') → ros (delete 'e')."
+    },
+    {
+      "input": "word1 = \"intention\", word2 = \"execution\"",
+      "output": "5",
+      "explanation": "The classic worked example: delete 't', replace 'i' with 'e', replace 'n' with 'x', replace 't' with 'c', insert 'u'."
+    },
+    {
+      "input": "word1 = \"\", word2 = \"abc\"",
+      "output": "3",
+      "explanation": "Three inserts. This is the base case `dp[0][j] = j` made visible."
+    }
+  ],
+  "constraints": [
+    "0 <= word1.length, word2.length <= 500",
+    "Both strings consist of lowercase English letters",
+    "All three operations cost 1",
+    "Either string may be empty"
+  ],
+  "bruteForce": {
+    "idea": "Recurse from the ends of both strings. If the last characters match, they cost nothing and you shrink both. Otherwise try all three edits and take the cheapest.",
+    "code": [
+      "public static int minDistance(String a, String b) {",
+      "    return solve(a, b, a.length(), b.length());",
+      "}",
+      "",
+      "/** Cost of turning a[0..i) into b[0..j). */",
+      "private static int solve(String a, String b, int i, int j) {",
+      "    if (i == 0) return j;      // insert the rest of b",
+      "    if (j == 0) return i;      // delete the rest of a",
+      "",
+      "    if (a.charAt(i - 1) == b.charAt(j - 1)) {",
+      "        return solve(a, b, i - 1, j - 1);              // free",
+      "    }",
+      "    int replace = solve(a, b, i - 1, j - 1);",
+      "    int delete  = solve(a, b, i - 1, j);",
+      "    int insert  = solve(a, b, i, j - 1);",
+      "    return 1 + Math.min(replace, Math.min(delete, insert));",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(3^(a+b))",
+      "space": "O(a + b) call stack"
+    },
+    "whySlow": "Each mismatch branches three ways, so the call tree is exponential in the combined length — two twelve-character words are already tens of millions of calls. Yet there are only (a+1) × (b+1) distinct pairs `(i, j)`, and the tree reaches the same pair from many directions: `solve(i-1, j-1)` is reached directly by the replace branch and again through delete-then-insert. Exponential effort over a quadratic amount of real information — the textbook signal for memoisation."
+  },
+  "patternIdentification": "Two sequences compared position by position is the LCS shape from the DP Patterns lesson: one axis per string, a state over prefixes, and a transition that splits into match and mismatch. Recognising it fixes almost everything — `dp[i][j]` over `a[0..i)` and `b[0..j)`, an extra row and column for the empty prefixes, and `a.charAt(i-1)` versus `b.charAt(j-1)` inside. Only two things differ from LCS: this is a minimisation over three moves rather than a maximisation over two, and the base row and column are not zeros.",
+  "optimized": {
+    "idea": "Tabulate `dp[i][j]` = the cost of turning `a[0..i)` into `b[0..j)`. The base cases are `dp[i][0] = i` (delete the whole prefix of a) and `dp[0][j] = j` (insert the whole prefix of b) — this is where edit distance parts company with LCS, whose base is all zeros. Matching characters cost nothing and pass `dp[i-1][j-1]` straight through; mismatching ones cost 1 plus the cheapest of replace (`dp[i-1][j-1]`), delete (`dp[i-1][j]`) and insert (`dp[i][j-1]`). Because each row reads only the row above and the cell to its left, two rows — or one row plus a single saved diagonal value — suffice.",
+    "code": [
+      "/** Full table. O(a·b) time, O(a·b) space. */",
+      "public static int minDistance(String a, String b) {",
+      "    int n = a.length(), m = b.length();",
+      "    int[][] dp = new int[n + 1][m + 1];",
+      "",
+      "    for (int i = 0; i <= n; i++) dp[i][0] = i;   // delete i characters",
+      "    for (int j = 0; j <= m; j++) dp[0][j] = j;   // insert j characters",
+      "",
+      "    for (int i = 1; i <= n; i++) {",
+      "        for (int j = 1; j <= m; j++) {",
+      "            if (a.charAt(i - 1) == b.charAt(j - 1)) {",
+      "                dp[i][j] = dp[i - 1][j - 1];             // characters agree: free",
+      "            } else {",
+      "                int replace = dp[i - 1][j - 1];",
+      "                int delete  = dp[i - 1][j];",
+      "                int insert  = dp[i][j - 1];",
+      "                dp[i][j] = 1 + Math.min(replace, Math.min(delete, insert));",
+      "            }",
+      "        }",
+      "    }",
+      "    return dp[n][m];",
+      "}",
+      "",
+      "/**",
+      " * Rolling row. O(a·b) time, O(min(a,b)) space if you pass the shorter string as b.",
+      " * `diagonal` carries dp[i-1][j-1], which the in-place update would otherwise destroy.",
+      " */",
+      "public static int minDistanceRolling(String a, String b) {",
+      "    int n = a.length(), m = b.length();",
+      "    int[] dp = new int[m + 1];",
+      "    for (int j = 0; j <= m; j++) dp[j] = j;      // row 0",
+      "",
+      "    for (int i = 1; i <= n; i++) {",
+      "        int diagonal = dp[0];                    // dp[i-1][0]",
+      "        dp[0] = i;                               // dp[i][0]",
+      "        for (int j = 1; j <= m; j++) {",
+      "            int previousDiagonal = dp[j];        // dp[i-1][j], before it is overwritten",
+      "            if (a.charAt(i - 1) == b.charAt(j - 1)) {",
+      "                dp[j] = diagonal;",
+      "            } else {",
+      "                dp[j] = 1 + Math.min(diagonal, Math.min(dp[j], dp[j - 1]));",
+      "            }",
+      "            diagonal = previousDiagonal;",
+      "        }",
+      "    }",
+      "    return dp[m];",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(a·b)",
+      "space": "O(a·b) for the full table, O(min(a,b)) for the rolling row"
+    }
+  },
+  "commonMistakes": [
+    "Initialising the base row and column to zero, as in LCS. Turning \"abc\" into \"\" costs 3, not 0 — the base cases are `dp[i][0] = i` and `dp[0][j] = j`.",
+    "Mixing up which neighbour means which operation. `dp[i-1][j]` consumed a character of `a` only, so it is a delete; `dp[i][j-1]` consumed one of `b` only, so it is an insert; `dp[i-1][j-1]` consumed one of each, so it is a replace.",
+    "Adding 1 on the matching branch. Equal characters cost nothing; the value passes through unchanged.",
+    "Getting the ±1 offset wrong — `dp[i][j]` compares `a.charAt(i-1)` with `b.charAt(j-1)`, because row i stands for a prefix of length i.",
+    "In the rolling-row version, reading `dp[j-1]` as the diagonal. After the update at j-1 that cell already holds the current row's value; the true diagonal must be saved before the cell is overwritten.",
+    "Not handling empty strings. With the extra row and column they fall out of the base cases for free, which is exactly why the table is (n+1) × (m+1)."
+  ],
+  "similar": [
+    "longest-increasing-subsequence",
+    "coin-change",
+    "unique-paths"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 72,
+      "slug": "edit-distance",
+      "title": "Edit Distance",
+      "url": "https://leetcode.com/problems/edit-distance/",
+      "premium": false
+    }
+  }
+}

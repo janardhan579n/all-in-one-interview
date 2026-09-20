@@ -1,0 +1,158 @@
+{
+  "id": "design-add-search-words",
+  "title": "Design Add and Search Words Data Structure",
+  "patternId": "trie",
+  "difficulty": "intermediate",
+  "tags": [
+    "trie",
+    "design",
+    "dfs",
+    "string"
+  ],
+  "statement": "Design a data structure that supports two operations. addWord(word) stores a word made of lowercase letters. search(pattern) returns true if any stored word matches the pattern, where the pattern is lowercase letters plus the wildcard character . which matches exactly one letter. A pattern matches only words of the same length: . matches one character, never zero and never several.",
+  "realWorld": "A dictionary service behind spell-check or a command palette: the word list is loaded once at start-up and then queried millions of times, some of those queries carrying a single-character wildcard (c.t). Per-query cost is the only cost that matters, so the shape of the stored dictionary is the whole design decision.",
+  "examples": [
+    {
+      "input": "addWord(bad), addWord(dad), addWord(mad), then search(pad), search(bad), search(.ad), search(b..)",
+      "output": "false, true, true, true",
+      "explanation": "pad was never added. bad is an exact hit. .ad matches bad, dad and mad, so one hit is enough. b.. matches bad: the first character is pinned, the other two are free."
+    },
+    {
+      "input": "addWord(a), addWord(ab), then search(a.), search(.a), search(..)",
+      "output": "true, false, true",
+      "explanation": "a. matches ab. .a is false even though a is stored, because the pattern has length 2 and a has length 1. .. matches ab, showing that length, not content, is what rules a word in or out first."
+    },
+    {
+      "input": "addWord(abc), then search(...), search(....)",
+      "output": "true, false",
+      "explanation": "Three dots match abc. Four dots match nothing: a dot is one character, so the pattern can never stretch to cover a shorter word."
+    }
+  ],
+  "constraints": [
+    "1 <= word.length <= 25",
+    "word in addWord consists of lowercase English letters",
+    "word in search consists of lowercase English letters and at most 3 dots",
+    "At most 10^4 calls to addWord and search in total"
+  ],
+  "bruteForce": {
+    "idea": "Keep every word in a list. To search, walk the list and compare the pattern against each word of the right length, treating a dot as an automatic match.",
+    "code": [
+      "private final List<String> words = new ArrayList<>();",
+      "",
+      "public void addWord(String word) {",
+      "    words.add(word);",
+      "}",
+      "",
+      "public boolean search(String pattern) {",
+      "    for (String word : words) {",
+      "        if (word.length() != pattern.length()) continue;",
+      "        boolean ok = true;",
+      "        for (int i = 0; i < pattern.length(); i++) {",
+      "            char p = pattern.charAt(i);",
+      "            if (p != '.' && p != word.charAt(i)) { ok = false; break; }",
+      "        }",
+      "        if (ok) return true;",
+      "    }",
+      "    return false;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n * L) per search, for n stored words of length up to L",
+      "space": "O(n * L)"
+    },
+    "whySlow": "Every search re-reads the entire dictionary, and nearly all of that reading re-makes decisions that were already made. Searching ba. against ten thousand words that start with z compares b against z ten thousand separate times: one first-character decision, repeated once per word, when all those words share that one first character. The words that share a prefix are never allowed to share the work of rejecting it."
+  },
+  "patternIdentification": "A dictionary that is queried character by character, where many words share leading characters, is a trie: the shared prefix is stored once, so one comparison rules out an entire subtree instead of one word. The wildcard then changes only how you move through it. A fixed character follows exactly one child, so the lookup is a walk down a single path; a dot has no child to pick, so it must follow all of them, and the walk becomes a depth-first search over the trie. Whenever a lookup step has more than one legal continuation, keep the data structure and upgrade the traversal to a search.",
+  "optimized": {
+    "idea": "Store the words in a 26-way trie. Search is a recursion over (position in the pattern, node in the trie). A letter descends into the single matching child and fails immediately if it is absent. A dot recurses into every non-null child and succeeds if any of them does. The pattern is matched only when the recursion reaches its end on a node marked as a word, which is what keeps a stored prefix like ba from matching when only bad was added. Be honest about the cost: with d dots the branching is up to 26^d, and a pattern of nothing but dots visits every node of the trie, so its cost is the size of the whole dictionary. The constraint capping dots at 3 is what keeps that acceptable.",
+    "code": [
+      "class WordDictionary {",
+      "    private static class Node {",
+      "        Node[] children = new Node[26];",
+      "        boolean isWord;",
+      "    }",
+      "",
+      "    private final Node root = new Node();",
+      "",
+      "    public void addWord(String word) {",
+      "        Node node = root;",
+      "        for (char c : word.toCharArray()) {",
+      "            int i = c - 'a';",
+      "            if (node.children[i] == null) node.children[i] = new Node();",
+      "            node = node.children[i];",
+      "        }",
+      "        node.isWord = true;",
+      "    }",
+      "",
+      "    public boolean search(String pattern) {",
+      "        return dfs(pattern, 0, root);",
+      "    }",
+      "",
+      "    private boolean dfs(String pattern, int at, Node node) {",
+      "        if (node == null) return false;",
+      "        if (at == pattern.length()) return node.isWord;",
+      "        char c = pattern.charAt(at);",
+      "        if (c != '.') return dfs(pattern, at + 1, node.children[c - 'a']);",
+      "        for (Node child : node.children) {   // a dot has no child to pick, so try every one",
+      "            if (dfs(pattern, at + 1, child)) return true;",
+      "        }",
+      "        return false;",
+      "    }",
+      "}"
+    ],
+    "complexity": {
+      "time": "addWord O(L). search O(L) with no dots; up to O(26^d * L) with d dots, and an all-dots pattern touches every trie node, which is O(N) for N characters stored",
+      "space": "O(N) for the trie plus O(L) recursion depth"
+    }
+  },
+  "visualization": {
+    "engine": "trieOps",
+    "title": "bad, dad, mad and map as one trie - search(mad) walks a single path, and search(.ad) would start that same walk from every child of the root",
+    "input": {
+      "words": [
+        "bad",
+        "dad",
+        "mad",
+        "map"
+      ],
+      "search": "mad",
+      "prefix": "ma"
+    },
+    "code": [
+      "Node node = root;                                    // --- addWord(word) ---",
+      "for (char c : word.toCharArray())                    // walk down, creating what is missing",
+      "    node = node.children[c - 'a'];                   // an existing child is reused",
+      "node.isWord = true;                                  // terminal: a word, not just a prefix",
+      "",
+      "boolean dfs(String pattern, int at, Node node) {     // --- search(pattern) ---",
+      "    if (node == null) return false;                  // the letter had no child: dead end",
+      "    if (at == pattern.length()) return node.isWord;   // length matched - is it a WORD?",
+      "    char c = pattern.charAt(at);",
+      "    if (c != '.') return dfs(pattern, at + 1, node.children[c - 'a']);   // one fixed child",
+      "    for (Node child : node.children)                 // a dot: branch into all of them",
+      "        if (dfs(pattern, at + 1, child)) return true;",
+      "    return false;",
+      "}"
+    ]
+  },
+  "commonMistakes": [
+    "Returning true as soon as the pattern is consumed instead of returning node.isWord - after adding only bad, search(ba) reports true, because the path ba exists in the trie even though no word ends there.",
+    "In the dot branch, returning the result of the first non-null child rather than continuing the loop - with bad and cat stored, search(.at) descends into b first, fails there and returns false, silently skipping the c subtree that does match.",
+    "Indexing node.children[c - 'a'] and recursing without the null guard at the top of dfs - the first search for a letter never added, such as search(zzz) on an all-lowercase-a dictionary, throws NullPointerException instead of returning false."
+  ],
+  "similar": [
+    "implement-trie",
+    "word-search-ii",
+    "longest-word-in-dictionary",
+    "longest-common-prefix"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 211,
+      "slug": "design-add-and-search-words-data-structure",
+      "title": "Design Add and Search Words Data Structure",
+      "url": "https://leetcode.com/problems/design-add-and-search-words-data-structure/",
+      "premium": false
+    }
+  }
+}

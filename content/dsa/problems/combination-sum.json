@@ -1,0 +1,137 @@
+{
+  "id": "combination-sum",
+  "title": "Combination Sum",
+  "patternId": "backtracking",
+  "difficulty": "intermediate",
+  "tags": [
+    "array",
+    "backtracking",
+    "recursion"
+  ],
+  "statement": "Given an array of distinct positive integers and a target, return every combination of the candidates that sums to the target. The same candidate may be used any number of times, and two combinations are the same if they contain the same numbers with the same multiplicities — order does not distinguish them.",
+  "realWorld": "Making an exact amount out of available denominations and listing every way to do it: vending-machine change, splitting a payment across gift-card balances, or choosing resource quotas from a fixed menu of instance sizes that exactly fill a budget when each size can be allocated repeatedly.",
+  "examples": [
+    {
+      "input": "candidates = [2,3,6,7], target = 7",
+      "output": "[[2,2,3],[7]]",
+      "explanation": "2 is reused twice. [3,2,2] is not a separate answer — it is the same combination in another order."
+    },
+    {
+      "input": "candidates = [2,3,5], target = 8",
+      "output": "[[2,2,2,2],[2,3,3],[3,5]]",
+      "explanation": "Three combinations, each non-decreasing. Enumerating them in sorted order is what guarantees no duplicates appear."
+    },
+    {
+      "input": "candidates = [2], target = 1",
+      "output": "[]",
+      "explanation": "No combination reaches an odd target from a single even candidate, so the answer is the empty list rather than an error."
+    }
+  ],
+  "constraints": [
+    "1 <= candidates.length <= 30",
+    "2 <= candidates[i] <= 40",
+    "All candidates are distinct",
+    "1 <= target <= 40",
+    "Fewer than 150 combinations exist for any valid input"
+  ],
+  "bruteForce": {
+    "idea": "Build every sequence of candidates whose sum has not yet passed the target, recording those that land exactly on it, then deduplicate by sorting each sequence and putting it in a set.",
+    "code": [
+      "public static List<List<Integer>> combinationSum(int[] candidates, int target) {",
+      "    Set<List<Integer>> unique = new HashSet<>();",
+      "    build(candidates, target, new ArrayList<>(), unique);",
+      "    return new ArrayList<>(unique);",
+      "}",
+      "",
+      "private static void build(int[] candidates, int remaining, List<Integer> current, Set<List<Integer>> unique) {",
+      "    if (remaining == 0) {",
+      "        List<Integer> copy = new ArrayList<>(current);",
+      "        Collections.sort(copy);   // sort only so the set can spot duplicates",
+      "        unique.add(copy);",
+      "        return;",
+      "    }",
+      "    if (remaining < 0) return;",
+      "    for (int candidate : candidates) {",
+      "        current.add(candidate);",
+      "        build(candidates, remaining - candidate, current, unique);",
+      "        current.remove(current.size() - 1);",
+      "    }",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(k^(target/min))",
+      "space": "O(target/min)"
+    },
+    "whySlow": "Scanning all k candidates at every level generates ordered sequences, so each real combination is produced once for every arrangement of its elements: [2,2,3] is built three times, and a combination of eight distinct numbers is built 40,320 times only to be thrown away by the set. With candidates [2,3,6,7] and target 30 that is on the order of 4^15, roughly a billion paths, for at most a few dozen answers. On top of that, a branch that has already overshot keeps being extended until the recursion notices, so work continues below states that were dead several levels earlier."
+  },
+  "patternIdentification": "The question asks for all the solutions rather than a count or an optimum, so the answers are the accepted leaves of a search tree and enumeration is unavoidable — the only lever is cutting branches before they are explored. Every backtracking solution is the same three-line skeleton: CHOOSE a candidate, RECURSE on the smaller problem, UN-CHOOSE to restore the state exactly as it was. What distinguishes one problem from another is the pruning, because backtracking without pruning is brute force with extra steps. Here there are two cuts, and both are worth naming. A start index means a recursive call never looks at candidates before position i, which collapses every permutation of a combination into a single path — that is how duplicates are prevented, not by a set afterwards. And sorting the candidates turns the overshoot test into a break rather than a continue: once candidates[i] exceeds what remains, every later candidate exceeds it too, so the rest of the loop is dead. Note the one detail specific to 'unlimited reuse': the recursive call passes i, not i + 1, so the same candidate stays available at the next level.",
+  "optimized": {
+    "idea": "Sort once, then backtrack with a start index and a running remainder. Recursing with i keeps the current candidate in play (reuse is allowed); recursing with i + 1 would forbid it. The loop breaks as soon as a candidate exceeds the remainder, which on sorted input kills the whole tail of the loop and everything beneath it.",
+    "code": [
+      "public static List<List<Integer>> combinationSum(int[] candidates, int target) {",
+      "    Arrays.sort(candidates);   // sorted so the overshoot test can BREAK, not just continue",
+      "    List<List<Integer>> result = new ArrayList<>();",
+      "    backtrack(candidates, target, 0, new ArrayList<>(), result);",
+      "    return result;",
+      "}",
+      "",
+      "private static void backtrack(int[] candidates, int remaining, int start,",
+      "                              List<Integer> current, List<List<Integer>> result) {",
+      "    if (remaining == 0) {",
+      "        result.add(new ArrayList<>(current));   // a COPY: current keeps mutating below",
+      "        return;",
+      "    }",
+      "    for (int i = start; i < candidates.length; i++) {",
+      "        if (candidates[i] > remaining) break;",
+      "        current.add(candidates[i]);                                     // choose",
+      "        backtrack(candidates, remaining - candidates[i], i, current, result);   // i: reuse allowed",
+      "        current.remove(current.size() - 1);                             // un-choose",
+      "    }",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(k^(target/min)) worst case, but pruned to near the number of answers in practice",
+      "space": "O(target/min) recursion depth, plus the output"
+    }
+  },
+  "visualization": {
+    "engine": "backtrackingSubsets",
+    "input": {
+      "array": [
+        2,
+        3,
+        5
+      ]
+    },
+    "code": [
+      "void backtrack(int start, int remaining) {",
+      "    if (remaining == 0) { result.add(new ArrayList<>(current)); return; }",
+      "    for (int i = start; i < candidates.length && candidates[i] <= remaining; i++) {",
+      "        current.add(candidates[i]);",
+      "        backtrack(i, remaining - candidates[i]);   // i, not i + 1 — reuse is allowed",
+      "        current.remove(current.size() - 1);",
+      "    }",
+      "}"
+    ]
+  },
+  "commonMistakes": [
+    "Recursing with i + 1 instead of i, which is the subsets skeleton copied without adjusting it. Each candidate is then used at most once and [2,3,6,7] with target 7 returns only [[7]] — the [2,2,3] answer is missing and nothing crashes, so the output just looks short.",
+    "Adding current itself to the result instead of new ArrayList<>(current). Every entry points at the same list object, which the search keeps mutating, so the returned value ends up as N copies of an empty list.",
+    "Omitting the un-choose (current.remove(current.size() - 1)). The partial combination only ever grows, so the first answer may still be correct and every answer after it carries leftover elements from the branch before — [2,3,6,7] with target 7 yields [2,2,3] followed by garbage like [2,2,3,7]."
+  ],
+  "similar": [
+    "subsets",
+    "coin-change",
+    "letter-combinations-phone",
+    "palindrome-partitioning"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 39,
+      "slug": "combination-sum",
+      "title": "Combination Sum",
+      "url": "https://leetcode.com/problems/combination-sum/",
+      "premium": false
+    }
+  }
+}

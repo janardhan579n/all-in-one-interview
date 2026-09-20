@@ -1,0 +1,151 @@
+{
+  "id": "number-of-islands",
+  "title": "Number of Islands",
+  "patternId": "dfs",
+  "difficulty": "intermediate",
+  "tags": [
+    "grid",
+    "dfs",
+    "bfs",
+    "connected-components"
+  ],
+  "statement": "Given a grid of '1' (land) and '0' (water), count the number of islands. An island is land connected horizontally or vertically, surrounded by water.",
+  "realWorld": "Counting connected clusters: distinct regions in an image after thresholding, groups of related accounts in fraud detection, or isolated partitions in a network after link failures.",
+  "examples": [
+    {
+      "input": "[[1,1,0,0,0],[1,1,0,0,0],[0,0,1,0,0],[0,0,0,1,1]]",
+      "output": "3",
+      "explanation": "Top-left block, the single middle cell, and the bottom-right pair."
+    },
+    {
+      "input": "[[1,1,1],[0,1,0],[1,1,1]]",
+      "output": "1",
+      "explanation": "All land is connected through the middle column."
+    }
+  ],
+  "constraints": [
+    "1 <= rows, cols <= 300",
+    "grid[i][j] is '0' or '1'"
+  ],
+  "bruteForce": {
+    "idea": "Try to pair up adjacent land cells and merge groups, repeatedly scanning until no merges happen.",
+    "code": [
+      "// repeatedly relabel: give each land cell its own id, then keep sweeping,",
+      "// merging ids of adjacent cells until a full sweep changes nothing",
+      "boolean changed = true;",
+      "while (changed) { changed = mergeAdjacentLabels(grid, labels); }",
+      "return distinctLabels(labels);"
+    ],
+    "complexity": {
+      "time": "O((rows * cols)^2) worst case",
+      "space": "O(rows * cols)"
+    },
+    "whySlow": "A long snaking island needs many sweeps for labels to propagate end to end. Union-Find fixes the merging approach properly, but a traversal is simpler here."
+  },
+  "patternIdentification": "Counting connected components. Start a traversal at each unvisited land cell; the traversal absorbs the entire island so it is never counted again. The number of times you have to start is the answer.",
+  "optimized": {
+    "idea": "Scan the grid. On each unvisited land cell, increment the count and run a DFS flood fill that sinks the whole island (marks it visited). Every cell is visited at most twice — once by the scan, once by a flood fill.",
+    "code": [
+      "public static int numIslands(char[][] grid) {",
+      "    int islands = 0;",
+      "    for (int r = 0; r < grid.length; r++) {",
+      "        for (int c = 0; c < grid[0].length; c++) {",
+      "            if (grid[r][c] == '1') {",
+      "                islands++;        // a cell no earlier flood fill reached",
+      "                sink(grid, r, c); // absorb the whole island",
+      "            }",
+      "        }",
+      "    }",
+      "    return islands;",
+      "}",
+      "",
+      "private static void sink(char[][] grid, int r, int c) {",
+      "    if (r < 0 || r >= grid.length || c < 0 || c >= grid[0].length) return;",
+      "    if (grid[r][c] != '1') return;",
+      "    grid[r][c] = '0';             // mark BEFORE recursing, or you loop forever",
+      "    sink(grid, r + 1, c);",
+      "    sink(grid, r - 1, c);",
+      "    sink(grid, r, c + 1);",
+      "    sink(grid, r, c - 1);",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(rows * cols)",
+      "space": "O(rows * cols) worst-case recursion depth for an all-land grid"
+    }
+  },
+  "visualization": {
+    "engine": "gridDfs",
+    "input": {
+      "grid": [
+        [
+          1,
+          1,
+          0,
+          0,
+          1
+        ],
+        [
+          1,
+          0,
+          0,
+          0,
+          1
+        ],
+        [
+          0,
+          0,
+          1,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          1,
+          1,
+          0
+        ]
+      ]
+    },
+    "code": [
+      "int count = 0;",
+      "for (int r = 0; r < rows; r++) {",
+      "    for (int c = 0; c < cols; c++) {",
+      "        if (grid[r][c] == 1) {",
+      "            count++;                 // a cell no earlier fill reached starts a new region",
+      "            fill(grid, r, c);",
+      "        }",
+      "    }",
+      "}",
+      "",
+      "void fill(int[][] grid, int r, int c) {",
+      "    if (outOfBounds(r, c) || grid[r][c] != 1) return;",
+      "    grid[r][c] = 0;                  // sink on ENTRY — this is what terminates the recursion",
+      "    fill(grid, r + 1, c); fill(grid, r - 1, c);",
+      "    fill(grid, r, c + 1); fill(grid, r, c - 1);",
+      "}"
+    ]
+  },
+  "commonMistakes": [
+    "Marking the cell visited after recursing rather than before, which revisits cells endlessly.",
+    "Comparing against 1 instead of '1' — the grid holds chars, and '1' is 49.",
+    "Including diagonals; this problem defines connectivity as the four orthogonal neighbours only.",
+    "Mutating the caller's grid without mentioning it. If that is unacceptable, use a separate visited array (and say so).",
+    "Stack overflow on a 300x300 all-land grid; mention the iterative BFS variant."
+  ],
+  "similar": [
+    "rotting-oranges",
+    "course-schedule",
+    "word-search"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 200,
+      "slug": "number-of-islands",
+      "title": "Number of Islands",
+      "url": "https://leetcode.com/problems/number-of-islands/",
+      "premium": false
+    }
+  }
+}

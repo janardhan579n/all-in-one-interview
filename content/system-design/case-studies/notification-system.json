@@ -1,0 +1,678 @@
+{
+  "id": "notification-system",
+  "title": "Design a Notification System",
+  "difficulty": "intermediate",
+  "estimatedMinutes": 45,
+  "summary": "Deliver push, SMS and email to millions of users through unreliable third parties, without duplicating messages, losing them, or letting one slow provider stall everything.",
+  "steps": [
+    {
+      "key": "requirements",
+      "title": "1. Clarify the problem",
+      "content": "- Which channels: push (iOS/Android), SMS, email, in-app?\n- Triggered by user actions, by scheduled campaigns, or both?\n- Does ordering matter between notifications to the same user?\n- What are the delivery guarantees — at-least-once, or best effort per channel?\n- Do users control preferences and quiet hours? (Almost always yes, and it shapes the pipeline.)\n- Is there a rate limit per user so we do not become the thing they mute?"
+    },
+    {
+      "key": "functional",
+      "title": "2. Functional requirements",
+      "content": "- Accept a notification request: recipient, template, payload, channel(s), priority.\n- Respect per-user preferences, opt-outs and quiet hours.\n- Render templates with localisation.\n- Deliver through the right third-party provider per channel.\n- Retry transient failures with backoff; give up eventually and record why.\n- Deduplicate: the same logical event must not produce two messages.\n- Expose delivery status and analytics."
+    },
+    {
+      "key": "nonfunctional",
+      "title": "3. Non-functional requirements",
+      "content": "- **Scale**: 10M notifications/day average, 100k/s during a campaign burst.\n- **Latency**: transactional (OTP, password reset) under 5 seconds end to end. Marketing can take minutes.\n- **Reliability**: at-least-once with idempotent delivery. Losing an OTP is a support ticket; sending it twice is merely untidy.\n- **Isolation**: one channel's provider outage must not block the others.\n- **Compliance**: honour opt-outs absolutely, and keep an auditable record."
+    },
+    {
+      "key": "estimation",
+      "title": "4. Estimation",
+      "content": "**Average rate**: 10M/day ÷ 86,400 ≈ **120/s**. Unremarkable.\n\n**Burst**: a campaign to 5M users sent 'now' at 100k/s is the number that shapes the design. Note the ratio — peak is 800× average. Provisioning synchronously for peak would be absurd; this is exactly what a queue is for.\n\n**Storage**: a delivery record ≈ 200 bytes. 10M/day × 200 B = 2 GB/day, ≈ 730 GB/year. Keep 90 days hot (~180 GB) and archive the rest.\n\n**Fan-out**: one campaign row expands into 5M individual messages. The expansion must happen in workers reading from a queue, never inside the API request."
+    },
+    {
+      "key": "architecture",
+      "title": "5. Architecture",
+      "content": "The pipeline: **API → validation & preferences → per-channel queues → channel workers → third-party providers → status callbacks → analytics**.\n\nThe two decisions that matter:\n\n**Separate queues per channel.** If push, SMS and email share one queue, a slow SMS provider blocks email delivery behind it — head-of-line blocking. Separate queues mean each channel fails and scales independently.\n\n**Separate priority lanes.** Transactional OTPs must not queue behind a 5-million-message marketing campaign. A high-priority queue with its own workers keeps the 5-second SLA regardless of what marketing is doing."
+    },
+    {
+      "key": "dedup",
+      "title": "6. Deduplication and idempotency",
+      "content": "At-least-once delivery means duplicates are guaranteed, not hypothetical: a worker can crash after calling the provider but before acknowledging the message.\n\nEvery notification carries an idempotency key — typically `hash(userId, eventId, channel)`. Before dispatching, the worker attempts an atomic insert of that key into a store with a TTL (Redis `SET NX`, or a unique constraint). If the insert fails, the notification has already been sent and the worker acknowledges without sending.\n\nThe unavoidable gap: the crash window between calling the provider and recording success. Recording the key *before* dispatch risks losing a message; recording it *after* risks a duplicate. For OTPs, prefer the duplicate."
+    },
+    {
+      "key": "providers",
+      "title": "7. Dealing with third-party providers",
+      "content": "Providers are the least reliable part of this system, so design for their failure explicitly.\n\n- **Circuit breaker** per provider: after N consecutive failures, stop calling it for a cooling-off period. Without this, workers burn their time on timeouts and the queue backs up.\n- **Failover**: a secondary provider per channel, with automatic switchover. SMS especially.\n- **Rate limiting outbound**: providers impose their own limits, and exceeding them gets you throttled or blocked.\n- **Retry with exponential backoff and jitter** — 1s, 2s, 4s, 8s. Without jitter, all retries from one outage land simultaneously.\n- **Dead letter queue** after the retry budget, so a poison message never blocks the queue and someone can inspect it.\n- **Status callbacks**: delivery confirmation arrives asynchronously via webhook, so the final status is written by a different path than the send."
+    },
+    {
+      "key": "preferences",
+      "title": "8. Preferences, quiet hours and rate limits",
+      "content": "Checked before enqueueing, so suppressed notifications never consume worker capacity.\n\n- Per-user, per-channel, per-category opt-in/out.\n- Quiet hours in the user's local timezone — scheduled for later rather than dropped, for anything non-urgent.\n- A per-user frequency cap ('at most 5 marketing messages per day') — the single most effective protection against users disabling notifications entirely.\n- Transactional notifications (OTP, security alerts) bypass marketing preferences but never bypass a hard legal opt-out."
+    },
+    {
+      "key": "failure",
+      "title": "9. Failure handling",
+      "content": "- **Provider down**: circuit breaker opens, traffic fails over to the secondary, messages queue rather than vanish.\n- **Queue backed up**: consumer lag is the alert, not queue depth. Scale out workers; shed low-priority traffic first.\n- **Poison message**: retries exhausted, moved to the DLQ with the failure reason.\n- **Duplicate callback**: status updates must be idempotent too — providers retry webhooks.\n- **Campaign sent by mistake**: a kill switch that drains a campaign's queued messages. Worth designing before it is needed."
+    },
+    {
+      "key": "final",
+      "title": "10. Final architecture",
+      "content": "API → preference/validation service → priority-and-channel-partitioned queues → per-channel worker pools with circuit breakers and provider failover → providers → webhook receiver → status store → analytics pipeline.\n\nThe shape is a direct consequence of two facts: the peak is 800× the average, and the providers are unreliable. Everything else follows."
+    }
+  ],
+  "estimation": {
+    "assumptions": [
+      "10M notifications/day",
+      "Campaign burst to 5M users",
+      "~200 bytes per delivery record",
+      "90-day hot retention"
+    ],
+    "calculations": [
+      {
+        "label": "Average rate",
+        "value": "~120/s",
+        "working": "10,000,000 / 86,400"
+      },
+      {
+        "label": "Campaign burst",
+        "value": "~100,000/s",
+        "working": "5M users delivered over ~50 s"
+      },
+      {
+        "label": "Peak-to-average ratio",
+        "value": "~800×",
+        "working": "The single strongest argument for queueing"
+      },
+      {
+        "label": "Storage per day",
+        "value": "~2 GB",
+        "working": "10M × 200 bytes"
+      },
+      {
+        "label": "Hot storage (90 days)",
+        "value": "~180 GB",
+        "working": "2 GB × 90"
+      }
+    ]
+  },
+  "api": [
+    {
+      "method": "POST",
+      "path": "/api/v1/notifications",
+      "request": "{ \"userId\": \"…\", \"template\": \"order_shipped\", \"channels\": [\"push\",\"email\"], \"data\": {…}, \"priority\": \"transactional\", \"idempotencyKey\": \"…\" }",
+      "response": "202 { \"notificationId\": \"…\", \"status\": \"queued\" }",
+      "notes": "202, not 200 — the work has been accepted, not completed. Returns immediately after enqueueing."
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/notifications/{id}",
+      "request": "—",
+      "response": "200 { \"status\": \"delivered\", \"perChannel\": [{ \"channel\": \"push\", \"status\": \"delivered\", \"at\": \"…\" }] }",
+      "notes": "Status is per channel; a notification can be delivered on push and bounced on email."
+    },
+    {
+      "method": "PUT",
+      "path": "/api/v1/users/{id}/preferences",
+      "request": "{ \"marketing\": { \"email\": false }, \"quietHours\": { \"from\": \"22:00\", \"to\": \"08:00\", \"tz\": \"Asia/Kolkata\" } }",
+      "response": "204",
+      "notes": "Enforced before enqueueing."
+    },
+    {
+      "method": "POST",
+      "path": "/webhooks/providers/{provider}",
+      "request": "provider-specific delivery receipt",
+      "response": "200",
+      "notes": "Must be idempotent — providers retry webhooks, sometimes for days."
+    }
+  ],
+  "dataModel": [
+    {
+      "name": "notifications",
+      "fields": [
+        {
+          "name": "id",
+          "type": "UUID PRIMARY KEY",
+          "notes": ""
+        },
+        {
+          "name": "user_id",
+          "type": "BIGINT",
+          "notes": "partition key if sharded"
+        },
+        {
+          "name": "template_id",
+          "type": "VARCHAR",
+          "notes": ""
+        },
+        {
+          "name": "priority",
+          "type": "VARCHAR",
+          "notes": "transactional | marketing"
+        },
+        {
+          "name": "idempotency_key",
+          "type": "VARCHAR UNIQUE",
+          "notes": "the deduplication guarantee"
+        },
+        {
+          "name": "created_at",
+          "type": "TIMESTAMP",
+          "notes": ""
+        }
+      ],
+      "indexes": [
+        "UNIQUE (idempotency_key)",
+        "INDEX (user_id, created_at)"
+      ]
+    },
+    {
+      "name": "delivery_attempts",
+      "fields": [
+        {
+          "name": "notification_id",
+          "type": "UUID",
+          "notes": ""
+        },
+        {
+          "name": "channel",
+          "type": "VARCHAR",
+          "notes": "push | sms | email"
+        },
+        {
+          "name": "provider",
+          "type": "VARCHAR",
+          "notes": "which provider handled it"
+        },
+        {
+          "name": "status",
+          "type": "VARCHAR",
+          "notes": "queued | sent | delivered | bounced | failed"
+        },
+        {
+          "name": "attempt",
+          "type": "INT",
+          "notes": "retry number"
+        },
+        {
+          "name": "error",
+          "type": "TEXT",
+          "notes": "populated on failure"
+        }
+      ],
+      "indexes": [
+        "INDEX (notification_id)",
+        "INDEX (status, created_at) for the retry sweeper"
+      ]
+    },
+    {
+      "name": "user_preferences",
+      "fields": [
+        {
+          "name": "user_id",
+          "type": "BIGINT PRIMARY KEY",
+          "notes": ""
+        },
+        {
+          "name": "channel_opt_in",
+          "type": "JSONB",
+          "notes": "per channel, per category"
+        },
+        {
+          "name": "quiet_hours",
+          "type": "JSONB",
+          "notes": "with timezone"
+        },
+        {
+          "name": "device_tokens",
+          "type": "JSONB",
+          "notes": "push tokens; expire and must be pruned on rejection"
+        }
+      ],
+      "indexes": [
+        "PRIMARY KEY (user_id)"
+      ]
+    }
+  ],
+  "evolution": [
+    {
+      "stage": "Stage 1 — send it inline",
+      "problem": "None yet, but the request thread is calling a third-party API.",
+      "change": "The app server calls the email provider directly during the request.",
+      "why": "Fine at very low volume. The flaw is structural rather than about throughput: the user's request now depends on a third party's availability and latency.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "app",
+            "label": "App server",
+            "type": "server",
+            "x": 260,
+            "y": 300
+          },
+          {
+            "id": "prov",
+            "label": "Email provider",
+            "type": "monitor",
+            "x": 640,
+            "y": 300,
+            "note": "A slow provider now means slow page loads."
+          }
+        ],
+        "edges": [
+          {
+            "from": "app",
+            "to": "prov",
+            "label": "synchronous call"
+          }
+        ]
+      }
+    },
+    {
+      "stage": "Stage 2 — the provider has an outage",
+      "problem": "The provider is down for 20 minutes. Requests time out, threads are consumed waiting, and signups start failing. A third party's outage has become yours.",
+      "change": "Put a queue between the request and the provider; a worker sends asynchronously.",
+      "why": "Fault isolation. The API writes a message and returns 202 in milliseconds. Messages accumulate during the outage and drain afterwards — nothing is lost and no user sees an error.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "app",
+            "label": "API",
+            "type": "server",
+            "x": 180,
+            "y": 300
+          },
+          {
+            "id": "q",
+            "label": "Queue",
+            "type": "queue",
+            "x": 450,
+            "y": 300,
+            "note": "Absorbs provider downtime as queue depth."
+          },
+          {
+            "id": "w",
+            "label": "Worker",
+            "type": "worker",
+            "x": 700,
+            "y": 300
+          },
+          {
+            "id": "prov",
+            "label": "Provider",
+            "type": "monitor",
+            "x": 930,
+            "y": 300
+          }
+        ],
+        "edges": [
+          {
+            "from": "app",
+            "to": "q"
+          },
+          {
+            "from": "q",
+            "to": "w"
+          },
+          {
+            "from": "w",
+            "to": "prov"
+          }
+        ]
+      }
+    },
+    {
+      "stage": "Stage 3 — three channels, and one blocks the others",
+      "problem": "Push, SMS and email share one queue. The SMS provider slows to 2 seconds per message and email delivery stalls behind it — head-of-line blocking. Meanwhile a marketing campaign delays password-reset emails past any acceptable SLA.",
+      "change": "Partition the queues by channel and by priority, with independent worker pools.",
+      "why": "Independent failure domains. Each channel scales to its own provider's throughput, and transactional traffic gets a dedicated lane so a campaign can never delay an OTP.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "api",
+            "label": "API",
+            "type": "server",
+            "x": 100,
+            "y": 300
+          },
+          {
+            "id": "pref",
+            "label": "Preferences\\n& validation",
+            "type": "server",
+            "x": 290,
+            "y": 300,
+            "note": "Opt-outs and quiet hours applied BEFORE enqueueing."
+          },
+          {
+            "id": "qt",
+            "label": "Transactional queue",
+            "type": "queue",
+            "x": 520,
+            "y": 160
+          },
+          {
+            "id": "qm",
+            "label": "Marketing queue",
+            "type": "queue",
+            "x": 520,
+            "y": 300
+          },
+          {
+            "id": "qs",
+            "label": "SMS queue",
+            "type": "queue",
+            "x": 520,
+            "y": 440
+          },
+          {
+            "id": "wt",
+            "label": "Push/email workers",
+            "type": "worker",
+            "x": 780,
+            "y": 220
+          },
+          {
+            "id": "ws",
+            "label": "SMS workers",
+            "type": "worker",
+            "x": 780,
+            "y": 440
+          },
+          {
+            "id": "prov",
+            "label": "Providers",
+            "type": "monitor",
+            "x": 980,
+            "y": 300
+          }
+        ],
+        "edges": [
+          {
+            "from": "api",
+            "to": "pref"
+          },
+          {
+            "from": "pref",
+            "to": "qt"
+          },
+          {
+            "from": "pref",
+            "to": "qm"
+          },
+          {
+            "from": "pref",
+            "to": "qs"
+          },
+          {
+            "from": "qt",
+            "to": "wt"
+          },
+          {
+            "from": "qm",
+            "to": "wt"
+          },
+          {
+            "from": "qs",
+            "to": "ws"
+          },
+          {
+            "from": "wt",
+            "to": "prov"
+          },
+          {
+            "from": "ws",
+            "to": "prov"
+          }
+        ]
+      }
+    },
+    {
+      "stage": "Stage 4 — scale, resilience and truth",
+      "problem": "Campaign bursts of 100k/s, providers failing intermittently, duplicates reaching users, and no reliable record of what was actually delivered.",
+      "change": "Add circuit breakers and provider failover, an idempotency store, a dead letter queue, a webhook receiver for delivery receipts, and an analytics pipeline.",
+      "why": "Each addition answers a specific failure: breakers stop workers wasting time on a dead provider; the idempotency store prevents duplicates that at-least-once delivery guarantees will otherwise occur; the DLQ stops a poison message blocking the queue; webhooks supply the delivery truth the send path cannot know.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "api",
+            "label": "API",
+            "type": "server",
+            "x": 80,
+            "y": 300
+          },
+          {
+            "id": "q",
+            "label": "Channel queues",
+            "type": "queue",
+            "x": 280,
+            "y": 300
+          },
+          {
+            "id": "w",
+            "label": "Workers\\n+ circuit breaker",
+            "type": "worker",
+            "x": 500,
+            "y": 300
+          },
+          {
+            "id": "idem",
+            "label": "Idempotency store",
+            "type": "cache",
+            "x": 500,
+            "y": 140,
+            "note": "SET NX with TTL. Atomic claim before dispatch."
+          },
+          {
+            "id": "p1",
+            "label": "Provider A",
+            "type": "monitor",
+            "x": 730,
+            "y": 220
+          },
+          {
+            "id": "p2",
+            "label": "Provider B (failover)",
+            "type": "monitor",
+            "x": 730,
+            "y": 380
+          },
+          {
+            "id": "dlq",
+            "label": "Dead letter queue",
+            "type": "queue",
+            "x": 500,
+            "y": 470
+          },
+          {
+            "id": "hook",
+            "label": "Webhook receiver",
+            "type": "server",
+            "x": 930,
+            "y": 300,
+            "note": "Delivery receipts arrive asynchronously and must be handled idempotently."
+          },
+          {
+            "id": "store",
+            "label": "Status + analytics",
+            "type": "db",
+            "x": 1000,
+            "y": 460
+          }
+        ],
+        "edges": [
+          {
+            "from": "api",
+            "to": "q"
+          },
+          {
+            "from": "q",
+            "to": "w"
+          },
+          {
+            "from": "w",
+            "to": "idem",
+            "dashed": true
+          },
+          {
+            "from": "w",
+            "to": "p1"
+          },
+          {
+            "from": "w",
+            "to": "p2",
+            "label": "on breaker open",
+            "dashed": true
+          },
+          {
+            "from": "w",
+            "to": "dlq",
+            "label": "retries exhausted",
+            "dashed": true
+          },
+          {
+            "from": "p1",
+            "to": "hook",
+            "label": "receipt",
+            "dashed": true
+          },
+          {
+            "from": "hook",
+            "to": "store"
+          }
+        ]
+      }
+    }
+  ],
+  "tradeoffs": [
+    {
+      "option": "At-least-once delivery",
+      "pros": [
+        "No notification is silently lost",
+        "Simple broker semantics"
+      ],
+      "cons": [
+        "Duplicates occur and must be suppressed by an idempotency store"
+      ]
+    },
+    {
+      "option": "At-most-once delivery",
+      "pros": [
+        "No duplicates"
+      ],
+      "cons": [
+        "A lost OTP is a support ticket — unacceptable for transactional traffic"
+      ]
+    },
+    {
+      "option": "One queue for all channels",
+      "pros": [
+        "Simplest to operate"
+      ],
+      "cons": [
+        "Head-of-line blocking: one slow provider stalls every channel"
+      ]
+    },
+    {
+      "option": "Queue per channel and priority",
+      "pros": [
+        "Independent scaling and failure domains",
+        "Transactional SLA protected from campaigns"
+      ],
+      "cons": [
+        "More queues, dashboards and alerts to maintain"
+      ]
+    }
+  ],
+  "interviewStages": [
+    {
+      "key": "requirements",
+      "prompt": "What do you clarify first?",
+      "hints": [
+        "Channels, triggers, guarantees, preferences"
+      ],
+      "modelAnswer": [
+        "Which channels and who triggers them",
+        "Delivery guarantee per channel — OTP and marketing differ",
+        "Preferences, quiet hours, frequency caps",
+        "Peak versus average volume"
+      ]
+    },
+    {
+      "key": "isolation",
+      "prompt": "A marketing campaign to 5M users is running. How do you protect password-reset emails?",
+      "hints": [
+        "What blocks what?"
+      ],
+      "modelAnswer": [
+        "Separate priority queues with dedicated worker pools",
+        "Transactional traffic never shares a queue with bulk",
+        "Optionally shed or throttle marketing when transactional lag rises"
+      ]
+    },
+    {
+      "key": "duplicates",
+      "prompt": "A worker crashes after calling the SMS provider but before acknowledging. What happens and how do you handle it?",
+      "hints": [
+        "At-least-once means redelivery"
+      ],
+      "modelAnswer": [
+        "The message is redelivered and the user could get two OTPs",
+        "Atomic idempotency claim (SET NX with TTL) keyed on user+event+channel before dispatch",
+        "The crash window cannot be fully closed — choose duplicate over loss for OTPs"
+      ]
+    },
+    {
+      "key": "providers",
+      "prompt": "Your SMS provider starts timing out on 30% of requests. What does your system do?",
+      "hints": [
+        "What are the workers doing while they wait?"
+      ],
+      "modelAnswer": [
+        "Circuit breaker opens after consecutive failures, stopping wasted worker time",
+        "Fail over to the secondary provider",
+        "Retry with exponential backoff and jitter; DLQ after the budget",
+        "Alert on consumer lag, not on error count alone"
+      ]
+    }
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "architecture",
+      "question": "Why use separate queues per channel rather than one shared queue?",
+      "options": [
+        "It is faster",
+        "To avoid head-of-line blocking — a slow SMS provider would otherwise stall push and email behind it",
+        "To save memory",
+        "Queues cannot hold mixed message types"
+      ],
+      "answerIndex": 1,
+      "explanation": "Separate queues create independent failure domains and let each channel scale to its own provider's throughput."
+    },
+    {
+      "id": "q2",
+      "type": "architecture",
+      "question": "At-least-once delivery means duplicates will happen. Where do you stop them?",
+      "options": [
+        "At the provider",
+        "An atomic idempotency claim keyed on user+event+channel, checked by the worker before dispatching",
+        "By disabling retries",
+        "By using a database transaction around the provider call"
+      ],
+      "answerIndex": 1,
+      "explanation": "You cannot put a third-party API call inside a transaction. An atomic claim in Redis or a unique constraint is the practical mechanism."
+    },
+    {
+      "id": "q3",
+      "type": "architecture",
+      "question": "Peak load is 800× the average. What does that justify?",
+      "options": [
+        "Provisioning workers for peak permanently",
+        "A queue that absorbs the burst as depth, with workers draining at a sustainable rate",
+        "Rejecting campaign traffic",
+        "Vertical scaling"
+      ],
+      "answerIndex": 1,
+      "explanation": "Provisioning for an 800× peak means paying for idle capacity 99% of the time. Queueing converts a capacity problem into a latency-for-bulk-traffic problem, which is exactly the right trade."
+    }
+  ],
+  "related": [
+    "message-queue",
+    "rate-limiting",
+    "scaling"
+  ]
+}

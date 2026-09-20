@@ -1,0 +1,173 @@
+{
+  "id": "meeting-rooms-ii",
+  "title": "Meeting Rooms II",
+  "patternId": "intervals",
+  "difficulty": "advanced",
+  "tags": [
+    "array",
+    "intervals",
+    "heap",
+    "sweep-line",
+    "sorting",
+    "greedy"
+  ],
+  "statement": "Given an array of meeting time intervals `[start, end)`, return the minimum number of conference rooms required to hold all of them. A meeting ending exactly when another begins does not need a second room.",
+  "realWorld": "Capacity planning, and the reason it matters beyond calendars: the peak number of overlapping sessions is the size the connection pool, thread pool or fleet must be. Run the same sweep over request spans from an access log and the answer is the concurrency the service actually saw.",
+  "examples": [
+    {
+      "input": "intervals = [[0,30],[5,10],[15,20]]",
+      "output": "2",
+      "explanation": "[0,30] runs throughout. [5,10] needs a second room; it ends before [15,20] starts, so [15,20] reuses that room. Peak concurrency is 2."
+    },
+    {
+      "input": "intervals = [[7,10],[2,4]]",
+      "output": "1",
+      "explanation": "They do not overlap, so one room is reused."
+    },
+    {
+      "input": "intervals = [[1,5],[5,9],[9,13]]",
+      "output": "1",
+      "explanation": "Ends are exclusive, so a meeting ending at 5 frees the room for one starting at 5."
+    }
+  ],
+  "constraints": [
+    "1 <= intervals.length <= 10^4",
+    "0 <= start_i < end_i <= 10^6",
+    "Intervals are half-open: [start, end)"
+  ],
+  "bruteForce": {
+    "idea": "The answer is the largest number of meetings running at any instant, so check every instant that matters — every meeting's start time — and count how many intervals cover it.",
+    "code": [
+      "int best = 0;",
+      "for (int[] probe : intervals) {",
+      "    int at = probe[0];               // concurrency only changes at a start",
+      "    int concurrent = 0;",
+      "    for (int[] other : intervals) {",
+      "        if (other[0] <= at && at < other[1]) {   // covers this instant",
+      "            concurrent++;",
+      "        }",
+      "    }",
+      "    best = Math.max(best, concurrent);",
+      "}",
+      "return best;"
+    ],
+    "complexity": {
+      "time": "O(n^2)",
+      "space": "O(1)"
+    },
+    "whySlow": "Every probe rescans the whole list, so 10^4 meetings cost 10^8 comparisons. It also recomputes from scratch what barely changes: between two consecutive starts, the set of running meetings shifts by a handful of entries, not by everything."
+  },
+  "patternIdentification": "This is the interval pattern, but the question is 'how many at once?' rather than 'what are the blocks?', so nothing is merged. Sort by start — chronological arrival — and keep only what you need in order to reuse a room: the end times of the meetings still running. The single end time that matters when a new meeting arrives is the earliest, which is exactly what a min-heap's root gives in O(1).",
+  "optimized": {
+    "idea": "Sort by start. Keep a min-heap of the end times of meetings still in progress. For each meeting, pop every end that is at or before its start — those rooms are free again — then push its own end. The heap's size is the number of rooms in use at that moment, and the largest size it ever reaches is the answer.",
+    "code": [
+      "public static int minMeetingRooms(int[][] intervals) {",
+      "    if (intervals == null || intervals.length == 0) {",
+      "        return 0;",
+      "    }",
+      "",
+      "    Arrays.sort(intervals, (a, b) -> Integer.compare(a[0], b[0]));   // chronological order",
+      "",
+      "    // Min-heap of end times: the root is the room that frees up soonest.",
+      "    PriorityQueue<Integer> busyUntil = new PriorityQueue<>();",
+      "    int best = 0;",
+      "",
+      "    for (int[] meeting : intervals) {",
+      "        // Half-open [start, end): an end exactly at this start releases the room.",
+      "        while (!busyUntil.isEmpty() && busyUntil.peek() <= meeting[0]) {",
+      "            busyUntil.poll();",
+      "        }",
+      "        busyUntil.add(meeting[1]);",
+      "        best = Math.max(best, busyUntil.size());   // rooms in use right now",
+      "    }",
+      "    return best;",
+      "}",
+      "",
+      "/** Same answer, no heap: two sorted arrays and a running count. */",
+      "public static int minMeetingRoomsNoHeap(int[][] intervals) {",
+      "    int n = intervals.length;",
+      "    int[] starts = new int[n];",
+      "    int[] ends = new int[n];",
+      "    for (int i = 0; i < n; i++) {",
+      "        starts[i] = intervals[i][0];",
+      "        ends[i] = intervals[i][1];",
+      "    }",
+      "    Arrays.sort(starts);",
+      "    Arrays.sort(ends);",
+      "",
+      "    int rooms = 0, best = 0, endIndex = 0;",
+      "    for (int startIndex = 0; startIndex < n; startIndex++) {",
+      "        while (endIndex < n && ends[endIndex] <= starts[startIndex]) {",
+      "            rooms--;                 // a room was released before this meeting begins",
+      "            endIndex++;",
+      "        }",
+      "        rooms++;",
+      "        best = Math.max(best, rooms);",
+      "    }",
+      "    return best;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n log n) — the sort, plus at most n pushes and n pops at O(log n) each",
+      "space": "O(n) for the heap, when every meeting overlaps every other"
+    }
+  },
+  "visualization": {
+    "engine": "heapOps",
+    "input": {
+      "operations": [
+        {
+          "op": "insert",
+          "value": 30
+        },
+        {
+          "op": "insert",
+          "value": 10
+        },
+        {
+          "op": "extract"
+        },
+        {
+          "op": "insert",
+          "value": 20
+        }
+      ]
+    },
+    "code": [
+      "PriorityQueue<Integer> busyUntil = new PriorityQueue<>();   // min-heap of end times",
+      "heap[size++] = endTime;                       // add(): append, keeping the tree complete",
+      "int i = size - 1;",
+      "while (i > 0 && heap[parent(i)] > heap[i]) {  // sift up while smaller than the parent",
+      "    swap(heap, i, parent(i));",
+      "    i = parent(i);                            // climb; stop at the root",
+      "}",
+      "",
+      "int earliestEnd = heap[0];                    // peek(): the room that frees up soonest",
+      "heap[0] = heap[--size];                       // poll(): last element to the root",
+      "int j = 0, child;",
+      "while ((child = smallerChild(j)) != -1 && heap[child] < heap[j]) { swap(heap, j, child); j = child; }",
+      "// heap property restored — every push and pop touched at most log2(n) levels"
+    ]
+  },
+  "commonMistakes": [
+    "Using `<` instead of `<=` when releasing rooms. With half-open [start, end) a meeting ending at 5 frees the room for one starting at 5; with inclusive ends it does not. Ask which convention applies before writing the loop.",
+    "Sorting by end time. The sweep must process meetings in arrival order, or a later-starting meeting can steal a room from an earlier one.",
+    "Using a max-heap. The only end time worth comparing against is the earliest, so the heap must be a min-heap of ends.",
+    "Returning `busyUntil.size()` at the end rather than the maximum size seen. The heap shrinks as meetings finish, so the final size is the concurrency at the last start, not the peak.",
+    "Reaching for merge-intervals and reporting the number of merged blocks. Merging answers a different question — [[0,30],[5,10],[15,20]] merges to a single block but needs two rooms.",
+    "Trying to shortcut with a counting array indexed by time. It works only when times are small integers; with 0 <= t <= 10^6 it is wasteful, and with real timestamps it is impossible."
+  ],
+  "similar": [
+    "merge-intervals",
+    "insert-interval"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 253,
+      "slug": "meeting-rooms-ii",
+      "title": "Meeting Rooms II",
+      "url": "https://leetcode.com/problems/meeting-rooms-ii/",
+      "premium": true
+    }
+  }
+}

@@ -1,0 +1,160 @@
+{
+  "id": "number-of-provinces",
+  "title": "Number of Provinces",
+  "patternId": "union-find",
+  "difficulty": "beginner",
+  "tags": [
+    "graph",
+    "union-find",
+    "dfs",
+    "connectivity"
+  ],
+  "statement": "There are n cities. Some are connected directly, and connectivity is transitive: if a is connected to b and b is connected to c, then a, b and c are all in the same province. You are given an n x n matrix `isConnected` where `isConnected[i][j] == 1` means city i and city j are directly connected. Return the total number of provinces — the number of groups of cities with no connection between groups.",
+  "realWorld": "Counting distinct customers behind duplicate accounts: each matching signal (same phone, same device) links two records, links chain transitively, and the count of groups is the count of real people. The same question appears as 'how many clusters of machines can still reach each other after this network partition?'",
+  "examples": [
+    {
+      "input": "isConnected = [[1,1,0],[1,1,0],[0,0,1]]",
+      "output": "2",
+      "explanation": "Cities 0 and 1 are directly connected, so they form one province. City 2 is alone and forms the second."
+    },
+    {
+      "input": "isConnected = [[1,0,0],[0,1,0],[0,0,1]]",
+      "output": "3",
+      "explanation": "No city is connected to any other, so every city is its own province."
+    },
+    {
+      "input": "isConnected = [[1,1,0,0,0],[1,1,1,0,0],[0,1,1,0,0],[0,0,0,1,1],[0,0,0,1,1]]",
+      "output": "2",
+      "explanation": "0-1-2 form one province through the chain 0-1 and 1-2; 3-4 form the other."
+    }
+  ],
+  "constraints": [
+    "1 <= n <= 200",
+    "isConnected[i][i] == 1",
+    "isConnected[i][j] == isConnected[j][i] (the relation is symmetric)",
+    "isConnected[i][j] is 0 or 1"
+  ],
+  "bruteForce": {
+    "idea": "Take each unvisited city as a candidate province, and for every other city run a BFS through the matrix to ask 'can I reach it?'. Mark everything reachable as belonging to this province, then move on.",
+    "code": [
+      "int provinces = 0;",
+      "boolean[] assigned = new boolean[n];",
+      "for (int start = 0; start < n; start++) {",
+      "    if (assigned[start]) continue;",
+      "    provinces++;",
+      "    for (int other = 0; other < n; other++) {",
+      "        if (assigned[other]) continue;",
+      "        if (reachableByBfs(isConnected, start, other)) {   // a full traversal, per pair",
+      "            assigned[other] = true;",
+      "        }",
+      "    }",
+      "}",
+      "return provinces;"
+    ],
+    "complexity": {
+      "time": "O(n^4)",
+      "space": "O(n) for the visited set inside each BFS"
+    },
+    "whySlow": "There are O(n^2) pairs and each BFS over an adjacency *matrix* costs O(n^2), because finding a node's neighbours means scanning its whole row. Every traversal rediscovers the same component from scratch and then keeps one bit of the result. n = 200 turns into roughly 1.6 billion operations for a problem whose input is only 40,000 cells."
+  },
+  "patternIdentification": "The question is pure connectivity — which cities end up in the same group — and nothing in the answer depends on the route between them. Links are handed to you one cell at a time and the grouping is transitive. That is union-find: each `isConnected[i][j] == 1` is a merge, and the number of provinces is the number of groups left when every merge has been applied.",
+  "optimized": {
+    "idea": "Create a disjoint set over the n cities, start a component counter at n, and walk only the upper triangle of the matrix (the relation is symmetric, so j > i suffices). Each 1 is a union; a union that actually merged two different groups decrements the counter. The counter is the answer — no second pass needed.",
+    "code": [
+      "public static int findCircleNum(int[][] isConnected) {",
+      "    int n = isConnected.length;",
+      "    int[] parent = new int[n];",
+      "    int[] rank = new int[n];",
+      "    for (int i = 0; i < n; i++) parent[i] = i;",
+      "    int provinces = n;                       // every city starts alone",
+      "",
+      "    for (int i = 0; i < n; i++) {",
+      "        for (int j = i + 1; j < n; j++) {    // symmetric: the lower triangle repeats it",
+      "            if (isConnected[i][j] == 0) continue;",
+      "            int rootI = find(parent, i);",
+      "            int rootJ = find(parent, j);",
+      "            if (rootI == rootJ) continue;    // already one province",
+      "            if (rank[rootI] < rank[rootJ]) { int t = rootI; rootI = rootJ; rootJ = t; }",
+      "            parent[rootJ] = rootI;",
+      "            if (rank[rootI] == rank[rootJ]) rank[rootI]++;",
+      "            provinces--;                     // two groups became one",
+      "        }",
+      "    }",
+      "    return provinces;",
+      "}",
+      "",
+      "private static int find(int[] parent, int x) {",
+      "    while (parent[x] != x) {",
+      "        parent[x] = parent[parent[x]];       // path halving",
+      "        x = parent[x];",
+      "    }",
+      "    return x;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n^2 · α(n)) — effectively O(n^2), the cost of reading the matrix once",
+      "space": "O(n) for the parent and rank arrays"
+    }
+  },
+  "visualization": {
+    "engine": "unionFind",
+    "input": {
+      "size": 5,
+      "operations": [
+        {
+          "op": "union",
+          "a": 0,
+          "b": 1
+        },
+        {
+          "op": "union",
+          "a": 1,
+          "b": 2
+        },
+        {
+          "op": "union",
+          "a": 3,
+          "b": 4
+        },
+        {
+          "op": "find",
+          "a": 2
+        }
+      ]
+    },
+    "code": [
+      "int[] parent = new int[n];   // parent[i] = i — every city is its own province",
+      "int[] rank   = new int[n];   // an upper bound on each tree's height",
+      "",
+      "int root = x; while (parent[root] != root) root = parent[root];          // climb to the root",
+      "while (parent[x] != root) { int next = parent[x]; parent[x] = root; x = next; }  // path compression",
+      "return root;                                                             // find(x)",
+      "",
+      "if (find(a) == find(b)) return false;   // already the same province — nothing to merge",
+      "int ra = find(a), rb = find(b); if (rank[ra] < rank[rb]) { int t = ra; ra = rb; rb = t; }",
+      "parent[rb] = ra; if (rank[ra] == rank[rb]) rank[ra]++;   // union by rank; provinces--"
+    ]
+  },
+  "commonMistakes": [
+    "Scanning the whole matrix instead of the upper triangle — harmless for correctness (the repeated union is a no-op) but it doubles the work and hides the symmetry you were supposed to notice.",
+    "Decrementing the province counter on every 1 in the matrix rather than only when the union actually merged two different roots.",
+    "Comparing `parent[i] == parent[j]` instead of `find(i) == find(j)`; two cities can share a grandparent without sharing a parent.",
+    "Counting the roots at the end with a second O(n) pass that uses `parent[i] == i` — correct, but only if you call `find(i)`, since a stale parent entry is not a root.",
+    "Reaching for DFS and then claiming it is slower than union-find: a single DFS over the matrix is also O(n^2) here. The honest comparison is against the pairwise-BFS brute force, and union-find's real edge is that it keeps working when edges arrive as a stream."
+  ],
+  "similar": [
+    "redundant-connection",
+    "accounts-merge",
+    "number-of-islands",
+    "course-schedule"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 547,
+      "slug": "number-of-provinces",
+      "title": "Number of Provinces",
+      "url": "https://leetcode.com/problems/number-of-provinces/",
+      "premium": false
+    }
+  }
+}

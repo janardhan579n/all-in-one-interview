@@ -1,0 +1,176 @@
+{
+  "id": "client-server",
+  "title": "Client & Server",
+  "group": "Foundations",
+  "level": 0,
+  "estimatedMinutes": 15,
+  "summary": "One program asks, another answers. Everything else in system design is a refinement of that sentence.",
+  "analogy": "A restaurant. You (the client) read a menu, decide, and tell the waiter what you want. The kitchen (the server) has the ingredients and the equipment; you do not. You cannot walk in and cook, and the kitchen never cooks for someone who has not ordered. The menu is the API: the agreed list of what you are allowed to ask for.",
+  "explanation": {
+    "beginner": "Your phone or browser is the client. It does not hold Instagram's photos — it asks a computer in a data centre for them, and that computer sends them back. The client's job is to show things and collect input; the server's job is to hold the real data and decide what is allowed. They talk over the internet using an agreed format, and each request stands on its own.",
+    "interview": "A request-response architecture separating presentation from state and policy. Servers own the authoritative data and enforce authorisation; clients are untrusted and disposable. HTTP servers are conventionally stateless per request, with session state externalised to a store or carried in a signed token, which is what makes horizontal scaling behind a load balancer possible."
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "client",
+        "label": "Client\\n(browser / app)",
+        "type": "client",
+        "x": 140,
+        "y": 300,
+        "note": "Renders UI, collects input, holds no authoritative data. Cannot be trusted — anyone can modify it.",
+        "why": {
+          "without": [
+            "Every user would need a copy of the whole database",
+            "No way to share data between users"
+          ],
+          "with": [
+            "Thin, replaceable, runs anywhere"
+          ],
+          "conclusion": "Clients present; they do not decide."
+        }
+      },
+      {
+        "id": "server",
+        "label": "Server\\n(application)",
+        "type": "server",
+        "x": 500,
+        "y": 300,
+        "note": "Validates input, enforces authorisation, applies business rules, reads and writes the database.",
+        "why": {
+          "without": [
+            "Clients would write to the database directly, so any user could write anything"
+          ],
+          "with": [
+            "One place enforces the rules, and it is the only thing the database trusts"
+          ],
+          "conclusion": "The server is where trust lives."
+        }
+      },
+      {
+        "id": "db",
+        "label": "Database",
+        "type": "db",
+        "x": 840,
+        "y": 300,
+        "note": "Durable, authoritative state. Survives server restarts and is shared by every server instance."
+      }
+    ],
+    "edges": [
+      {
+        "from": "client",
+        "to": "server",
+        "label": "request"
+      },
+      {
+        "from": "server",
+        "to": "client",
+        "label": "response",
+        "dashed": true
+      },
+      {
+        "from": "server",
+        "to": "db",
+        "label": "query"
+      }
+    ]
+  },
+  "why": {
+    "without": [
+      "Every user needs the entire dataset locally — impossible for anything shared",
+      "No single place to enforce rules, so validation runs on a machine the attacker controls",
+      "Two users editing the same thing have no way to reconcile"
+    ],
+    "with": [
+      "One authoritative copy of the data, many lightweight clients",
+      "Rules enforced somewhere the user cannot modify",
+      "Clients can be upgraded, replaced or written in any language"
+    ],
+    "conclusion": "Centralise state and policy; distribute presentation. That split is why the web works at all."
+  },
+  "whenToUse": [
+    "Multiple users share or collaborate on data",
+    "Rules must be enforced and cannot be trusted to the client",
+    "The data outlives any one device"
+  ],
+  "whenNotToUse": [
+    "A purely local tool with no sharing (a calculator, an offline note-taking app)",
+    "Peer-to-peer is a better fit — file sharing, some real-time collaboration, local-first sync"
+  ],
+  "tradeoffs": [
+    {
+      "option": "Thick client (logic in the browser/app)",
+      "pros": [
+        "Snappy interactions, less network chatter",
+        "Works offline",
+        "Server load reduced"
+      ],
+      "cons": [
+        "Logic must STILL be re-validated server-side — client checks are a UX nicety, never a security control",
+        "Harder to update: old app versions linger for months"
+      ]
+    },
+    {
+      "option": "Thin client (logic on the server)",
+      "pros": [
+        "One place to change behaviour, deploys instantly for everyone",
+        "Nothing sensitive is shipped to the user"
+      ],
+      "cons": [
+        "Every interaction costs a round trip",
+        "Useless without a network"
+      ]
+    }
+  ],
+  "keyNumbers": [
+    {
+      "label": "Same-datacentre round trip",
+      "value": "~0.5 ms"
+    },
+    {
+      "label": "Same-region round trip",
+      "value": "~5 ms"
+    },
+    {
+      "label": "Cross-continent round trip",
+      "value": "~150 ms"
+    },
+    {
+      "label": "Mobile network round trip",
+      "value": "50–300 ms"
+    }
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "mcq",
+      "question": "You validate an email address in your React form. Do you still need to validate it on the server?",
+      "options": [
+        "No, the client already did it",
+        "Yes — the client is under the user's control and anyone can call the API directly",
+        "Only for paid accounts",
+        "Only if you use a database"
+      ],
+      "answerIndex": 1,
+      "explanation": "Client-side validation is a UX feature: instant feedback. Anyone can bypass the UI with curl. Every rule that matters must be enforced server-side."
+    },
+    {
+      "id": "q2",
+      "type": "mcq",
+      "question": "Why are HTTP servers usually kept stateless between requests?",
+      "options": [
+        "It uses less memory",
+        "So any server instance can handle any request, which is what allows a load balancer to spread traffic and instances to be added or replaced freely",
+        "Because HTTP forbids state",
+        "To make logging easier"
+      ],
+      "answerIndex": 1,
+      "explanation": "If request 2 must reach the same machine as request 1, you cannot freely add, remove or reroute servers. Externalising session state is what makes horizontal scaling possible."
+    }
+  ],
+  "related": [
+    "http",
+    "api",
+    "load-balancer"
+  ]
+}

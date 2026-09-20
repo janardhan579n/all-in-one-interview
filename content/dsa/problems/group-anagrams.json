@@ -1,0 +1,97 @@
+{
+  "id": "group-anagrams",
+  "title": "Group Anagrams",
+  "patternId": "hashing",
+  "difficulty": "intermediate",
+  "tags": [
+    "string",
+    "hashing",
+    "sorting"
+  ],
+  "statement": "Given an array of strings, group together all the strings that are anagrams of one another. Return the groups in any order.",
+  "realWorld": "Deduplicating product listings whose titles use the same words in different orders, or clustering log messages that differ only by field ordering.",
+  "examples": [
+    {
+      "input": "[\"eat\",\"tea\",\"tan\",\"ate\",\"nat\",\"bat\"]",
+      "output": "[[\"eat\",\"tea\",\"ate\"],[\"tan\",\"nat\"],[\"bat\"]]",
+      "explanation": "Three groups by letter multiset."
+    }
+  ],
+  "constraints": [
+    "1 <= strs.length <= 10^4",
+    "0 <= strs[i].length <= 100",
+    "strs[i] consists of lowercase English letters"
+  ],
+  "bruteForce": {
+    "idea": "For each string, scan all remaining ungrouped strings and test each pair for anagram-ness by sorting or counting.",
+    "code": [
+      "List<List<String>> groups = new ArrayList<>();",
+      "boolean[] used = new boolean[strs.length];",
+      "for (int i = 0; i < strs.length; i++) {",
+      "    if (used[i]) continue;",
+      "    List<String> group = new ArrayList<>();",
+      "    group.add(strs[i]);",
+      "    used[i] = true;",
+      "    for (int j = i + 1; j < strs.length; j++) {",
+      "        if (!used[j] && isAnagram(strs[i], strs[j])) {",
+      "            group.add(strs[j]);",
+      "            used[j] = true;",
+      "        }",
+      "    }",
+      "    groups.add(group);",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n^2 * k)",
+      "space": "O(nk)"
+    },
+    "whySlow": "Every pair is compared. The real insight is unused: anagrams share a property that can be computed once per string rather than tested pairwise."
+  },
+  "patternIdentification": "'Group things that share a property' means: derive a canonical key from each item and bucket by that key. The work goes into choosing a key that is identical for exactly the items that belong together.",
+  "optimized": {
+    "idea": "Two strings are anagrams exactly when their sorted letters match — or, cheaper, when their 26-letter counts match. Build that canonical key per string and group in a HashMap.",
+    "code": [
+      "public static List<List<String>> groupAnagrams(String[] strs) {",
+      "    Map<String, List<String>> groups = new HashMap<>();",
+      "    for (String word : strs) {",
+      "        groups.computeIfAbsent(key(word), k -> new ArrayList<>()).add(word);",
+      "    }",
+      "    return new ArrayList<>(groups.values());",
+      "}",
+      "",
+      "/** O(k) counting key — beats sorting's O(k log k) for lowercase input. */",
+      "private static String key(String word) {",
+      "    int[] count = new int[26];",
+      "    for (char c : word.toCharArray()) count[c - 'a']++;",
+      "    StringBuilder sb = new StringBuilder(52);",
+      "    for (int i = 0; i < 26; i++) {",
+      "        sb.append('#').append(count[i]);   // '#' delimits, so 1,11 != 11,1",
+      "    }",
+      "    return sb.toString();",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n * k) with the counting key; O(n * k log k) with the sorting key",
+      "space": "O(n * k)"
+    }
+  },
+  "commonMistakes": [
+    "Building the counting key without a delimiter, so counts 1,11 and 11,1 collide.",
+    "Sorting when the alphabet is small and fixed — counting is strictly cheaper.",
+    "Assuming the counting key generalises to Unicode; it only works for a small known alphabet."
+  ],
+  "similar": [
+    "two-sum",
+    "contains-duplicate",
+    "longest-substring-no-repeat"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 49,
+      "slug": "group-anagrams",
+      "title": "Group Anagrams",
+      "url": "https://leetcode.com/problems/group-anagrams/",
+      "premium": false
+    }
+  }
+}

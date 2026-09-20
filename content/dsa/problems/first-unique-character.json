@@ -1,0 +1,143 @@
+{
+  "id": "first-unique-character",
+  "title": "First Unique Character in a String",
+  "patternId": "hashing",
+  "difficulty": "beginner",
+  "tags": [
+    "hashing",
+    "string",
+    "counting"
+  ],
+  "statement": "Given a string, return the index of the first character that occurs exactly once. If every character repeats, return -1.",
+  "realWorld": "Finding the first value that appears exactly once in a stream is how log analysis surfaces one-off error codes among the noise of repeated ones, and how a deduplication report identifies the records with no duplicate partner. The shape — 'earliest item satisfying a property that depends on the whole input' — is the same one behind first-non-repeating-request and first-unmatched-event detectors.",
+  "examples": [
+    {
+      "input": "s = \"leetcode\"",
+      "output": "0",
+      "explanation": "'l' appears once and is the first character, so index 0 is the answer — which means 0 cannot double as the 'not found' value."
+    },
+    {
+      "input": "s = \"loveleetcode\"",
+      "output": "2",
+      "explanation": "'l', 'o' and 'e' all repeat later in the string. 'v' at index 2 is the first that does not, even though 't', 'c' and 'd' are also unique."
+    },
+    {
+      "input": "s = \"aabb\"",
+      "output": "-1",
+      "explanation": "Every character repeats. The sentinel has to be a value no index can take."
+    }
+  ],
+  "constraints": [
+    "1 <= s.length <= 10^5",
+    "s consists of lowercase English letters",
+    "Return -1 when no unique character exists"
+  ],
+  "bruteForce": {
+    "idea": "For each index, scan the rest of the string looking for another occurrence of that character; return the first index where the scan finds none.",
+    "code": [
+      "for (int i = 0; i < s.length(); i++) {",
+      "    boolean unique = true;",
+      "    for (int j = 0; j < s.length(); j++) {",
+      "        if (i != j && s.charAt(i) == s.charAt(j)) { unique = false; break; }",
+      "    }",
+      "    if (unique) return i;",
+      "}",
+      "return -1;"
+    ],
+    "complexity": {
+      "time": "O(n^2)",
+      "space": "O(1)"
+    },
+    "whySlow": "The inner scan answers 'how many times does this character appear in the string?' — a question about the whole input whose answer does not depend on i at all. So the count of 'a' is recomputed from scratch once for every position that happens to hold an 'a', and on a string of 10^5 identical characters the same count is rediscovered 10^5 times. The outer loop's position is the only thing changing between scans, and the scans do not use it."
+  },
+  "patternIdentification": "The tell is an inner loop whose work is input-wide rather than position-specific: it asks the same question of the same data no matter where the outer loop has got to. Precompute that answer once into a map, and the outer loop collapses into a lookup. Two passes beat n passes whenever the inner work is independent of the outer index — and the second pass must walk the *original sequence*, because 'first' is a statement about position that a hash map cannot preserve.",
+  "optimized": {
+    "idea": "Pass one builds a character-to-count map over the whole string. Pass two walks the string in its original order and returns the index of the first character whose count is 1. The order of the second pass is the whole reason it is a second pass over the string rather than an iteration over the map: the map knows which characters are unique but nothing about which came first.",
+    "code": [
+      "public static int firstUniqChar(String s) {",
+      "    Map<Character, Integer> counts = new HashMap<>();",
+      "    for (char c : s.toCharArray()) counts.merge(c, 1, Integer::sum);",
+      "    for (int i = 0; i < s.length(); i++) {",
+      "        if (counts.get(s.charAt(i)) == 1) return i;   // walk the STRING, not the map: only the string knows what 'first' means",
+      "    }",
+      "    return -1;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(k), where k is the number of distinct characters"
+    }
+  },
+  "visualization": {
+    "engine": "hashingOps",
+    "input": {
+      "capacity": 8,
+      "operations": [
+        {
+          "op": "put",
+          "key": "l",
+          "value": 2
+        },
+        {
+          "op": "put",
+          "key": "o",
+          "value": 2
+        },
+        {
+          "op": "put",
+          "key": "v",
+          "value": 1
+        },
+        {
+          "op": "put",
+          "key": "e",
+          "value": 4
+        },
+        {
+          "op": "put",
+          "key": "t",
+          "value": 1
+        },
+        {
+          "op": "get",
+          "key": "l"
+        },
+        {
+          "op": "get",
+          "key": "o"
+        },
+        {
+          "op": "get",
+          "key": "v"
+        }
+      ]
+    },
+    "code": [
+      "Map<Character, Integer> counts = new HashMap<>();",
+      "for (char c : s.toCharArray())",
+      "    counts.merge(c, 1, Integer::sum);",
+      "for (int i = 0; i < s.length(); i++)",
+      "    if (counts.get(s.charAt(i)) == 1) return i;"
+    ]
+  },
+  "commonMistakes": [
+    "Iterating the map in the second pass and returning the first key with count 1 — HashMap has no insertion order, so \"loveleetcode\" may return the index of 't', 'c' or 'd' instead of 'v', and the answer can differ between JVM versions. Walk the string, or use a LinkedHashMap if you must iterate the map.",
+    "Trying to do it in one pass by returning as soon as a character is seen for the first time — \"leetcode\" returns 0 and looks correct, but \"aab\" returns 0 instead of 2 because the duplicate 'a' has not arrived yet at the moment of the decision.",
+    "Using 0 as the not-found sentinel (or returning the character rather than its index) — 0 is a legitimate answer, as \"leetcode\" shows, so the caller cannot distinguish 'unique character at index 0' from 'no unique character'. The sentinel must be -1."
+  ],
+  "similar": [
+    "valid-anagram",
+    "group-anagrams",
+    "top-k-frequent",
+    "longest-substring-no-repeat"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 387,
+      "slug": "first-unique-character-in-a-string",
+      "title": "First Unique Character in a String",
+      "url": "https://leetcode.com/problems/first-unique-character-in-a-string/",
+      "premium": false
+    }
+  }
+}

@@ -1,0 +1,42 @@
+spring:
+  application:
+    name: learning-platform
+  sql:
+    init:
+      # The SQLite DataSource creates its own schema (see DatabaseConfig), so Boot's script
+      # initialiser must not also run — it would duplicate the work and, worse, invite the
+      # assumption that this property is what creates the tables. The h2 profile, whose
+      # DataSource Boot creates, turns it back on.
+      mode: never
+  jackson:
+    default-property-inclusion: non_null
+  mvc:
+    problemdetails:
+      enabled: false            # we return our own error envelope (see GlobalExceptionHandler)
+
+server:
+  port: 8080
+  compression:
+    enabled: true               # lesson documents are large and highly compressible
+    mime-types: application/json
+    min-response-size: 2048
+  error:
+    include-message: always
+
+app:
+  datasource:
+    mode: sqlite
+    # Relative to the working directory the backend is started from.
+    # Override with APP_DATASOURCE_FILE, e.g. /data/learning.db in Docker.
+    file: ${APP_DATASOURCE_FILE:data/learning.db}
+
+content:
+  # Leave blank to auto-detect: ./content, then ../content, then /app/content.
+  # Override with CONTENT_DIRECTORY.
+  directory: ${CONTENT_DIRECTORY:}
+
+logging:
+  level:
+    root: INFO
+    com.learningplatform: INFO
+    org.springframework.jdbc.core: WARN

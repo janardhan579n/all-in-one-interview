@@ -1,0 +1,248 @@
+{
+  "id": "message-queue",
+  "title": "Message Queue",
+  "group": "Distributed",
+  "level": 2,
+  "estimatedMinutes": 30,
+  "summary": "Put the work in a durable buffer and let a consumer take it later — decoupling the speed of the producer from the speed of the consumer.",
+  "analogy": "A restaurant's order rail. The waiter clips the ticket to the rail and goes straight back to the floor; the kitchen takes tickets in order at its own pace. Nobody waits for anybody. When a rush hits, the rail gets longer — it does not stop the waiters taking orders, and no order is lost.",
+  "explanation": {
+    "beginner": "Some work does not need to finish before you reply to the user. Sending a welcome email, generating a thumbnail, updating analytics — the user does not need to wait. Instead of doing it during the request, you write a message to a queue and reply immediately. A separate worker picks messages up and does the work. If the worker is slow or briefly down, messages wait in the queue instead of being lost, and the user never notices.",
+    "interview": "An asynchronous, durable buffer that decouples producers from consumers in time, throughput and failure. It provides load levelling (bursts are absorbed as queue depth rather than backpressure), fault isolation (a failed consumer does not fail the request path) and independent scaling of consumers. Delivery is typically at-least-once, so consumers must be idempotent; ordering is usually only guaranteed within a partition or key. The operational signal that matters is consumer lag."
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "client",
+        "label": "Client",
+        "type": "client",
+        "x": 100,
+        "y": 300
+      },
+      {
+        "id": "api",
+        "label": "API server",
+        "type": "server",
+        "x": 320,
+        "y": 300,
+        "note": "Writes the message and returns 202 Accepted in milliseconds."
+      },
+      {
+        "id": "queue",
+        "label": "Queue\\n(Kafka / SQS / RabbitMQ)",
+        "type": "queue",
+        "x": 580,
+        "y": 300,
+        "note": "Durable buffer. Depth absorbs bursts; lag is the metric that tells you whether consumers are keeping up.",
+        "why": {
+          "without": [
+            "The user waits for thumbnailing and email delivery inside the request",
+            "A third-party outage becomes YOUR outage",
+            "A traffic spike must be absorbed by synchronous capacity you pay for permanently"
+          ],
+          "with": [
+            "Responses return in milliseconds",
+            "Downstream failure delays work rather than losing it",
+            "Spikes become queue depth"
+          ],
+          "conclusion": "Decoupling converts a latency and availability problem into a throughput problem, which is much easier to manage."
+        }
+      },
+      {
+        "id": "w1",
+        "label": "Worker",
+        "type": "worker",
+        "x": 850,
+        "y": 190
+      },
+      {
+        "id": "w2",
+        "label": "Worker",
+        "type": "worker",
+        "x": 850,
+        "y": 300
+      },
+      {
+        "id": "dlq",
+        "label": "Dead letter queue",
+        "type": "queue",
+        "x": 850,
+        "y": 430,
+        "note": "Messages that failed repeatedly land here for inspection instead of blocking the queue forever."
+      }
+    ],
+    "edges": [
+      {
+        "from": "client",
+        "to": "api"
+      },
+      {
+        "from": "api",
+        "to": "queue",
+        "label": "publish"
+      },
+      {
+        "from": "api",
+        "to": "client",
+        "label": "202 Accepted",
+        "dashed": true
+      },
+      {
+        "from": "queue",
+        "to": "w1",
+        "label": "consume"
+      },
+      {
+        "from": "queue",
+        "to": "w2",
+        "label": "consume"
+      },
+      {
+        "from": "w1",
+        "to": "dlq",
+        "label": "after N failures",
+        "dashed": true
+      }
+    ]
+  },
+  "why": {
+    "without": [
+      "Slow downstream work inflates user-visible latency",
+      "A dependency's outage becomes your outage",
+      "Traffic spikes must be met with synchronous capacity",
+      "Retrying failed work means writing your own scheduler"
+    ],
+    "with": [
+      "Fast responses; work happens behind the scenes",
+      "Failures are retried automatically and isolated from the request path",
+      "Bursts are absorbed as queue depth",
+      "Consumers scale independently of the API tier"
+    ],
+    "conclusion": "If the user does not need the result to continue, do not make them wait for it."
+  },
+  "whenToUse": [
+    "Work that can happen after the response: emails, thumbnails, indexing, analytics, notifications",
+    "Smoothing bursty traffic",
+    "Fanning one event out to several independent consumers",
+    "Long-running jobs",
+    "Communication between services that must not fail together"
+  ],
+  "whenNotToUse": [
+    "The user needs the result now — do not queue a request/response interaction",
+    "Strict global ordering across all messages is required",
+    "Simple, fast, reliable work where a queue adds operational burden for nothing",
+    "As a database: queues are for transit, not storage"
+  ],
+  "tradeoffs": [
+    {
+      "option": "At-least-once delivery (the usual default)",
+      "pros": [
+        "No message is lost",
+        "Simple broker implementation"
+      ],
+      "cons": [
+        "Duplicates WILL occur, so every consumer must be idempotent"
+      ]
+    },
+    {
+      "option": "At-most-once",
+      "pros": [
+        "No duplicates"
+      ],
+      "cons": [
+        "Messages can be lost — acceptable only for disposable telemetry"
+      ]
+    },
+    {
+      "option": "Exactly-once (effectively-once)",
+      "pros": [
+        "Cleanest semantics for the application"
+      ],
+      "cons": [
+        "Costly, requires transactional coordination, and is only 'exactly once' within the system's own boundary — the moment you call an external API it is at-least-once again"
+      ]
+    },
+    {
+      "option": "Log-based (Kafka)",
+      "pros": [
+        "Replay from any offset, multiple independent consumer groups, very high throughput, ordering per partition"
+      ],
+      "cons": [
+        "More operational complexity",
+        "Ordering only within a partition",
+        "Retention must be planned"
+      ]
+    },
+    {
+      "option": "Classic broker (RabbitMQ / SQS)",
+      "pros": [
+        "Simple queue semantics, per-message ack, easy to run or fully managed"
+      ],
+      "cons": [
+        "No replay after consumption",
+        "Weaker ordering guarantees"
+      ]
+    }
+  ],
+  "keyNumbers": [
+    {
+      "label": "Queue publish latency",
+      "value": "~1–5 ms"
+    },
+    {
+      "label": "Kafka throughput",
+      "value": "Hundreds of thousands of messages/s per broker"
+    },
+    {
+      "label": "The metric to alert on",
+      "value": "Consumer lag — depth is fine, growing depth is not"
+    }
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "architecture",
+      "question": "Your email service is down for 20 minutes. With a queue in front of it, what happens to signups during that window?",
+      "options": [
+        "Signups fail",
+        "Signups succeed; the email messages accumulate in the queue and are delivered when the service recovers",
+        "Emails are lost",
+        "The queue crashes"
+      ],
+      "answerIndex": 1,
+      "explanation": "This is fault isolation. The request path never touches the email provider, so its outage becomes a delay in a background system rather than a failed signup."
+    },
+    {
+      "id": "q2",
+      "type": "architecture",
+      "question": "A worker crashes after charging a card but before acknowledging the message. The message is redelivered. How do you avoid a double charge?",
+      "options": [
+        "Use at-most-once delivery",
+        "Make the consumer idempotent — record the message/payment id and skip work already done",
+        "Acknowledge before processing",
+        "Disable retries"
+      ],
+      "answerIndex": 1,
+      "explanation": "At-least-once delivery guarantees this scenario will happen. Idempotent consumers are not optional; acknowledging before processing just converts duplicates into lost work."
+    },
+    {
+      "id": "q3",
+      "type": "mcq",
+      "question": "Which of these should NOT go through a queue?",
+      "options": [
+        "Sending a welcome email",
+        "Generating a video thumbnail",
+        "Returning search results to a user waiting on the page",
+        "Updating an analytics warehouse"
+      ],
+      "answerIndex": 2,
+      "explanation": "The user is waiting for the result, so the interaction is synchronous by definition. Queues decouple in time, which is exactly what you do not want here."
+    }
+  ],
+  "related": [
+    "event-driven",
+    "saga",
+    "idempotency",
+    "scaling"
+  ]
+}

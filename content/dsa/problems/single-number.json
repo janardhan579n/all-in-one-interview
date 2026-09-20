@@ -1,0 +1,122 @@
+{
+  "id": "single-number",
+  "title": "Single Number",
+  "patternId": "bit-manipulation",
+  "difficulty": "beginner",
+  "tags": [
+    "array",
+    "bits",
+    "xor",
+    "constant-space"
+  ],
+  "statement": "Given a non-empty array of integers `nums` in which every element appears twice except for one, find that single element. Your solution must run in linear time and use only constant extra space.",
+  "realWorld": "Reconciliation: two systems each log the same set of transaction IDs, and exactly one record is missing from one side. XOR-folding both logs together leaves the ID that appeared an odd number of times, without holding either log in memory. The same idea gives RAID 5 its parity block — the parity is the XOR of the data blocks, so any one lost block is recovered by XOR-ing the survivors, which is this problem run backwards.",
+  "examples": [
+    {
+      "input": "nums = [2,2,1]",
+      "output": "1",
+      "explanation": "2 ^ 2 ^ 1 = 0 ^ 1 = 1."
+    },
+    {
+      "input": "nums = [4,1,2,1,2]",
+      "output": "4",
+      "explanation": "The pairs need not be adjacent. XOR is commutative and associative, so this reorders freely to (1^1) ^ (2^2) ^ 4 = 0 ^ 0 ^ 4 = 4."
+    },
+    {
+      "input": "nums = [-7]",
+      "output": "-7",
+      "explanation": "A single element with no pairs. XOR works unchanged on negative values — two's complement is just another bit pattern, and a pattern still cancels with itself."
+    }
+  ],
+  "constraints": [
+    "1 <= nums.length <= 3 * 10^4",
+    "nums.length is odd",
+    "-3 * 10^4 <= nums[i] <= 3 * 10^4",
+    "Every element appears exactly twice except one, which appears once",
+    "Required: O(n) time and O(1) extra space"
+  ],
+  "bruteForce": {
+    "idea": "Count occurrences in a HashMap, then return the key whose count is 1. Obvious and, in ordinary code, the right thing to write.",
+    "code": [
+      "public static int singleNumber(int[] nums) {",
+      "    Map<Integer, Integer> counts = new HashMap<>();",
+      "    for (int value : nums) {",
+      "        counts.merge(value, 1, Integer::sum);",
+      "    }",
+      "    for (Map.Entry<Integer, Integer> entry : counts.entrySet()) {",
+      "        if (entry.getValue() == 1) return entry.getKey();",
+      "    }",
+      "    throw new IllegalArgumentException(\"no unpaired element\");",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(n)"
+    },
+    "whySlow": "Its time is already optimal — you cannot find the loner without looking at every element, so O(n) is the floor. It fails on the other axis entirely: the map holds up to (n+1)/2 boxed `Integer` entries plus hash-table overhead, and the problem forbids O(n) space. Notice what that changes about the question. When time is already optimal, 'do better' cannot mean 'scan less'; it must mean 'remember less'. So the real question becomes: what single variable can absorb the whole array and still know the answer?"
+  },
+  "patternIdentification": "Two signals, and the second one is doing all the work. First, the problem is about *pairs* — elements that occur an even number of times are noise. Second, and decisively, the constraint says constant extra space, which exists only to rule out the counting map. Together they ask for an operation under which a pair annihilates itself. XOR is that operation: `a ^ a = 0` and `a ^ 0 = a`. Whenever you see 'pairs cancel' plus 'O(1) space', reach for a running XOR before anything else.",
+  "optimized": {
+    "idea": "Fold the entire array with XOR into a single accumulator.\n\nThree properties make this work, and stating them is the proof: `a ^ a = 0` (a pair annihilates), `a ^ 0 = a` (zero is the identity, so the accumulator starts at 0 harmlessly), and XOR is commutative and associative (so the array can be mentally reordered to group each pair together, even though the pairs are scattered). Every duplicate therefore cancels somewhere along the fold, and what survives is the one element that had no partner.",
+    "code": [
+      "/**",
+      " * Every element appears twice except one. O(n) time, O(1) space.",
+      " *",
+      " * Proof sketch: XOR is commutative and associative, so the fold may be",
+      " * reordered as (x1^x1) ^ (x2^x2) ^ ... ^ loner = 0 ^ 0 ^ ... ^ loner = loner.",
+      " */",
+      "public static int singleNumber(int[] nums) {",
+      "    int result = 0;                 // 0 is XOR's identity, so this is a safe seed",
+      "    for (int value : nums) {",
+      "        result ^= value;            // paired values cancel, wherever they sit",
+      "    }",
+      "    return result;",
+      "}",
+      "",
+      "// Equivalent, if you prefer streams:",
+      "// return Arrays.stream(nums).reduce(0, (a, b) -> a ^ b);"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(1)"
+    }
+  },
+  "visualization": {
+    "engine": "bitOps",
+    "input": {
+      "value": 4
+    },
+    "code": [
+      "int loner = 4;                       // 0000 0100 — the element with no partner",
+      "int doubled = loner << 1;            // shift left  -> multiply by 2",
+      "int halved  = loner >> 1;            // shift right -> divide by 2",
+      "int isOdd   = loner & 1;             // keep the lowest bit only",
+      "int dropped = loner & (loner - 1);   // clear the lowest set bit",
+      "int lowest  = loner & -loner;        // isolate the lowest set bit",
+      "int zero    = loner ^ loner;         // <-- a ^ a == 0: THIS is why pairs cancel"
+    ]
+  },
+  "commonMistakes": [
+    "Seeding the accumulator with `nums[0]` and then looping from index 0 — the first element gets XOR-ed in twice and cancels itself. Seed with 0 and loop over everything, or seed with `nums[0]` and start the loop at index 1.",
+    "Assuming the pairs are adjacent, and comparing neighbours. They are not; `[4,1,2,1,2]` breaks that immediately. XOR does not care where the partners are, which is exactly its advantage over a sort-then-scan approach.",
+    "Worrying that negative numbers break it. They do not — XOR operates on the two's-complement bit pattern, and a pattern cancels with itself regardless of what number it denotes.",
+    "Extending this to 'every element appears three times except one'. XOR cancels pairs, so three copies leave one behind and the fold returns the XOR of all distinct values. That variant needs per-bit counting modulo 3, or the `ones`/`twos` accumulator pair.",
+    "Sorting first and scanning for the odd one out. It works, but it is O(n log n) and mutates the input — strictly worse than the one-line fold on both axes the problem cares about."
+  ],
+  "similar": [
+    "counting-bits",
+    "subsets-bitmask",
+    "contains-duplicate",
+    "find-duplicate-number",
+    "find-missing-number"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 136,
+      "slug": "single-number",
+      "title": "Single Number",
+      "url": "https://leetcode.com/problems/single-number/",
+      "premium": false
+    }
+  }
+}

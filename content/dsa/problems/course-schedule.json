@@ -1,0 +1,181 @@
+{
+  "id": "course-schedule",
+  "title": "Course Schedule",
+  "patternId": "topological-sort",
+  "difficulty": "beginner",
+  "tags": [
+    "graph",
+    "topological-sort",
+    "kahn",
+    "cycle-detection"
+  ],
+  "statement": "There are numCourses courses labelled 0..numCourses-1 and a list of prerequisite pairs [a, b] meaning you must take b before a. Return true if it is possible to finish all courses.",
+  "realWorld": "Exactly what a build system, package manager or database migration runner does before executing anything. The 'circular dependency' error you have seen from Maven, npm or Spring is this algorithm reporting a cycle.",
+  "examples": [
+    {
+      "input": "numCourses = 2, prerequisites = [[1,0]]",
+      "output": "true",
+      "explanation": "Take 0, then 1."
+    },
+    {
+      "input": "numCourses = 2, prerequisites = [[1,0],[0,1]]",
+      "output": "false",
+      "explanation": "Each course requires the other, so neither can ever start."
+    },
+    {
+      "input": "numCourses = 4, prerequisites = [[1,0],[2,0],[3,1],[3,2]]",
+      "output": "true",
+      "explanation": "0, then 1 and 2 in either order, then 3. A diamond is not a cycle — direction is what matters."
+    }
+  ],
+  "constraints": [
+    "1 <= numCourses <= 2000",
+    "0 <= prerequisites.length <= 5000",
+    "prerequisites[i].length == 2",
+    "All prerequisite pairs are distinct"
+  ],
+  "bruteForce": {
+    "idea": "For each course, follow its prerequisite chains and see whether you can arrive back at the starting course.",
+    "code": [
+      "for (int course = 0; course < numCourses; course++) {",
+      "    if (canReach(course, course, new HashSet<>())) return false;",
+      "}",
+      "return true;"
+    ],
+    "complexity": {
+      "time": "O(V * (V + E))",
+      "space": "O(V)"
+    },
+    "whySlow": "Each course re-explores the graph from scratch with no memory carried across runs. A subgraph already proven acyclic is re-walked up to V times, and with 2000 courses that is 2000 full traversals to learn one boolean."
+  },
+  "patternIdentification": "Model it as a directed graph: courses are nodes, prerequisites are edges. 'Can all courses be finished' is exactly 'is this digraph acyclic'. That is the cycle-detection half of a topological sort — run Kahn's algorithm and check how many courses came out. Two standard answers exist: Kahn with indegrees, or DFS with three-colour marking.",
+  "optimized": {
+    "idea": "Kahn's algorithm. Repeatedly take a course with no unmet prerequisites, count it, and decrement the counter of every course that depended on it. If all numCourses come out, the graph is acyclic; anything that never reaches indegree zero is waiting on something that is itself waiting — a cycle. Note we never need the order itself, only the count.",
+    "code": [
+      "public static boolean canFinish(int numCourses, int[][] prerequisites) {",
+      "    List<List<Integer>> dependents = new ArrayList<>();",
+      "    for (int i = 0; i < numCourses; i++) dependents.add(new ArrayList<>());",
+      "    int[] indegree = new int[numCourses];",
+      "",
+      "    for (int[] pair : prerequisites) {",
+      "        int course = pair[0], prereq = pair[1];",
+      "        dependents.get(prereq).add(course);   // edge prereq -> course",
+      "        indegree[course]++;                   // course owes one more",
+      "    }",
+      "",
+      "    Deque<Integer> ready = new ArrayDeque<>();",
+      "    for (int i = 0; i < numCourses; i++) {",
+      "        if (indegree[i] == 0) ready.offer(i);   // seed with ALL roots",
+      "    }",
+      "",
+      "    int taken = 0;",
+      "    while (!ready.isEmpty()) {",
+      "        int course = ready.poll();",
+      "        taken++;",
+      "        for (int next : dependents.get(course)) {",
+      "            if (--indegree[next] == 0) ready.offer(next);",
+      "        }",
+      "    }",
+      "    return taken == numCourses;   // anything left is stuck in a cycle",
+      "}",
+      "",
+      "// DFS alternative: 0 = unvisited, 1 = on the current path, 2 = finished.",
+      "// Meeting a node marked 1 is a back edge, i.e. a cycle.",
+      "private static boolean hasCycle(int node, List<List<Integer>> adj, int[] colour) {",
+      "    if (colour[node] == 1) return true;",
+      "    if (colour[node] == 2) return false;",
+      "    colour[node] = 1;",
+      "    for (int next : adj.get(node)) {",
+      "        if (hasCycle(next, adj, colour)) return true;",
+      "    }",
+      "    colour[node] = 2;",
+      "    return false;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(V + E)",
+      "space": "O(V + E)"
+    }
+  },
+  "visualization": {
+    "engine": "topologicalSort",
+    "input": {
+      "graph": {
+        "nodes": [
+          {
+            "id": "0",
+            "x": 80,
+            "y": 100
+          },
+          {
+            "id": "1",
+            "x": 240,
+            "y": 40
+          },
+          {
+            "id": "2",
+            "x": 240,
+            "y": 160
+          },
+          {
+            "id": "3",
+            "x": 400,
+            "y": 100
+          }
+        ],
+        "edges": [
+          {
+            "from": "0",
+            "to": "1"
+          },
+          {
+            "from": "0",
+            "to": "2"
+          },
+          {
+            "from": "1",
+            "to": "3"
+          },
+          {
+            "from": "2",
+            "to": "3"
+          }
+        ]
+      }
+    },
+    "code": [
+      "int[] indegree = new int[n];   Queue<Integer> ready = new ArrayDeque<>();",
+      "for (int[] p : prerequisites) indegree[p[0]]++;  // count prerequisites",
+      "for (int v = 0; v < n; v++) if (indegree[v] == 0) ready.offer(v);",
+      "while (!ready.isEmpty()) {",
+      "    int course = ready.poll();  taken++;         // owes nothing - take it",
+      "    for (int next : dependents.get(course)) {",
+      "        if (--indegree[next] > 0) continue;      // still waiting on others",
+      "        ready.offer(next);                       // last prerequisite cleared",
+      "    }",
+      "}",
+      "return taken == n;                               // short means a cycle"
+    ]
+  },
+  "commonMistakes": [
+    "Getting the edge direction backwards. [a, b] means b must come first, so the edge is b -> a and it is indegree[a] that you increment.",
+    "Seeding the queue with a single indegree-zero course. The graph is often disconnected, and missing a root truncates the count.",
+    "Using a single visited set in the DFS version; you must distinguish 'on the current path' from 'already finished', or a diamond is misreported as a cycle.",
+    "Forgetting to clear the on-path mark when the recursive call returns, which invents cycles that do not exist.",
+    "Not handling an empty prerequisites list — every course is immediately ready, and the answer is true."
+  ],
+  "similar": [
+    "course-schedule-ii",
+    "alien-dictionary",
+    "number-of-islands"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 207,
+      "slug": "course-schedule",
+      "title": "Course Schedule",
+      "url": "https://leetcode.com/problems/course-schedule/",
+      "premium": false
+    }
+  }
+}

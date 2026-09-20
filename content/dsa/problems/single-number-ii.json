@@ -1,0 +1,110 @@
+{
+  "id": "single-number-ii",
+  "title": "Single Number II",
+  "patternId": "bit-manipulation",
+  "difficulty": "advanced",
+  "tags": [
+    "bit-manipulation",
+    "array",
+    "counting"
+  ],
+  "statement": "Every element in an integer array appears exactly three times except for one, which appears exactly once. Find that element. Your solution must run in linear time and use only constant extra space.",
+  "realWorld": "Quorum reconciliation. A value written to three replicas should appear three times in a merged log; the entry that appears once is the unreplicated write, and finding it without materialising a hash map matters when the log is streamed and does not fit in memory. The same per-bit tally is how error-correcting schemes detect which symbol broke triple-modular redundancy.",
+  "examples": [
+    {
+      "input": "nums = [2,2,3,2]",
+      "output": "3",
+      "explanation": "Bit 0: 2 contributes 0 three times, 3 contributes 1, so the column sums to 1 and 1 % 3 = 1 — bit 0 of the answer is set. Bit 1: three 2s and one 3 all have it set, sum 4, and 4 % 3 = 1, so bit 1 is set too. Result 0b11 = 3."
+    },
+    {
+      "input": "nums = [0,1,0,1,0,1,99]",
+      "output": "99",
+      "explanation": "The triples are 0 and 1. XORing the whole array gives 0 ^ 1 ^ 99 = 98, not 99, because three copies of 1 XOR down to 1 rather than to 0 — this is the example to reach for when someone insists XOR should work."
+    },
+    {
+      "input": "nums = [2,2,2,-4]",
+      "output": "-4",
+      "explanation": "Negative values are the case that catches a solution which only tallies bits 0..30. The answer's sign bit is set, so bit 31's column must be summed and written back exactly like any other."
+    }
+  ],
+  "constraints": [
+    "1 <= nums.length <= 3 * 10^4",
+    "-2^31 <= nums[i] <= 2^31 - 1",
+    "Every element appears exactly three times except one, which appears once",
+    "Required: O(n) time and O(1) extra space"
+  ],
+  "bruteForce": {
+    "idea": "Count occurrences with a hash map, then return the key whose count is 1.",
+    "code": [
+      "Map<Integer, Integer> counts = new HashMap<>();",
+      "for (int value : nums) counts.merge(value, 1, Integer::sum);",
+      "for (Map.Entry<Integer, Integer> entry : counts.entrySet()) {",
+      "    if (entry.getValue() == 1) return entry.getKey();",
+      "}",
+      "return -1;"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(n)"
+    },
+    "whySlow": "The time is already linear; what is wasted is memory. The map stores n/3 distinct keys and their counts in order to answer a question about a single element, and every count it holds is either 3 — which tells you nothing — or 1. Ten thousand boxed Integers and hash buckets are allocated so that one of them can be read. The problem states constant space precisely because the information you need is not 'which values are present' but 'which bits fail to cancel', and bits cancel without being stored."
+  },
+  "patternIdentification": "The first instinct, if you have done `single-number`, is XOR — and it is worth being explicit about why it fails here, because the reflex is strong. XOR works there because it is self-inverse: a ^ a = 0, so elements arriving in *pairs* annihilate and the loner survives. Triples do not annihilate. a ^ a ^ a = a, so every tripled value survives the XOR intact and gets tangled up with the answer. On [2,2,2,3] the XOR is 2 ^ 3 = 1, not 3. XOR is addition modulo 2 on each bit column; you need addition modulo 3.\n\nThat restatement is the whole insight, and it generalises immediately. Look at the array one *bit column* at a time. In column b, every value that appears three times contributes either 0 or 3 to the column's sum — always a multiple of 3. So the column sum modulo 3 is exactly the loner's bit at position b. Reconstruct the answer bit by bit and you are done in 32 passes, which is O(32n) = O(n), with 32 counters of state.\n\nThe transferable rule: **when elements repeat k times, per-bit counting modulo k isolates the odd one out, and XOR is just the k = 2 special case.** It costs nothing to remember and covers 'every element appears k times except one' for any k, and with small modifications 'except one which appears m times'.",
+  "optimized": {
+    "idea": "For each of the 32 bit positions, sum that bit across the whole array and take the sum modulo 3. Every tripled element contributes 0 or 3 to that column, so the remainder is the loner's bit. OR it into the result at the right position.\n\nNegative numbers need no special handling. Bit 31 is summed like any other, and setting it with result |= (1 << 31) produces the correct negative int, because two's complement is just the bit pattern. Extracting the bit with `(value >> bit) & 1` is safe even with the arithmetic shift, since the `& 1` discards the sign-extended bits — but `>>>` is the clearer habit.\n\nThe clever alternative worth knowing: a two-mask state machine that tracks, for every bit column simultaneously, how many times modulo 3 that bit has been seen. Keep `ones` and `twos`, where a bit set in `ones` means 'seen once so far mod 3' and in `twos` means 'seen twice'; then `ones = (ones ^ x) & ~twos; twos = (twos ^ x) & ~ones;` cycles each column through 0 -> 1 -> 2 -> 0 as values arrive, and `ones` holds the answer at the end. It is one pass and four operations per element instead of 32 passes, and it is what an interviewer means by 'can you do better'. Derive it from the mod-3 counter rather than memorising it — a column that reaches the third occurrence must return to 00, and the two assignments are exactly the transitions that do that. Understand the counting version first; it is the one you can reconstruct under pressure.",
+    "code": [
+      "public static int singleNumber(int[] nums) {",
+      "    int result = 0;",
+      "    for (int bit = 0; bit < 32; bit++) {",
+      "        int sum = 0;",
+      "        for (int value : nums) {",
+      "            sum += (value >> bit) & 1;",
+      "        }",
+      "        if (sum % 3 != 0) {",
+      "            result |= (1 << bit);   // triples contribute 0 or 3 to this column, so the remainder is the loner's bit",
+      "        }",
+      "    }",
+      "    return result;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(32n) = O(n)",
+      "space": "O(1)"
+    }
+  },
+  "visualization": {
+    "engine": "bitOps",
+    "input": {
+      "value": 3
+    },
+    "code": [
+      "int result = 0;",
+      "for (int bit = 0; bit < 32; bit++) {",
+      "    int sum = 0;",
+      "    for (int value : nums) sum += (value >> bit) & 1;",
+      "    if (sum % 3 != 0) result |= (1 << bit);",
+      "}",
+      "return result;"
+    ]
+  },
+  "commonMistakes": [
+    "Reaching for XOR because `single-number` worked. XOR cancels pairs, not triples: a ^ a ^ a = a, so every tripled value stays in the accumulator. [2,2,2,3] returns 1 instead of 3. It is worse than an obviously wrong answer because inputs like [0,1,0,1,0,1,99] still come out right by accident, so the bug survives a casual test.",
+    "Looping `for (int bit = 0; bit < 31; bit++)` and skipping the sign bit. Every non-negative answer is correct, and [2,2,2,-4] returns 2147483644 instead of -4 — a large positive number where a negative one was expected, which reads like an overflow rather than a missing iteration.",
+    "Declaring `sum` outside the bit loop so it is never reset. Each column's total is added to the previous one, so once any remainder is non-zero every remaining bit gets set: [2,2,3,2] returns -1 instead of 3. An answer of -1 or a huge negative number for a small array is the giveaway. The mirrored trap is in the two-mask alternative — writing `twos` before `ones` instead of `ones` before `twos` makes the state machine never leave state 0, so it returns 0 for every input, including the ones where the answer happens to be small."
+  ],
+  "similar": [
+    "single-number",
+    "counting-bits",
+    "number-of-1-bits",
+    "contains-duplicate"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 137,
+      "slug": "single-number-ii",
+      "title": "Single Number II",
+      "url": "https://leetcode.com/problems/single-number-ii/",
+      "premium": false
+    }
+  }
+}

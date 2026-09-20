@@ -1,0 +1,268 @@
+{
+  "id": "dotnet-csharp-language",
+  "trackId": "dotnet",
+  "topic": "csharp-language",
+  "title": "C# Language",
+  "summary": "Value semantics, LINQ's laziness, nullability that is only a promise, and the resources nobody closes.",
+  "questions": [
+    {
+      "id": "dcl-01",
+      "level": "junior",
+      "type": "concept",
+      "question": "What is the difference between a value type and a reference type?",
+      "answer": "A value type variable *holds the data*. A reference type variable holds a *reference* to data that lives somewhere else. `int`, `bool`, `enum`, `DateTime` and every `struct` are value types; `class`, `interface`, `delegate`, array and `string` are reference types.\n\nThe consequence is assignment. Copying a value type copies the whole thing, so the two variables are independent. Copying a reference type copies the reference, so both names point at the same object and a mutation through one is visible through the other. Defaults follow from the same rule: a value type defaults to all-bits-zero, a reference type defaults to `null`.\n\nThe thing interviewers actually listen for is whether you say \"value types live on the stack\". That is a half-truth and it is worth correcting yourself before they do. Where the data lives is an implementation detail: an `int` field inside a class lives on the heap, inside that object. A local captured by a lambda or held across an `await` is hoisted into a compiler-generated class on the heap. A boxed `int` is on the heap. The stack is where *short-lived locals* happen to go — it is not part of the definition.\n\n```csharp\nvar a = new Point(1, 2);   // struct\nvar b = a;  b.X = 99;      // a.X is still 1 — b is a copy\n```\n\nComing from Java: C# structs are user-defined value types, which Java has no equivalent for yet. And because C# generics are reified, `List<int>` really stores `int`s — no boxing, unlike `List<Integer>`.",
+      "keyPoints": [
+        "Value type holds the data; reference type holds a reference to it",
+        "Assignment copies the value, or copies the reference — that is the whole difference",
+        "\"Value types live on the stack\" is wrong: fields, captured locals and boxed values are on the heap",
+        "Defaults: zeroed for value types, null for reference types",
+        "C# generics are reified, so List<int> stores ints with no boxing"
+      ],
+      "followUps": [
+        {
+          "q": "What is boxing and when does it happen?",
+          "a": "Wrapping a value type in a heap object so it can be treated as `object` or as an interface it implements. It happens on assignment to `object`, on string concatenation of a struct without `ToString`, and when calling an interface method through a non-constrained reference. Each box is an allocation, so boxing inside a loop is a common hidden source of gen 0 garbage. Generic code with a `where T : struct` constraint avoids it entirely."
+        },
+        {
+          "q": "Are parameters passed by value or by reference?",
+          "a": "By value, always, unless you write `ref`, `out` or `in`. For a reference type that means the *reference* is copied — so the method can mutate the object you both see, but reassigning the parameter does not affect the caller. That distinction catches people out far more often than boxing does."
+        }
+      ],
+      "redFlags": [
+        "\"Value types are on the stack, reference types are on the heap\" stated as a rule",
+        "Believing reference types are passed by reference by default",
+        "Not knowing string is a reference type"
+      ],
+      "related": [
+        "data-and-variables"
+      ]
+    },
+    {
+      "id": "dcl-02",
+      "level": "junior",
+      "type": "concept",
+      "question": "Strings are immutable in C#. What does that actually cost, and when do you need StringBuilder?",
+      "answer": "Every operation that looks like it modifies a string — `Replace`, `Trim`, `+=`, `Substring` — allocates a new string and leaves the old one for the garbage collector. Immutability is what makes strings safe to share, cache and use as dictionary keys, and it is why the runtime can intern literals into a single shared instance per process.\n\nThe cost shows up in a loop. Appending in a loop copies the entire accumulated string on every iteration, so building an n-character string costs O(n²) in copying and produces n intermediate strings that are immediately garbage.\n\n```csharp\nvar s = \"\";\nforeach (var row in rows) s += row + \",\";      // O(n²), n throwaway strings\n\nvar sb = new StringBuilder();\nforeach (var row in rows) sb.Append(row).Append(',');\nreturn sb.ToString();                           // one growable buffer\n```\n\nWhat people over-apply is reaching for `StringBuilder` when the count is fixed. `a + b + c + d` in a single expression compiles to one `string.Concat` call with one allocation, and an interpolated string in C# 10 and later is built through a pooled handler. Neither needs a builder. The rule is about *loops and unknown counts*, not about concatenation in general. For joining a collection, `string.Join` is clearer and does the same job.\n\nA note for Java engineers: in C# `==` on strings is an overloaded operator that compares content ordinally. You do not need `.Equals` the way you need it in Java — but you do need `StringComparison.OrdinalIgnoreCase` when case-insensitivity matters.",
+      "keyPoints": [
+        "Every \"mutation\" allocates a new string; the original becomes garbage",
+        "Concatenating in a loop is O(n²) in copying — that is the case StringBuilder exists for",
+        "A single expression `a + b + c` is one string.Concat call; no builder needed",
+        "string.Join for collections; interpolation is already optimised in C# 10+",
+        "Unlike Java, `==` on string compares content, not reference"
+      ],
+      "followUps": [
+        {
+          "q": "What is string interning?",
+          "a": "The runtime keeps a pool of string instances; compile-time literals with the same content share one instance. It saves memory for repeated literals, but `string.Intern` on runtime-built strings is usually a mistake — the pool is rooted for the process lifetime, so you have created a leak you cannot clear."
+        },
+        {
+          "q": "How would you avoid allocating at all in a hot path?",
+          "a": "`ReadOnlySpan<char>` lets you slice and compare without copying, and `string.Create` lets you write directly into the final buffer. Both are worth knowing about but are for measured hot paths — reaching for spans in ordinary business code costs readability for nothing."
+        }
+      ],
+      "redFlags": [
+        "Using StringBuilder for two concatenations",
+        "Not being able to say why the loop version is quadratic",
+        "Comparing strings with == and then being unsure whether it compares content"
+      ]
+    },
+    {
+      "id": "dcl-03",
+      "level": "mid",
+      "type": "tradeoff",
+      "question": "When is a struct genuinely the right choice over a class?",
+      "answer": "Rarely, and the framework's own design guidelines say so: make it a struct only when it logically represents a single value, is immutable, is small — the guideline is around 16 bytes — and will not be boxed frequently. If any of those fail, use a class.\n\nWhere a struct genuinely earns its place: small value-like types in hot paths, where you want no allocation and no pointer chasing. A `Point`, a `Money`, a key stored in a large array — an array of structs is one contiguous block the prefetcher loves, where an array of class references is a pointer per element and a cache miss per dereference. `readonly struct` tells the compiler the instance cannot change so it can skip defensive copies. `ref struct` (what `Span<T>` is) cannot leave the stack at all, which is the whole point of it.\n\nThe failure modes are what make structs dangerous:\n\n- **Mutable structs lose writes.** A property getter, a `List<T>` indexer or a `foreach` variable hands you a *copy*, so mutating it silently does nothing to the original. This is why the guidance is \"immutable\".\n- **Copying is not free.** A large struct passed around is copied at every call. Past a certain size a class reference is cheaper to move than the struct is.\n- **Boxing undoes everything.** Store it in an `object`, a non-generic collection or an unconstrained interface and you are back on the heap, with an allocation per operation.\n- **You cannot prevent the zero value.** `default(T)` and array allocation bypass any constructor, so a struct must be valid when all its fields are zero.\n\nJava has no equivalent today — records there are still reference types.",
+      "keyPoints": [
+        "Guideline: single logical value, immutable, small (~16 bytes), rarely boxed",
+        "Real win is layout and zero allocation — arrays of structs are contiguous",
+        "Mutable structs silently lose writes because you mutate copies",
+        "Boxing puts it back on the heap and erases the benefit",
+        "default(T) always exists, so the all-zero state must be valid"
+      ],
+      "followUps": [
+        {
+          "q": "What is a defensive copy and how do you avoid it?",
+          "a": "If a struct is not `readonly` and you access it through a `readonly` field or an `in` parameter, the compiler copies it before calling any member, in case that member mutates it. In a hot loop that copy can cost more than the call. Marking the type `readonly struct` (or the members `readonly`) removes the need for it."
+        },
+        {
+          "q": "What is a ref struct for?",
+          "a": "A type that can only ever live on the stack — it cannot be boxed, stored in a field of a class, captured by a lambda or held across an `await`. `Span<T>` is the canonical one: it can point into a stack buffer or unmanaged memory safely precisely because the compiler guarantees it never outlives the frame."
+        }
+      ],
+      "redFlags": [
+        "\"Structs are faster because they are on the stack\"",
+        "Designing a mutable struct",
+        "Using a struct for a large entity with many fields"
+      ]
+    },
+    {
+      "id": "dcl-04",
+      "level": "mid",
+      "type": "concept",
+      "question": "IEnumerable<T> or IQueryable<T> — what changes when you switch between them?",
+      "answer": "`IEnumerable<T>` is a sequence you pull items from in-process. Its LINQ operators take compiled delegates (`Func<T, bool>`) and run your code on objects already in memory.\n\n`IQueryable<T>` is a *description* of a query. Its operators take `Expression<Func<T, bool>>` — the lambda is captured as a syntax tree rather than compiled — and a provider such as EF Core walks that tree and translates it into SQL. Nothing runs until you enumerate.\n\nThe practical difference is where the work happens, and the switch is one cast away:\n\n```csharp\ndb.Orders.Where(o => o.Total > 100).Take(20)               // SQL: WHERE + TOP 20\n\nIEnumerable<Order> all = db.Orders;\nall.Where(o => o.Total > 100).Take(20)                     // SELECT * — filters in memory\n```\n\nThat second form is the trap, and it usually arrives disguised as good design: a repository method declared to return `IEnumerable<Order>`. Every filter the caller composes now runs client-side over the whole table.\n\n**Materialising too early** — `ToList()` before you have applied the filters — pulls rows you are about to throw away. **Materialising too late** is the opposite failure: return `IQueryable` from a service and the query executes after the `DbContext` has been disposed (`ObjectDisposedException`), or the caller composes an expression the provider cannot translate, which in EF Core 3.0 and later throws rather than quietly falling back to client evaluation.\n\nThe workable rule: keep it `IQueryable` while you are still narrowing it, materialise at the boundary where you own the context, and return a concrete `List<T>` or a DTO from your service layer so the caller cannot accidentally compose against the database.\n\nJava engineers will recognise the disposed-context failure as `LazyInitializationException` wearing a different name.",
+      "keyPoints": [
+        "IEnumerable takes delegates and runs in-process; IQueryable takes expression trees and is translated by a provider",
+        "Casting or assigning to IEnumerable silently moves the rest of the query into memory",
+        "ToList() too early over-fetches; returning IQueryable leaks execution past the context's lifetime",
+        "EF Core 3.0+ throws on untranslatable expressions instead of evaluating them client-side",
+        "Return a materialised type from the service boundary"
+      ],
+      "followUps": [
+        {
+          "q": "Why can't IQueryable take a plain lambda?",
+          "a": "It can syntactically, but then the compiler would produce a compiled delegate — opaque machine code the provider cannot inspect. Because the parameter type is `Expression<Func<...>>`, the compiler emits the lambda as data: a tree of nodes the provider can walk and turn into SQL. That is also why you cannot call an arbitrary C# method inside one and expect it to translate."
+        },
+        {
+          "q": "How do you tell which one you are holding?",
+          "a": "Look at the declared type, not the `var`. In practice, log the generated SQL or call `ToQueryString()` on the query — if the filter you expect is not in the SQL, you fell off IQueryable somewhere up the chain."
+        }
+      ],
+      "redFlags": [
+        "Thinking IQueryable is just \"a faster IEnumerable\"",
+        "Returning IQueryable from a repository without a word about lifetime",
+        "Calling ToList() at the top of a method and filtering afterwards"
+      ],
+      "related": [
+        "database"
+      ]
+    },
+    {
+      "id": "dcl-05",
+      "level": "mid",
+      "type": "code",
+      "question": "What does this print, and why is it not what the author expected?",
+      "answer": "It prints the players scoring above **90**, and then it queries the source a second time to count them.\n\nTwo separate pieces of deferred execution are biting at once.\n\nFirst, LINQ operators like `Where`, `Select` and `Take` build a pipeline and return immediately — nothing is evaluated. The query runs when something enumerates it: a `foreach`, or a terminal operator such as `ToList`, `Count`, `First`, `Any` or `Sum`. By the time the `foreach` runs, `minScore` has been reassigned.\n\nSecond, the lambda captured the *variable*, not its value. The compiler hoists `minScore` into a closure object that both the outer method and the lambda share, so changing it afterwards changes what the query sees. (`foreach` iteration variables have been captured per-iteration since C# 5, but ordinary locals and `for` loop variables still behave exactly like this.)\n\nThen `top.Count()` enumerates the whole pipeline again. Over a `List<T>` that is only wasted CPU. Over a `DbSet<T>` it is a second round trip to the database, and over a stream or a network-backed enumerable it may return different results — or fail, because the source was already consumed.\n\nThe fixes are both one line. Copy the value into a local the lambda captures instead (`var cutoff = minScore;`), and materialise once with `ToList()` when you intend to iterate more than once. Deferred execution is a feature — it is what lets a filter reach the database — but it means *when* a query runs is a decision you have to make on purpose.",
+      "codeExample": {
+        "language": "csharp",
+        "code": [
+          "int minScore = 50;",
+          "var top = players.Where(p => p.Score > minScore);   // nothing has executed yet",
+          "",
+          "minScore = 90;                                       // the lambda captured the VARIABLE",
+          "",
+          "foreach (var p in top)                               // runs now — filters on 90, not 50",
+          "    Console.WriteLine(p.Name);",
+          "",
+          "Console.WriteLine($\"{top.Count()} players\");          // enumerates the source AGAIN"
+        ]
+      },
+      "keyPoints": [
+        "Where/Select/Take are lazy; ToList/Count/First/Any/Sum are what force execution",
+        "Closures capture variables, not values — later assignments change the query",
+        "Enumerating a deferred query twice does the work twice, including the round trip",
+        "Materialise with ToList/ToArray when you need a snapshot or multiple passes",
+        "OrderBy is deferred but buffers the entire sequence the moment it is enumerated"
+      ],
+      "followUps": [
+        {
+          "q": "Which LINQ operators are not deferred?",
+          "a": "Anything that has to produce a single answer or a concrete collection: `ToList`, `ToArray`, `ToDictionary`, `Count`, `Sum`, `Average`, `Min`, `Max`, `First`, `Single`, `Any`, `All`, `Contains`. `OrderBy` is an odd middle case — it is deferred, but it cannot yield its first element until it has consumed and sorted the entire source."
+        },
+        {
+          "q": "Is deferred execution ever a problem for correctness rather than performance?",
+          "a": "Yes. If the underlying collection is modified between defining the query and enumerating it, the query sees the new contents — and modifying it *during* enumeration throws `InvalidOperationException`. A deferred query over mutable state is a snapshot of nothing in particular."
+        }
+      ],
+      "redFlags": [
+        "Believing the query ran at the line where it was written",
+        "Calling .Count() and then .ToList() on the same query without noticing it runs twice",
+        "Explaining it as \"LINQ caches results\" — it does the opposite"
+      ]
+    },
+    {
+      "id": "dcl-06",
+      "level": "mid",
+      "type": "concept",
+      "question": "What do records give you, and where does record equality surprise people?",
+      "answer": "A `record` is a class (or, since C# 10, a `record struct`) for which the compiler generates the boilerplate of a value-like type: `Equals` and `GetHashCode` based on the fields, a readable `ToString`, a `Deconstruct` for positional syntax, a copy constructor, and support for `with` expressions that produce a modified copy.\n\n```csharp\npublic record Money(decimal Amount, string Currency);\n\nvar a = new Money(10m, \"GBP\");\nvar b = a with { Amount = 20m };\na == new Money(10m, \"GBP\");   // true — compared by value\n```\n\nA `record` class is still a reference type on the heap. Only its *equality* is by value.\n\nThe surprises are all in how that equality is generated. It is field-by-field, using each field's own equality — so a record holding a `List<T>`, an array or any ordinary class compares that member **by reference**. Two records with identical list contents are not equal. That bites hardest where records are used as dictionary keys, cache keys or for change detection, which is precisely where people reach for them.\n\nEquality also compares the synthesised `EqualityContract`, meaning a derived record is never equal to a base record even with identical fields — different from a hand-written `Equals` using `is`.\n\nAnd records are not forced to be immutable. Declare a property with `set` and you have a mutable record, which will happily change its hash code after being used as a key.\n\nFor Java engineers: C# records are looser than Java's. They can inherit, they are not required to be immutable, and `with` has no Java equivalent.",
+      "keyPoints": [
+        "Compiler generates value equality, ToString, Deconstruct and the `with` copy",
+        "record class is still a reference type — only equality changes",
+        "Members compare with their own equality, so collection fields compare by reference",
+        "Equality includes the runtime type, so base and derived are never equal",
+        "`with` is a shallow copy, and records can be made mutable, which breaks hashing"
+      ],
+      "followUps": [
+        {
+          "q": "How do you make a record with a collection behave sensibly?",
+          "a": "Either don't — keep collections out of records used as keys — or override `Equals` and `GetHashCode` yourself, or wrap the collection in a type that implements structural equality. An `ImmutableArray<T>` does not fix it either; it still compares by reference unless you compare with a sequence comparer."
+        },
+        {
+          "q": "record class or record struct?",
+          "a": "`readonly record struct` for a genuinely small value with no identity — the same size and boxing rules as any struct apply. `record class` for anything larger or anything you want to be nullable and cheap to pass around. A plain `record struct` is mutable, which reintroduces the mutable-struct problem."
+        }
+      ],
+      "redFlags": [
+        "Believing records are deeply immutable or deeply compared",
+        "Using a record with a List property as a dictionary key",
+        "Thinking `with` does a deep clone"
+      ],
+      "related": [
+        "hashing"
+      ]
+    },
+    {
+      "id": "dcl-07",
+      "level": "senior",
+      "type": "concept",
+      "question": "With nullable reference types enabled, what does the compiler actually guarantee?",
+      "answer": "Less than most people assume. Nullable reference types are a **compile-time flow analysis**, nothing more. `string` and `string?` are the same type at runtime; the difference is an attribute in metadata plus a set of warnings. There is no runtime check, no generated guard, no cost.\n\nWhat you do get, inside an annotated project that compiles warning-free, is real: the compiler tracks null-state through branches, warns when you dereference something that might be null, when you assign null to a non-nullable, and when you return null from a non-nullable signature. That catches a large class of bugs at the right time.\n\nWhat it does not guarantee, and where production nulls still come from:\n\n- **They are warnings.** Unless you set `<WarningsAsErrors>Nullable</WarningsAsErrors>` they do not fail the build, and a codebase with 900 warnings has none.\n- **`!` is unverified.** The null-forgiving operator silences the compiler with zero evidence. Every `!` is a claim you are personally making.\n- **Anything crossing a boundary.** `System.Text.Json` will happily leave a non-nullable property null, EF Core materialises whatever the column holds, and reflection, serialization and DI all write fields the analysis never saw.\n- **Unannotated code.** Any assembly compiled without nullable enabled is *null-oblivious*: the compiler makes no claims either way, so a third-party library can return null into a non-nullable local silently.\n- **Arrays and `default`.** `new string[10]` is ten nulls and gets no warning. An unconstrained generic `T` is neither nullable nor non-nullable.\n\nSo it is a strong static analysis, closer to Java with a good `@Nullable` checker than to Kotlin's enforced nullability. Keep validating at trust boundaries — `ArgumentNullException.ThrowIfNull` and model validation on DTOs are still your job.",
+      "keyPoints": [
+        "Compile-time only — `string` and `string?` are identical at runtime",
+        "Warnings, not errors, unless you opt in with WarningsAsErrors",
+        "`!` suppresses the check without proving anything",
+        "Deserialization, EF materialisation, reflection and DI all bypass the analysis",
+        "Null-oblivious (unannotated) assemblies are silently exempt"
+      ],
+      "followUps": [
+        {
+          "q": "How do you adopt it in a large existing codebase?",
+          "a": "Not all at once. Enable it per file or per project with `#nullable enable`, start at the leaves (domain models and shared libraries) so annotations flow outward, and set `WarningsAsErrors` only for the projects you have finished. Turning it on solution-wide produces thousands of warnings that everyone learns to ignore, which is worse than not having it."
+        },
+        {
+          "q": "What are the nullability attributes for?",
+          "a": "They describe contracts the type system alone cannot express: `[NotNullWhen(true)]` on a `TryParse`-style out parameter, `[MemberNotNull]` on an initialisation helper so the compiler knows a field is set, `[MaybeNull]` and `[AllowNull]` for generics. Without them you end up writing `!` at every call site of your own well-behaved API."
+        }
+      ],
+      "redFlags": [
+        "Believing a non-nullable reference cannot be null at runtime",
+        "Sprinkling `!` to make warnings go away",
+        "Removing argument null checks from a public API because the parameter is non-nullable"
+      ]
+    },
+    {
+      "id": "dcl-08",
+      "level": "senior",
+      "type": "scenario",
+      "question": "A service starts throwing \"Timeout expired. The timeout period elapsed prior to obtaining a connection from the pool\" a few minutes after every deploy, only under load. What is happening?",
+      "answer": "Something is opening database connections and not disposing them. Each one stays checked out of the ADO.NET connection pool, the pool hits its maximum (100 by default for SQL Server), and every subsequent request blocks until it times out. It appears minutes after deploy and only under load because that is how long it takes to leak the pool dry.\n\n**What `using` does and what forgetting it costs.** `using` compiles to a `try`/`finally` that calls `Dispose`, which is the deterministic release of a scarce resource — a socket, a file handle, a pooled connection, a lock. The garbage collector does **not** call `Dispose`. It only runs a *finalizer*, and only if the type has one. Well-written BCL types wrap their OS handle in a `SafeHandle`, which does have a critical finalizer, so the raw handle is eventually released — but nondeterministically, after a GC, which is far too late when the resource is a pool slot. Types with no finalizer at all leak until the process exits.\n\nThe second, quieter failure is data loss: `Dispose` on a `FileStream` or a `StreamWriter` flushes the buffer. Skip it and the last few kilobytes were never written.\n\n**How to find it.** Turn on the analyzers — CA2000 flags a disposable that goes out of scope undisposed, and there are dedicated `IDISP` Roslyn packages. Watch the ADO.NET pool performance counters, or `Process.HandleCount`. Take a dump and look at the finalizer queue (`dotnet-dump analyze`, `!finalizequeue`) for a backlog of connection objects.\n\n**The inverse trap.** `HttpClient` is the one you should *not* dispose per call — that exhausts ephemeral ports through sockets sitting in `TIME_WAIT`. Use `IHttpClientFactory`.\n\nJava engineers: this is `try`-with-resources and `AutoCloseable`, with `finalize()`'s bad reputation fully earned on both platforms.",
+      "keyPoints": [
+        "using is try/finally around Dispose — deterministic release, nothing to do with the GC",
+        "The GC never calls Dispose; it runs finalizers, and most types do not have one",
+        "SafeHandle's critical finalizer eventually frees the OS handle — far too late for a pool slot",
+        "Undisposed connections exhaust the ADO.NET pool: timeouts under load, minutes after deploy",
+        "Dispose also flushes buffers, so forgetting it can silently lose data"
+      ],
+      "followUps": [
+        {
+          "q": "What is `await using` for?",
+          "a": "`IAsyncDisposable`, implemented by types whose cleanup is itself I/O — flushing a stream, closing a connection, draining a channel. A synchronous `Dispose` on those either blocks a thread or does the work incompletely, and a finalizer can never do async work at all. If a type offers `DisposeAsync`, use it."
+        },
+        {
+          "q": "When should you write a finalizer yourself?",
+          "a": "Effectively never. If you own an unmanaged resource directly, derive from `SafeHandle` and let it handle the finalization; your type then only implements `IDisposable`. A finalizer makes every instance survive an extra GC generation along with everything it references, and the single finalizer thread means one slow finalizer stalls all of them."
+        }
+      ],
+      "redFlags": [
+        "\"The garbage collector will clean it up\"",
+        "Raising the pool's Max Pool Size instead of finding the leak",
+        "Disposing HttpClient per request",
+        "Writing the full Dispose(bool) pattern with a finalizer for a class holding only managed objects"
+      ],
+      "related": [
+        "database"
+      ]
+    }
+  ]
+}

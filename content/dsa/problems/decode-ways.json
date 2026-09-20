@@ -1,0 +1,121 @@
+{
+  "id": "decode-ways",
+  "title": "Decode Ways",
+  "patternId": "dynamic-programming-basics",
+  "difficulty": "intermediate",
+  "tags": [
+    "string",
+    "dynamic-programming"
+  ],
+  "statement": "Letters are encoded as numbers: 'A' is 1, 'B' is 2, ... 'Z' is 26. Given a string of digits, count how many different letter strings could have produced it. A code is read one or two digits at a time; a two-digit code must be between 10 and 26, and a code never has a leading zero, so '0' alone and '06' are not valid codes.",
+  "realWorld": "Counting the consistent parses of an ambiguous variable-width encoding — a billing or telemetry record where a field may occupy one or two bytes and the reader must decide how many interpretations a stream admits before rejecting it as ambiguous. The same counting shape appears in tokenising text against an ambiguous grammar.",
+  "examples": [
+    {
+      "input": "s = \"12\"",
+      "output": "2",
+      "explanation": "Either 1|2 = 'AB' or 12 = 'L'."
+    },
+    {
+      "input": "s = \"226\"",
+      "output": "3",
+      "explanation": "2|2|6 = 'BBF', 22|6 = 'VF', 2|26 = 'BZ'. Note 226 itself is not a code — codes are one or two digits."
+    },
+    {
+      "input": "s = \"2101\"",
+      "output": "1",
+      "explanation": "Only 2|10|1 works. The 0 cannot stand alone, so it must join the 1 before it as 10; and '01' is not a valid two-digit code, so the final 1 must stand alone."
+    }
+  ],
+  "constraints": [
+    "1 <= s.length <= 100",
+    "s consists of digits only",
+    "The answer fits in a 32-bit signed integer",
+    "A leading zero makes a code invalid: '0', '01' and '06' are not codes"
+  ],
+  "bruteForce": {
+    "idea": "Recursively consume the string from the left: at each position take one digit as a code if it is not '0', and take two digits if they form a number between 10 and 26. Add up the counts from both branches.",
+    "code": [
+      "public static int numDecodings(String s) {",
+      "    return count(s, 0);",
+      "}",
+      "",
+      "private static int count(String s, int i) {",
+      "    if (i == s.length()) return 1;   // consumed the whole string: one valid decoding",
+      "    if (s.charAt(i) == '0') return 0;",
+      "    int ways = count(s, i + 1);",
+      "    if (i + 1 < s.length()) {",
+      "        int pair = (s.charAt(i) - '0') * 10 + (s.charAt(i + 1) - '0');",
+      "        if (pair <= 26) ways += count(s, i + 2);",
+      "    }",
+      "    return ways;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(2^n)",
+      "space": "O(n)"
+    },
+    "whySlow": "Every position forks into a one-digit and a two-digit branch, so on a string like '1111111111...' the call tree is Fibonacci-shaped and count(i) is evaluated once for every way the prefix before i can be cut. For a 40-digit string of 1s that is about 10^8 calls, and count(38) alone is reached hundreds of millions of times — always returning the same number, because the number of decodings of a suffix cannot depend on how the prefix was split."
+  },
+  "patternIdentification": "The answer for the whole string is a sum over the ways the last code could have been formed — one digit, or two — and each of those refers back to the answer for a shorter prefix. That is the tell for a one-dimensional DP indexed by prefix length. Say the state out loud first: dp[i] = the number of ways to decode the first i characters. The recurrence follows by asking what the final code was: dp[i] = dp[i-1] if the last digit can stand alone, plus dp[i-2] if the last two digits form a code in 10..26. The base cases are dp[0] = 1 (the empty prefix has exactly one decoding: take no codes at all) and dp[1] = 1 unless the first character is '0'. Structurally this is climbing stairs — 'reach i from i-1 or i-2' — with a validity test on each move; recognising a familiar recurrence under a new set of legality rules is most of what DP fluency is.",
+  "optimized": {
+    "idea": "Fill dp left to right over prefix lengths. The two terms are guarded independently: the one-digit term only counts when the last digit is not '0', and the two-digit term only when the pair is between 10 and 26 — which rejects both 'over 26' and 'leading zero' with a single range test. Only dp[i-1] and dp[i-2] are ever read, so two ints suffice.",
+    "code": [
+      "public static int numDecodings(String s) {",
+      "    int n = s.length();",
+      "    if (n == 0 || s.charAt(0) == '0') return 0;",
+      "    int twoBack = 1;   // dp[0]: the empty prefix has exactly one decoding",
+      "    int oneBack = 1;   // dp[1]: the first digit is not '0', so it stands alone",
+      "    for (int i = 2; i <= n; i++) {",
+      "        int ways = 0;",
+      "        if (s.charAt(i - 1) != '0') ways += oneBack;",
+      "        int pair = (s.charAt(i - 2) - '0') * 10 + (s.charAt(i - 1) - '0');",
+      "        if (pair >= 10 && pair <= 26) ways += twoBack;   // >= 10 is what rejects '06'",
+      "        if (ways == 0) return 0;",
+      "        twoBack = oneBack;",
+      "        oneBack = ways;",
+      "    }",
+      "    return oneBack;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n)",
+      "space": "O(1)"
+    }
+  },
+  "visualization": {
+    "engine": "dp1d",
+    "input": {
+      "kind": "decodeWays",
+      "n": 8
+    },
+    "code": [
+      "int[] dp = new int[n + 1];",
+      "dp[0] = 1;",
+      "dp[1] = s.charAt(0) == '0' ? 0 : 1;",
+      "for (int i = 2; i <= n; i++) {",
+      "    dp[i] = (s.charAt(i-1) != '0' ? dp[i-1] : 0) + (validPair(s, i) ? dp[i-2] : 0);",
+      "}",
+      "return dp[n];"
+    ]
+  },
+  "commonMistakes": [
+    "Letting '0' stand as its own code by adding dp[i-1] unconditionally. '06' then returns 1 instead of 0 and '10' returns 2 instead of 1 — the count is inflated on exactly the inputs a test suite is least likely to include.",
+    "Testing only pair <= 26 and forgetting pair >= 10, so '01' is accepted as the letter A. The input '101' returns 2 where the answer is 1, because the bogus split 1|01 is counted alongside the real 10|1.",
+    "Setting dp[0] = 0 on the grounds that an empty string has nothing to decode. Every two-digit code that consumes the first two characters then contributes zero, and '12' returns 1 instead of 2 while longer inputs come out uniformly too small."
+  ],
+  "similar": [
+    "climbing-stairs",
+    "word-break",
+    "min-cost-climbing-stairs",
+    "fibonacci-memo"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 91,
+      "slug": "decode-ways",
+      "title": "Decode Ways",
+      "url": "https://leetcode.com/problems/decode-ways/",
+      "premium": false
+    }
+  }
+}

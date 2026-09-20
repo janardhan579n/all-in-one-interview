@@ -1,0 +1,220 @@
+{
+  "id": "sharding",
+  "title": "Sharding & Partitioning",
+  "group": "Data",
+  "level": 3,
+  "estimatedMinutes": 32,
+  "summary": "Split the data across independent machines so each holds a slice — the only way to scale writes beyond one machine, and the hardest thing on this list to undo.",
+  "analogy": "One library has outgrown its building. Instead of a bigger building, you open several: authors A-F in one, G-M in the next, and so on. Any single lookup is fast because you know which building to visit. But 'list every book published in 1998' now means visiting every building, and if one author becomes wildly popular, one building is mobbed while the others are quiet.",
+  "explanation": {
+    "beginner": "Replication gives every machine a full copy, so writes still have to be applied everywhere and one machine must handle them all. Sharding does the opposite: each machine holds only part of the data. User 1-1,000,000 live on shard 1, the next million on shard 2, and so on. Now writes are spread across machines and there is no single write ceiling. The cost is that anything touching many shards — a join, a global report, a transaction across two users — becomes hard or impossible.",
+    "interview": "Horizontal partitioning of a dataset across independent nodes by a partition key. Range partitioning supports range scans but is prone to hotspots; hash partitioning distributes evenly but destroys range locality; consistent hashing with virtual nodes limits the data movement on topology change to roughly 1/N. Cross-shard queries require scatter-gather and cross-shard writes require distributed transactions or a saga, so the partition key choice effectively determines which queries remain cheap. Resharding a live system is the expensive operation, which is why the key is chosen carefully up front."
+  },
+  "diagram": {
+    "nodes": [
+      {
+        "id": "app",
+        "label": "App",
+        "type": "server",
+        "x": 130,
+        "y": 300
+      },
+      {
+        "id": "router",
+        "label": "Shard router\\nhash(user_id) % N",
+        "type": "proxy",
+        "x": 400,
+        "y": 300,
+        "note": "Maps a key to a shard. With consistent hashing, adding a shard moves only ~1/N of the keys instead of nearly all of them.",
+        "why": {
+          "without": [
+            "Every write funnels into one primary, which is a hard ceiling",
+            "The dataset must fit one machine's disk"
+          ],
+          "with": [
+            "Write capacity and storage grow linearly with shard count"
+          ],
+          "conclusion": "Sharding is the only real answer to write scaling — and the most disruptive change on this list."
+        }
+      },
+      {
+        "id": "s1",
+        "label": "Shard 1\\nusers 0-33%",
+        "type": "db",
+        "x": 740,
+        "y": 170
+      },
+      {
+        "id": "s2",
+        "label": "Shard 2\\nusers 34-66%",
+        "type": "db",
+        "x": 740,
+        "y": 300
+      },
+      {
+        "id": "s3",
+        "label": "Shard 3\\nusers 67-100%",
+        "type": "db",
+        "x": 740,
+        "y": 430
+      },
+      {
+        "id": "r1",
+        "label": "Replica",
+        "type": "replica",
+        "x": 960,
+        "y": 170,
+        "note": "Each shard is usually itself replicated — sharding and replication are complementary, not alternatives."
+      }
+    ],
+    "edges": [
+      {
+        "from": "app",
+        "to": "router"
+      },
+      {
+        "from": "router",
+        "to": "s1"
+      },
+      {
+        "from": "router",
+        "to": "s2"
+      },
+      {
+        "from": "router",
+        "to": "s3"
+      },
+      {
+        "from": "s1",
+        "to": "r1",
+        "dashed": true
+      }
+    ]
+  },
+  "why": {
+    "without": [
+      "Write throughput is capped by one primary",
+      "The dataset must fit on one machine",
+      "Index maintenance and vacuum/compaction get slower as the table grows"
+    ],
+    "with": [
+      "Writes, storage and index size divide across N machines",
+      "A single shard's failure affects 1/N of users rather than all of them"
+    ],
+    "conclusion": "Do it when you must, not when you can. Every cross-shard operation gets harder, permanently."
+  },
+  "whenToUse": [
+    "Write throughput exceeds a single primary and you have already tried caching, batching and query tuning",
+    "The dataset no longer fits comfortably on one machine",
+    "Regulatory requirements force data to live in particular regions"
+  ],
+  "whenNotToUse": [
+    "You have not yet exhausted vertical scaling, caching and read replicas — which is most systems",
+    "Your queries are mostly cross-cutting analytics",
+    "You cannot identify a partition key that most queries filter on"
+  ],
+  "tradeoffs": [
+    {
+      "option": "Hash partitioning",
+      "pros": [
+        "Even distribution by construction",
+        "No hotspots from sequential keys"
+      ],
+      "cons": [
+        "Range queries must hit every shard",
+        "Resharding moves data unless you use consistent hashing"
+      ]
+    },
+    {
+      "option": "Range partitioning",
+      "pros": [
+        "Range scans hit one or few shards",
+        "Human-comprehensible boundaries"
+      ],
+      "cons": [
+        "Hotspots are easy to create — partition on a timestamp and all of today's writes land on one shard"
+      ]
+    },
+    {
+      "option": "Directory / lookup service",
+      "pros": [
+        "Arbitrary, changeable mapping; easy rebalancing"
+      ],
+      "cons": [
+        "The directory is a new critical dependency and must itself be highly available and fast"
+      ]
+    },
+    {
+      "option": "Consistent hashing",
+      "pros": [
+        "Adding or removing a node moves only ~1/N of keys",
+        "Standard for caches and distributed stores"
+      ],
+      "cons": [
+        "Uneven load without virtual nodes",
+        "More conceptual complexity"
+      ]
+    }
+  ],
+  "keyNumbers": [
+    {
+      "label": "Keys moved when resharding, naive modulo",
+      "value": "Nearly all of them"
+    },
+    {
+      "label": "Keys moved with consistent hashing",
+      "value": "~1/N"
+    },
+    {
+      "label": "Practical single-primary write ceiling",
+      "value": "Thousands to low tens of thousands of writes/s"
+    }
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "architecture",
+      "question": "You shard a social platform by user_id, then need 'all posts with hashtag #cricket'. What happens?",
+      "options": [
+        "It is a single fast query",
+        "It becomes a scatter-gather across every shard, then a merge — slow and it gets slower as you add shards",
+        "It is impossible",
+        "The router handles it transparently at no cost"
+      ],
+      "answerIndex": 1,
+      "explanation": "The partition key determines which queries stay cheap. Access patterns that do not include the key require touching every shard, which is why a separate search index is usually built for them."
+    },
+    {
+      "id": "q2",
+      "type": "architecture",
+      "question": "You shard by hash(timestamp). What goes wrong?",
+      "options": [
+        "Nothing",
+        "Hashing a timestamp actually distributes well — the classic hotspot comes from RANGE partitioning on time, where all of today's writes hit one shard",
+        "Reads break",
+        "Replication stops"
+      ],
+      "answerIndex": 1,
+      "explanation": "Worth being precise about: hashing scatters sequential values deliberately. Range-partitioning on a monotonically increasing key is what creates the write hotspot — and it also destroys the range locality that was the reason to range-partition in the first place."
+    },
+    {
+      "id": "q3",
+      "type": "mcq",
+      "question": "Why is consistent hashing preferred over `hash(key) % N`?",
+      "options": [
+        "It is faster to compute",
+        "Changing N with plain modulo remaps almost every key, forcing a full data migration; consistent hashing moves only about 1/N",
+        "It gives better security",
+        "It supports range queries"
+      ],
+      "answerIndex": 1,
+      "explanation": "Going from 4 to 5 shards changes hash % N for roughly 80% of keys. Consistent hashing places nodes and keys on a ring so only the keys in the new node's arc move."
+    }
+  ],
+  "related": [
+    "consistent-hashing",
+    "replication",
+    "database",
+    "cap-theorem"
+  ]
+}

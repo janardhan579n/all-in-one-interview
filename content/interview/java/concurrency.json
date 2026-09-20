@@ -1,0 +1,198 @@
+{
+  "id": "java-concurrency",
+  "trackId": "java",
+  "topic": "concurrency",
+  "title": "Concurrency",
+  "summary": "The memory model, thread pools, and the bugs that only appear on a busy production box.",
+  "questions": [
+    {
+      "id": "jcc-01",
+      "level": "junior",
+      "type": "concept",
+      "question": "What does the `volatile` keyword actually guarantee?",
+      "answer": "Two things, and it is important to be precise because it is famous for the one it does *not* give you.\n\n**Visibility**: a write to a volatile field is immediately visible to every other thread's subsequent read. Without it, a thread may read a value cached in a register or a core's store buffer indefinitely — the classic symptom being a `while (!stopped)` loop that never exits after another thread sets `stopped = true`.\n\n**Ordering**: a volatile write acts as a release barrier and a volatile read as an acquire barrier, so reads and writes are not reordered across it. This is what makes the double-checked locking idiom work, and why it was broken before Java 5.\n\nWhat it does **not** give you is **atomicity of compound operations**. `count++` on a volatile field is still read-modify-write and still loses updates under contention. For that you need `AtomicInteger`, a lock, or `LongAdder`.",
+      "keyPoints": [
+        "Guarantees visibility and prevents reordering",
+        "Does NOT make `++` or check-then-act atomic",
+        "The stuck `while (!flag)` loop is the canonical visibility bug",
+        "For counters use AtomicInteger or LongAdder instead"
+      ],
+      "followUps": [
+        {
+          "q": "When is a volatile boolean flag genuinely sufficient?",
+          "a": "When exactly one thread writes and others only read — a shutdown flag, a 'config reloaded' marker. One writer means there is no lost-update race to lose."
+        },
+        {
+          "q": "AtomicInteger or LongAdder?",
+          "a": "AtomicInteger is a single CAS location: fine under low contention, but every thread fights over one cache line under high contention. LongAdder keeps per-thread cells and sums on read — much better for hot counters where you write constantly and read rarely, which is exactly what metrics do."
+        }
+      ],
+      "redFlags": [
+        "\"volatile makes it thread-safe\"",
+        "Using volatile for a counter"
+      ]
+    },
+    {
+      "id": "jcc-02",
+      "level": "mid",
+      "type": "concept",
+      "question": "Explain the parameters of a ThreadPoolExecutor and how to size one.",
+      "answer": "`corePoolSize`, `maximumPoolSize`, `keepAliveTime`, the `workQueue`, and the `RejectedExecutionHandler`. The behaviour that surprises people is the interaction: **the pool only grows beyond core size when the queue is full**. So an unbounded `LinkedBlockingQueue` means `maximumPoolSize` is never reached — the queue simply grows until you run out of memory. That is precisely what `Executors.newFixedThreadPool` does, which is why Effective Java and most style guides say construct `ThreadPoolExecutor` directly.\n\nSizing depends entirely on what the tasks do:\n\n- **CPU-bound**: about `availableProcessors()`, maybe +1. More threads only add context switching.\n- **I/O-bound**: `N × (1 + waitTime/serviceTime)`. A task waiting 90% of the time on a database supports roughly ten times the core count — Little's Law, not folklore.\n\nAnd the queue must be **bounded** with a deliberate rejection policy. `CallerRunsPolicy` is often the right one: it pushes back on the submitting thread, which naturally throttles the producer instead of silently queueing an unbounded backlog.",
+      "keyPoints": [
+        "The pool grows past core size only when the queue is full",
+        "Unbounded queue means maximumPoolSize is dead configuration",
+        "CPU-bound ≈ core count; I/O-bound scales with the wait/service ratio",
+        "Bound the queue and choose the rejection policy deliberately",
+        "Name your threads — an unnamed pool is invisible in a thread dump"
+      ],
+      "followUps": [
+        {
+          "q": "What does CallerRunsPolicy actually do for you?",
+          "a": "The submitting thread executes the task itself. That slows the producer down by exactly the time the task takes, which is a free feedback loop — the system degrades in throughput instead of falling over in memory. The caveat is that if the caller is a request thread, latency for that request spikes, so it is a back-pressure choice, not a free win."
+        },
+        {
+          "q": "How do virtual threads change this?",
+          "a": "For I/O-bound work on Java 21+, a great deal: blocking is cheap, so the pool-sizing arithmetic largely goes away and you can use a thread per task. They do not help CPU-bound work at all, and they change the calculus around pooling — you pool the scarce resource (database connections) rather than threads. `synchronized` blocks could pin a carrier thread in early versions, which matters for legacy code."
+        }
+      ],
+      "redFlags": [
+        "`Executors.newFixedThreadPool` with no mention of the unbounded queue",
+        "\"More threads means more throughput\"",
+        "No rejection strategy"
+      ]
+    },
+    {
+      "id": "jcc-03",
+      "level": "mid",
+      "type": "code",
+      "question": "Why is this singleton broken, and what are the correct alternatives?",
+      "answer": "It is the classic broken double-checked lock. Without `volatile`, `instance = new Config()` is not one operation: allocate memory, run the constructor, assign the reference — and the JIT is allowed to reorder the assignment before the constructor completes. Another thread can then see a non-null reference to a **partially constructed object**, read a field that has not been initialised yet, and behave unpredictably. It will pass every test on your laptop and fail once a week in production.\n\nThe fixes:\n\n```java\nprivate static volatile Config instance;   // minimum fix — restores the ordering guarantee\n```\n\nBetter, the holder idiom, which needs no synchronisation at all because the JVM guarantees class initialisation is thread-safe and lazy:\n\n```java\nprivate static class Holder { static final Config INSTANCE = new Config(); }\npublic static Config getInstance() { return Holder.INSTANCE; }\n```\n\nBest in most real applications: **do not write a singleton**. Make it a normal class and let the DI container own the single instance — testable, mockable, and with a lifecycle you control.",
+      "codeExample": {
+        "language": "java",
+        "code": [
+          "public class Config {",
+          "    private static Config instance;          // not volatile",
+          "",
+          "    public static Config getInstance() {",
+          "        if (instance == null) {",
+          "            synchronized (Config.class) {",
+          "                if (instance == null) {",
+          "                    instance = new Config();  // may be seen half-built",
+          "                }",
+          "            }",
+          "        }",
+          "        return instance;",
+          "    }",
+          "}"
+        ]
+      },
+      "keyPoints": [
+        "Object construction is not atomic and may be reordered",
+        "Another thread can see a non-null, partially initialised object",
+        "volatile fixes it; the holder idiom avoids the problem entirely",
+        "In a Spring application, a singleton bean is the real answer"
+      ],
+      "followUps": [
+        {
+          "q": "Why is the holder idiom thread-safe with no locking?",
+          "a": "The JVM specification guarantees that class initialisation happens exactly once and is synchronised by the classloader. The holder class is not initialised until first referenced, so you get laziness and safety without writing either."
+        }
+      ],
+      "redFlags": [
+        "Not spotting the missing volatile",
+        "Saying the outer null check makes it safe",
+        "Never questioning whether a singleton is wanted at all"
+      ]
+    },
+    {
+      "id": "jcc-04",
+      "level": "mid",
+      "type": "concept",
+      "question": "What causes a deadlock and how would you find one in a running system?",
+      "answer": "Four conditions must hold simultaneously — mutual exclusion, hold-and-wait, no pre-emption, and circular wait. Break any one and the deadlock is impossible; **circular wait is the one you can actually design away**, by acquiring locks in a globally consistent order.\n\nTo find one in a live system: take a thread dump (`jstack <pid>`, or `kill -3`). The JVM detects Java monitor cycles itself and prints \"Found one Java-level deadlock\" with both threads and the exact lock each holds and waits for. Three dumps ten seconds apart also distinguish a deadlock (identical stacks, frozen) from a livelock or slow query (stacks moving). JMX and most APMs expose `ThreadMXBean.findDeadlockedThreads()` for automatic detection.\n\nThe design answers: order your lock acquisition (by object identity hash if there is no natural order), use `tryLock` with a timeout so a cycle resolves itself instead of hanging, and better still narrow the critical section until you only need one lock. Note the JVM's detector sees monitors and `ReentrantLock`, but **not** a deadlock caused by a bounded thread pool whose tasks wait on tasks in the same pool — that one just looks like a hang.",
+      "keyPoints": [
+        "Four conditions; break circular wait by ordering lock acquisition",
+        "jstack detects Java-level deadlocks automatically and names the locks",
+        "Repeated dumps distinguish frozen from merely slow",
+        "tryLock with timeout turns a hang into a recoverable failure",
+        "Thread-pool starvation deadlock is invisible to the detector"
+      ],
+      "followUps": [
+        {
+          "q": "What is thread-pool starvation deadlock?",
+          "a": "A task in a pool submits another task to the same pool and blocks on its result. With all threads doing this, nothing can run to completion. It is common with nested `CompletableFuture` chains on a shared pool. The fix is a separate pool for the nested work, or never blocking inside a pooled task."
+        },
+        {
+          "q": "How does this differ from a livelock?",
+          "a": "In a livelock the threads are running — responding to each other, retrying, backing off — but no work progresses. CPU is high, unlike a deadlock where everything is idle. Randomised backoff is the usual cure."
+        }
+      ],
+      "redFlags": [
+        "Listing the four conditions with no idea how to diagnose a real one",
+        "Never having taken a thread dump"
+      ]
+    },
+    {
+      "id": "jcc-05",
+      "level": "senior",
+      "type": "concept",
+      "question": "What is the Java Memory Model and what does happens-before mean?",
+      "answer": "The JMM is the specification that defines when a write by one thread is guaranteed visible to a read by another. It exists because compilers, the JIT and CPUs all reorder instructions freely for speed — legal for a single thread, observable across threads. Without a formal model there would be no portable way to reason about concurrent code at all.\n\n**Happens-before** is the ordering relation it defines. If A happens-before B, everything A wrote is visible to B. The edges you need to know:\n\n- Program order within a single thread.\n- Unlocking a monitor happens-before any later lock of it.\n- A volatile write happens-before any later read of the same field.\n- `Thread.start()` happens-before anything in that thread; anything in the thread happens-before `join()` returns.\n- Constructor completion happens-before the finalizer, and final-field freeze semantics guarantee a correctly constructed immutable object is seen fully built.\n\nThe practical translation: **unsynchronised access to shared mutable state has no visibility guarantee at all** — not \"probably stale\", but formally undefined. It is why code that works under test fails under load on a different CPU architecture, and why the fix is establishing an edge (a lock, a volatile, an immutable handoff), never adding a sleep.",
+      "keyPoints": [
+        "The JMM exists because reordering by compiler, JIT and CPU is legal",
+        "happens-before is a guarantee of visibility, not just timing",
+        "Edges: lock/unlock, volatile write/read, start/join, final-field freeze",
+        "Without an edge, visibility is undefined — not merely delayed",
+        "Safe publication of immutable objects needs no synchronisation"
+      ],
+      "followUps": [
+        {
+          "q": "Why does an immutable object need no synchronisation to publish safely?",
+          "a": "Final-field semantics: the JMM guarantees that any thread seeing a reference to a correctly constructed object sees its final fields fully initialised, provided the reference did not escape during construction. That last clause is the catch — publishing `this` from a constructor breaks the guarantee."
+        },
+        {
+          "q": "Does adding a log statement 'fix' a race?",
+          "a": "It can appear to, because I/O and its internal locks perturb timing and may even introduce a happens-before edge. That makes it one of the most dangerous debugging accidents there is — the bug is still present and now hides from you."
+        }
+      ],
+      "redFlags": [
+        "Describing happens-before as merely 'happens earlier in time'",
+        "Believing that a race that is hard to reproduce is rare in production",
+        "Fixing races with sleeps"
+      ]
+    },
+    {
+      "id": "jcc-06",
+      "level": "senior",
+      "type": "scenario",
+      "question": "Requests to one endpoint start timing out at 30 seconds while CPU sits near zero. Take me through the diagnosis.",
+      "answer": "Idle CPU with high latency means **blocked, not busy** — so this is a waiting problem, and the CPU profiler will tell you nothing. Go to thread dumps.\n\n**Gather.** Three `jstack` dumps, ten seconds apart. Then compare: threads whose stacks are identical across all three are stuck, not slow.\n\n**Read them.** What are the request threads (`http-nio-8080-exec-*`) doing at the top of the stack? The shape tells you the cause:\n\n- Parked on `getConnection` — **connection pool exhaustion**. Every connection is checked out. Either a leak (a connection not returned on some error path), a slow query holding connections longer than the pool can refill, or a pool sized smaller than the concurrency. `HikariPool-1 - Connection is not available, request timed out after 30000ms` in the log confirms it, and Hikari's leak-detection threshold will point at the offending stack.\n- Blocked on a monitor held by another thread — contention or deadlock; the dump names the owner.\n- In a socket read with no timeout — a downstream call with no timeout configured. This is the quiet killer: one slow dependency consumes every request thread and takes the whole service down with it.\n- Waiting on a `CompletableFuture` in the same pool that should execute it — pool starvation.\n\n**Fix by cause**, but two changes are almost always right afterwards: **every** outbound call gets a connect and read timeout, and the downstream gets a circuit breaker or bulkhead so its slowness cannot consume all of your threads.\n\n**Prevent**: alert on pool `activeConnections`/`pendingThreads`, not just on latency. Saturation is visible minutes before users notice it.",
+      "keyPoints": [
+        "Low CPU + high latency = blocked; a CPU profiler is the wrong tool",
+        "Three thread dumps ten seconds apart isolate stuck from slow",
+        "Connection pool exhaustion is the most common cause in a Spring service",
+        "A downstream call with no timeout will consume every request thread",
+        "Fix with timeouts, bulkheads, circuit breakers; alert on pool saturation"
+      ],
+      "followUps": [
+        {
+          "q": "The pool is exhausted. How do you tell a leak from a pool that is simply too small?",
+          "a": "Watch active connections after load stops. A leak stays pinned at maximum forever; an undersized pool drains back to zero. Hikari's `leakDetectionThreshold` logs the acquiring stack trace for connections held beyond a threshold, which usually names the method directly."
+        },
+        {
+          "q": "Why not just raise the pool size to 200?",
+          "a": "Because the database becomes the bottleneck instead, and it degrades worse — each connection is a backend process or thread there. Pool size should be derived from the database's capacity and the query service time, not from your request concurrency. A pool larger than the database can serve converts a queue in your app into a queue in the database, where you have less control."
+        }
+      ],
+      "redFlags": [
+        "Reaching for a CPU profiler when CPU is idle",
+        "Restarting the service as the diagnosis",
+        "Raising timeouts to stop the timeouts"
+      ],
+      "related": [
+        "cache",
+        "rate-limiting"
+      ]
+    }
+  ]
+}

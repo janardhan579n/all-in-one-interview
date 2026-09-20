@@ -1,0 +1,279 @@
+{
+  "id": "java-jvm-memory",
+  "trackId": "java",
+  "topic": "jvm-memory",
+  "title": "JVM Memory & Garbage Collection",
+  "summary": "Where objects actually live, what the collector is doing while your p99 spikes, and how to prove it from evidence.",
+  "questions": [
+    {
+      "id": "jjm-01",
+      "level": "junior",
+      "type": "concept",
+      "question": "What is the difference between the heap, the stack and metaspace, and what lives in each?",
+      "answer": "They differ by **who owns the memory** and **when it is reclaimed**, and that is the useful way to remember it.\n\nThe **stack** is per thread. Every method call pushes a frame holding the method's local variables, the operand stack and the return address. Primitives declared as locals live directly in the frame; an object-typed local holds only a *reference* into the heap. A frame is popped when the method returns, so stack memory is reclaimed deterministically and costs nothing to free. It is also small — around 1 MB per thread by default, tunable with `-Xss` — which is why unbounded recursion gives you a `StackOverflowError` rather than an `OutOfMemoryError`.\n\nThe **heap** is shared by all threads and holds every object and array you allocate with `new`, including the character arrays behind your strings and the interned string pool (moved to the heap in Java 7). This is the only region the garbage collector manages, and it is what `-Xmx` bounds.\n\n**Metaspace** is native memory outside the heap, holding class metadata: the runtime representation of classes, method bytecode, constant pool entries. It replaced PermGen in Java 8 and grows on demand unless you cap it with `-XX:MaxMetaspaceSize`. A subtlety worth knowing: the *values* of static fields live on the heap, in the `java.lang.Class` mirror object, not in metaspace.\n\nBeyond those there is native memory the JVM uses for thread stacks, JIT-compiled code, GC structures and direct byte buffers — which is why a container can be killed for exceeding its memory limit while the heap looks perfectly healthy.",
+      "keyPoints": [
+        "Stack is per-thread, holds frames and locals, reclaimed on return",
+        "Heap is shared, holds all objects, and is the only GC-managed region",
+        "Metaspace is native memory for class metadata; static field values live on the heap",
+        "`-Xmx` bounds the heap, not the process — thread stacks, code cache and direct buffers are extra",
+        "Container RSS is heap plus everything else, which is how you get OOM-killed with a healthy heap"
+      ],
+      "followUps": [
+        {
+          "q": "If an object is created inside a method and never returned, where does it live?",
+          "a": "On the heap, conceptually — the local variable on the stack is only a reference. In practice the JIT may prove it never escapes the method and eliminate the allocation entirely via scalar replacement, but that is an optimisation, not a rule you can rely on."
+        },
+        {
+          "q": "Why does a container get OOM-killed when the heap is only half full?",
+          "a": "Because the kernel counts resident memory, not heap. Metaspace, thread stacks, the JIT code cache, GC bookkeeping and direct buffers all add to it. Set the heap as a fraction of the limit with `-XX:MaxRAMPercentage` and leave headroom rather than setting `-Xmx` to the container limit."
+        }
+      ],
+      "redFlags": [
+        "\"Primitives go on the stack and objects go on the heap\" stated as an absolute rule",
+        "Believing `-Xmx` caps the whole process",
+        "Not knowing PermGen was replaced in Java 8"
+      ]
+    },
+    {
+      "id": "jjm-02",
+      "level": "junior",
+      "type": "concept",
+      "question": "How does a generational garbage collector work, and why is generational collection a good idea at all?",
+      "answer": "It rests on an empirical observation called the **weak generational hypothesis**: the overwhelming majority of objects die very young. A request handler allocates DTOs, string builders and iterators that are unreachable microseconds later; only a small fraction of objects survive to become caches, sessions or long-lived entities. A second, related observation is that references from old objects to young ones are comparatively rare.\n\nA generational collector exploits this by splitting the heap into a **young generation** (Eden plus two survivor spaces) and an **old generation**. New objects are allocated in Eden. When Eden fills, a *minor* collection runs: the collector traces from the GC roots and **copies the surviving objects** into a survivor space, then declares the whole of Eden free in one step. Objects that survive enough copies are *promoted* to the old generation, which is collected far less often by a different, usually more expensive algorithm.\n\nThe crucial consequence is that **the cost of a minor GC is proportional to the data that survives, not to the garbage**. If 98% of Eden is dead, the collector never touches those bytes — dying young is literally free. That is why allocating short-lived objects in Java is much cheaper than C++ intuition suggests.\n\nTo avoid scanning the whole old generation to find references into the young generation, the collector maintains a **card table** (or per-region remembered sets in G1): a write barrier on every reference store marks the region containing the modified field so that only those cards are scanned as extra roots.",
+      "keyPoints": [
+        "Weak generational hypothesis: most objects die young, old-to-young references are rare",
+        "Minor GC copies survivors and frees the rest wholesale",
+        "Cost scales with live data, not with garbage — short-lived allocation is cheap",
+        "Card tables and remembered sets, maintained by a write barrier, avoid scanning the old generation",
+        "Objects surviving repeated young collections are promoted to the old generation"
+      ],
+      "followUps": [
+        {
+          "q": "What is premature promotion and why does it hurt?",
+          "a": "When the young generation is too small or survivor spaces overflow, objects that would have died shortly are copied into the old generation instead. They then have to be collected by the expensive old-generation algorithm, driving up the frequency of major collections. Symptom: a high promotion rate in the GC log with a live set that does not actually grow."
+        },
+        {
+          "q": "Are all modern collectors generational?",
+          "a": "Almost. Serial, Parallel, G1 and Shenandoah's newer modes are. ZGC was originally single-generation; generational ZGC is opt-in in JDK 21 with `-XX:+ZGenerational` and became the default in later releases, precisely because the hypothesis holds strongly enough to be worth the extra barrier complexity."
+        }
+      ],
+      "redFlags": [
+        "Describing generations without being able to say why they exist",
+        "\"The GC scans the whole heap every time\"",
+        "Thinking allocation is expensive because collection must be"
+      ]
+    },
+    {
+      "id": "jjm-03",
+      "level": "mid",
+      "type": "tradeoff",
+      "question": "What is the difference between G1 and ZGC, and when would you choose each?",
+      "answer": "They optimise for different things, and the honest summary is that **ZGC trades throughput and footprint for pause times that do not grow with your heap**.\n\n**G1** — the default since Java 9 — divides the heap into equal-sized regions and collects generationally. Marking is largely concurrent, but *evacuation* (copying live objects out of the chosen regions) happens in a stop-the-world pause. G1 is a soft real-time collector: you give it a pause target with `-XX:MaxGCPauseMillis` (default 200) and it chooses how many regions to collect to try to meet it. Pause length therefore scales with the live data it has to copy in that pause, which in practice means tens to low hundreds of milliseconds on a multi-gigabyte heap.\n\n**ZGC** is concurrent almost everywhere. It uses coloured pointers and load barriers so that marking *and relocation* run while your threads run; the only stop-the-world pauses are short root-scanning operations. Its design goal is sub-millisecond pauses that are **independent of heap size**, and it handles heaps in the hundreds of gigabytes to terabytes.\n\nThe price is real: the load barrier costs CPU on every reference read, so throughput is typically somewhat lower than G1, and ZGC needs extra heap headroom because it must have space to relocate into while the application keeps allocating.\n\nChoose **G1** for ordinary services with heaps of a few gigabytes where a 100 ms pause is acceptable and you would rather have the throughput. Choose **ZGC** when you have a strict tail-latency SLO, or a large heap where G1's pauses have become unacceptable. For batch jobs where only total wall-clock matters, Parallel GC still beats both.",
+      "keyPoints": [
+        "G1: region-based, generational, concurrent marking but stop-the-world evacuation, pause target is a goal not a guarantee",
+        "ZGC: coloured pointers and load barriers, concurrent relocation, sub-millisecond pauses independent of heap size",
+        "ZGC costs throughput (barrier overhead) and footprint (relocation headroom)",
+        "G1 for typical services; ZGC for strict tail latency or very large heaps; Parallel for pure throughput batch",
+        "Change the collector on evidence, after you have GC logs — not as a first move"
+      ],
+      "followUps": [
+        {
+          "q": "What is a humongous allocation in G1 and why does it matter?",
+          "a": "An object larger than half a region is allocated directly into contiguous 'humongous' regions in the old generation. Large byte arrays or big result lists therefore bypass the young generation entirely, fragment the heap and can trigger expensive collections. If you see humongous allocations in the log, either reduce the object size or raise `-XX:G1HeapRegionSize`."
+        },
+        {
+          "q": "Does lowering MaxGCPauseMillis make things better?",
+          "a": "Not for free. G1 meets a tighter target mainly by shrinking the young generation, so collections become more frequent, promotion goes up and throughput goes down. Setting it very low can make tail latency worse overall. It is a dial to tune with measurements, not to minimise."
+        }
+      ],
+      "redFlags": [
+        "\"ZGC is just better\" with no mention of throughput or footprint cost",
+        "Copying GC flags from a blog post without measuring",
+        "Not knowing which collector their own service currently runs"
+      ]
+    },
+    {
+      "id": "jjm-04",
+      "level": "mid",
+      "type": "concept",
+      "question": "What actually causes an OutOfMemoryError, and what are the distinct flavours?",
+      "answer": "An `OutOfMemoryError` means the JVM could not satisfy an allocation *and* garbage collection did not help. The message after the colon tells you which memory region failed, and they have genuinely different causes.\n\n**`Java heap space`** — the live set exceeds `-Xmx`. Either a real leak (something reachable that should not be: an ever-growing static map, an unbounded cache, listeners never deregistered, `ThreadLocal`s never cleared on pooled threads), or the heap is simply too small for legitimate load. The distinguishing evidence is whether heap occupancy *after* a full GC trends upward over hours.\n\n**`Metaspace`** — class metadata exhausted. Almost always a classloader leak: repeated redeployment into a long-running container, or dynamic proxy and bytecode generation creating classes without bound. A leaked classloader retains every class it loaded, so the symptom is metaspace climbing across redeployments.\n\n**`GC overhead limit exceeded`** — a heuristic in the parallel and G1 collectors: more than 98% of recent time spent in GC while recovering less than 2% of the heap. It is a *nearly* full heap, thrashing. Worth knowing because the service is effectively dead well before the error is thrown, so alert on GC time fraction, not on this error.\n\n**`Direct buffer memory`** — `ByteBuffer.allocateDirect` exceeded `-XX:MaxDirectMemorySize`. Common with NIO and Netty. Direct buffers are freed only when their `ByteBuffer` is collected, so a quiet heap means they are never released.\n\nTwo more that are not heap at all: **`unable to create new native thread`** (OS or cgroup thread limit) and **`Requested array size exceeds VM limit`**. And note a container OOM-kill — exit code 137 with no Java stack trace at all — is the kernel, not the JVM.",
+      "keyPoints": [
+        "Read the message after the colon — the region named changes the diagnosis entirely",
+        "Heap: leak versus undersized, distinguished by occupancy after full GC over time",
+        "Metaspace exhaustion is nearly always a classloader leak",
+        "GC overhead limit means the service was already dying long before the error",
+        "Exit 137 with no stack trace is the kernel OOM-killer, not an OutOfMemoryError"
+      ],
+      "followUps": [
+        {
+          "q": "How do you find a heap leak in production?",
+          "a": "Run with `-XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=...` so you get a dump at the moment of failure, then open it in Eclipse MAT and look at the dominator tree and the leak suspects report — it tells you which object graph retains the most bytes and the path from a GC root. For a live process, `jcmd <pid> GC.heap_info` and `jmap -histo:live` over time show which class is growing."
+        },
+        {
+          "q": "Should you catch OutOfMemoryError?",
+          "a": "Essentially never. The JVM is in an unreliable state, any thread may hit it next, and catching it usually just hides the failure while the process limps. The correct handling is to dump the heap, let the process die, and let the orchestrator restart it."
+        }
+      ],
+      "redFlags": [
+        "\"Just increase -Xmx\" as the whole answer",
+        "Treating all OOM messages as the same problem",
+        "Catching and ignoring OutOfMemoryError"
+      ]
+    },
+    {
+      "id": "jjm-05",
+      "level": "mid",
+      "type": "concept",
+      "question": "How do you read a GC log, and what does it mean when \"heap after GC keeps climbing\"?",
+      "answer": "First, turn logging on — it is cheap enough to run permanently in production. On Java 9+ the unified flag is `-Xlog:gc*:file=gc.log:time,uptime,level,tags:filecount=5,filesize=20M`. The old `-XX:+PrintGCDetails` family was removed.\n\nYou are reading for four numbers, not for individual lines.\n\n**Pause time and frequency.** Each collection prints its duration. What matters is the distribution and the total fraction of wall-clock time spent paused. A service losing 5% of its time to GC has a throughput problem; one with a single 3-second pause has a latency problem. These need different fixes.\n\n**Allocation rate.** Each line shows occupancy before and after, like `2048M->512M(4096M)`. The heap climbs from the previous *after* value to the next *before* value between collections, so that delta divided by the interval is your allocation rate in MB/s. High allocation rate is the usual cause of frequent young collections.\n\n**Promotion rate.** How much survives young collection and moves to the old generation. Sustained promotion is what eventually forces expensive old-generation work.\n\n**Occupancy after a full or concurrent cycle** — the number that matters most. This is your **live set**: everything still reachable once the collector has done all it can.\n\nIf the live set climbs steadily over hours and never returns to a baseline, that is the signature of a **memory leak** — reachable objects accumulating. The service will run fine, then degrade as collections get more frequent and longer, then die with a heap-space `OutOfMemoryError`. Contrast that with a sawtooth that always returns to the same floor: that is healthy, no matter how tall the teeth are. Confirm with a heap dump; the log tells you there is a leak, the dump tells you what it is.",
+      "keyPoints": [
+        "`-Xlog:gc*` on Java 9+; the old Print flags are gone",
+        "Read pause distribution, allocation rate, promotion rate and live set — not individual lines",
+        "Live set = occupancy after a full or concurrent cycle",
+        "A rising live-set floor is a leak; a tall but flat sawtooth is healthy",
+        "GC log identifies the leak, a heap dump identifies the culprit"
+      ],
+      "followUps": [
+        {
+          "q": "GC time is 2% of wall clock. Is that fine?",
+          "a": "For throughput, usually yes. For latency, not necessarily — 2% concentrated in one 500 ms pause per minute is far worse for p99 than 2% spread across hundreds of 2 ms pauses. Always look at the pause distribution alongside the aggregate."
+        },
+        {
+          "q": "What can JFR tell you that the GC log cannot?",
+          "a": "Java Flight Recorder attributes allocation to code. The `ObjectAllocationSample` and TLAB events show which call sites produce the pressure, and it correlates GC with CPU, locks and I/O on one timeline. The GC log says the collector is busy; JFR says which of your methods is making it busy."
+        }
+      ],
+      "redFlags": [
+        "Never having enabled GC logging",
+        "Reading one log line rather than trends",
+        "Confusing heap occupancy before GC with the live set"
+      ]
+    },
+    {
+      "id": "jjm-06",
+      "level": "mid",
+      "type": "concept",
+      "question": "What is a stop-the-world pause and what is its real impact on latency?",
+      "answer": "A stop-the-world pause is a period where every application thread is suspended so the JVM can do something that requires a consistent view of the heap. The mechanism is the **safepoint**: the JVM sets a flag, and each thread stops at the next safepoint poll — typically a method return or a loop back-edge. Only when all threads have arrived does the operation begin.\n\nTwo things follow from this that people miss. First, **the pause is longer than the GC work**: it also includes *time to safepoint*, the wait for the slowest thread to reach a poll. A long-running counted loop the JIT optimised the poll out of, or a thread in a lengthy JNI call, can hold everyone else for far longer than the collection itself takes. `-Xlog:safepoint` shows the breakdown. Second, **GC is not the only reason for a safepoint** — deoptimisation, biased-lock revocation in older JVMs, class redefinition by an agent, and even thread dumps all trigger one.\n\nThe latency impact is worse than the pause length suggests, because of queuing. A 200 ms pause on a service handling 1,000 requests per second does not delay one request by 200 ms; it delays *every* in-flight request, and about 200 more arrive during the pause and start their clock behind a backlog. Recovery takes longer than the pause. This is why pauses show up cleanly in p99 and p99.9 while p50 does not move at all.\n\nIn a microservice call chain the effect compounds: if five services each pause independently, the probability that a given request hits at least one pause is much higher than for any single service. It is also why pauses cause spurious health-check failures and load-balancer flapping.",
+      "keyPoints": [
+        "Safepoints suspend every thread; the pause includes time-to-safepoint, not just GC work",
+        "GC is not the only safepoint cause — deoptimisation, agents and thread dumps count",
+        "Queuing means a pause delays far more requests than its duration implies",
+        "Pauses move p99 and p99.9 while leaving p50 flat — the classic signature",
+        "Tail latency compounds across a microservice call chain"
+      ],
+      "followUps": [
+        {
+          "q": "Why do load balancers sometimes eject a healthy instance during GC?",
+          "a": "The health-check endpoint is a normal request served by a normal thread, so it is paused too. A long pause makes the check time out, the instance is removed, its traffic moves to the others, they GC harder, and you get a rolling failure. Health-check timeouts should be generous relative to your worst expected pause."
+        },
+        {
+          "q": "What is coordinated omission and why does it matter here?",
+          "a": "A load generator that waits for a response before sending the next request stops sending during a pause, so it never records the requests that would have been slow. The measured p99 looks fine while real users see seconds. Benchmarks must send at a fixed rate and record intended start times to capture pause effects honestly."
+        }
+      ],
+      "redFlags": [
+        "Thinking a pause only affects requests already running",
+        "Assuming a 'concurrent' collector never stops the world",
+        "Never having looked at safepoint logs"
+      ]
+    },
+    {
+      "id": "jjm-07",
+      "level": "senior",
+      "type": "code",
+      "question": "When is object allocation NOT the bottleneck people assume it is?",
+      "answer": "Most of the time. Allocation in HotSpot is not `malloc`. Each thread owns a **Thread-Local Allocation Buffer**, a private chunk of Eden, and allocating means bumping a pointer and checking it against the end of the buffer — a handful of instructions with no locking and no contention. Only when the TLAB is exhausted does the thread take a slow path to get a new one. Combined with the fact that a copying young collector never touches dead objects, the total cost of an object that is allocated and dies in the same request is close to nothing.\n\nOn top of that, the JIT runs **escape analysis**. If it can prove an object never escapes the compiled scope, it can apply **scalar replacement** — the object is never created at all, its fields become registers or stack slots. The example below is the canonical case: after inlining, the `Point` typically does not exist at runtime.\n\nThe honest caveats matter for a senior answer. Escape analysis depends on inlining, so it is fragile: a megamorphic call site, a method too large to inline, or storing the reference in a field defeats it. And it is an optimisation you cannot *depend* on — verify with `-XX:+PrintEscapeAnalysis` on a fastdebug build, or simply by measuring allocation rate with JFR.\n\nWhat *does* cost you: a high **sustained** allocation rate driving GC frequency; **medium-lived** objects that survive long enough to be promoted and must then be collected expensively; large live sets that lengthen every collection; and poor locality in big object graphs, where the real cost is cache misses rather than allocation. Object pooling is usually a pessimisation — it converts cheap young garbage into long-lived objects, adds write-barrier work, and introduces lifecycle bugs. Pool expensive external resources like connections, not ordinary objects.",
+      "codeExample": {
+        "language": "java",
+        "code": [
+          "// Escape analysis and scalar replacement: after distance() is inlined,",
+          "// the JIT can prove neither Point escapes, so no object is allocated.",
+          "record Point(double x, double y) {",
+          "    double distanceTo(Point other) {",
+          "        double dx = x - other.x();",
+          "        double dy = y - other.y();",
+          "        return Math.sqrt(dx * dx + dy * dy);",
+          "    }",
+          "}",
+          "",
+          "double perimeter(double[] xs, double[] ys) {",
+          "    double total = 0;",
+          "    for (int i = 1; i < xs.length; i++) {",
+          "        Point a = new Point(xs[i - 1], ys[i - 1]);   // does not escape",
+          "        Point b = new Point(xs[i], ys[i]);           // does not escape",
+          "        total += a.distanceTo(b);",
+          "    }",
+          "    return total;",
+          "}",
+          "",
+          "// What defeats it: storing the reference somewhere that outlives the scope.",
+          "private final List<Point> seen = new ArrayList<>();",
+          "void track(double x, double y) {",
+          "    seen.add(new Point(x, y));   // escapes — a real allocation, and it survives",
+          "}"
+        ]
+      },
+      "keyPoints": [
+        "TLAB allocation is a pointer bump; dead young objects cost nothing to collect",
+        "Escape analysis plus scalar replacement can remove the allocation entirely — but depends on inlining",
+        "The real costs are sustained allocation rate, promotion of medium-lived objects, and large live sets",
+        "Object pooling usually makes GC worse and adds lifecycle bugs",
+        "Measure with JFR allocation profiling before optimising allocation at all"
+      ],
+      "followUps": [
+        {
+          "q": "So allocation is free and I should never think about it?",
+          "a": "No — rate matters even when unit cost does not. Allocating hundreds of megabytes per second forces constant young collections, and anything that survives them gets promoted. The rule is: do not micro-optimise individual allocations, but do care about code on the hot path that allocates an order of magnitude more than it needs to, typically through repeated defensive copies or string concatenation in a loop."
+        },
+        {
+          "q": "When is object pooling genuinely right?",
+          "a": "When the object wraps a scarce external resource whose *creation* is expensive and unrelated to memory — database connections, HTTP clients, threads — or for very large buffers such as direct `ByteBuffer`s, where allocation is genuinely costly and off-heap. Netty pools buffers for exactly this reason."
+        }
+      ],
+      "redFlags": [
+        "Reusing mutable objects across requests to \"avoid GC\"",
+        "Assuming escape analysis always fires",
+        "Optimising allocation with no profiler data"
+      ],
+      "related": [
+        "cache"
+      ]
+    },
+    {
+      "id": "jjm-08",
+      "level": "senior",
+      "type": "scenario",
+      "question": "p99 latency spikes to several seconds every few minutes while p50 stays flat. How do you diagnose it, and what are the fixes and their costs?",
+      "answer": "That signature — **p50 unmoved, p99 periodically terrible** — means something briefly stops everything rather than making everything slower. GC pauses are the leading hypothesis, but I want evidence before I touch a flag.\n\n**Establish it is pauses at all.** Enable `-Xlog:gc*:file=gc.log:time,uptime` and `-Xlog:safepoint`, and run a continuous JFR recording. Then overlay pause timestamps on the latency spikes. If they line up one-for-one, it is GC. If the safepoint log shows long pauses whose GC portion is small, the culprit is time-to-safepoint or a non-GC safepoint. If neither correlates, look elsewhere before blaming the JVM: cgroup CPU throttling, a periodic cache refresh or scheduled job, or page faults from swapping all produce this exact shape.\n\n**Characterise the pause.** A spike every few minutes usually means the old generation filling and triggering mixed or full collections — check whether the work is young-only or old-generation, and whether the live set grows between cycles. JFR's allocation and TLAB events name the call sites feeding it.\n\n**Then fix, cheapest and most reversible first.** Reducing allocation or live set is the best outcome — bound that cache, stop loading a million rows into memory — but it needs a code change. Sizing the young generation larger lets more objects die before promotion, at the cost of longer young collections and more memory per instance. Lowering G1's `MaxGCPauseMillis` shrinks the young generation instead, so collections get more frequent and promotion worse; it often moves the problem rather than solving it. Switching to ZGC buys sub-millisecond pauses and costs throughput and heap headroom, so you may need bigger instances for the same traffic. And if the log shows humongous allocations, one oversized array or batch size is usually the whole story.\n\nWhat I would *not* do is raise `-Xmx` reflexively. If the live set is growing, a bigger heap only delays the cliff and makes each full collection longer when it arrives.",
+      "keyPoints": [
+        "Flat p50 with periodic p99 spikes means something stops the world, not something that is slow",
+        "Prove it by correlating GC and safepoint log timestamps with the latency spikes before changing anything",
+        "Rule out cgroup CPU throttling, scheduled jobs and swapping — they produce the same shape",
+        "Fix allocation and live set first; collector and flag changes are later, costlier moves",
+        "Every fix trades something: pause target costs throughput, ZGC costs CPU and footprint, bigger heap costs pause length"
+      ],
+      "followUps": [
+        {
+          "q": "The GC log shows pauses of 30 ms but latency spikes are 3 seconds. What now?",
+          "a": "GC is not the cause, or not the whole cause. Check `-Xlog:safepoint` for time-to-safepoint — one thread in a counted loop or a JNI call can hold everyone. Also check container CPU throttling metrics: a cgroup quota exhausted mid-period freezes every thread for the rest of the period and looks exactly like a GC pause without appearing in any JVM log."
+        },
+        {
+          "q": "How would you have caught this before users did?",
+          "a": "Export GC metrics — pause count, pause sum, heap after collection — through Micrometer and alert on the *fraction of time paused* and on a rising post-collection live set, not on average latency. Both lead the user-visible symptom by minutes to hours. Continuous JFR with disk buffering means the evidence already exists when the incident starts."
+        }
+      ],
+      "redFlags": [
+        "Changing GC flags before reading a GC log",
+        "Blaming GC without correlating timestamps",
+        "Raising -Xmx as a reflex when the live set is growing",
+        "Reporting only average latency"
+      ],
+      "related": [
+        "cache",
+        "scaling"
+      ]
+    }
+  ]
+}

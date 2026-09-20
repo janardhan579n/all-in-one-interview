@@ -1,0 +1,151 @@
+{
+  "id": "clone-graph",
+  "title": "Clone Graph",
+  "patternId": "graphs",
+  "difficulty": "intermediate",
+  "tags": [
+    "graphs",
+    "dfs",
+    "hashing",
+    "recursion"
+  ],
+  "statement": "Given a reference to a node in a connected undirected graph, return a deep copy of the whole graph. Each node holds an int val and a list of its neighbours. The copy must contain exactly one new node per original node, wired into the same shape, and must share no objects with the original.",
+  "realWorld": "Deep-copying an object graph, which every serialiser, ORM detach operation and undo/redo snapshot has to do. Two requirements always appear together: a node referenced from several places must be copied once and shared in the copy, and a cycle must not send the copier into infinite recursion. Both are solved by the same identity-keyed map that this problem is about.",
+  "examples": [
+    {
+      "input": "adjList = [[2,4],[1,3],[2,4],[1,3]]  (adjacency list; entry i describes the node with val i+1)",
+      "output": "[[2,4],[1,3],[2,4],[1,3]]",
+      "explanation": "A four-node cycle 1-2-3-4-1. The copy has the same shape but four brand-new node objects; node 1's copy must hold the copies of 2 and 4, not the originals."
+    },
+    {
+      "input": "adjList = [[]]",
+      "output": "[[]]",
+      "explanation": "One node with no neighbours. There is still a node to create, so returning the input unchanged passes this test and nothing else."
+    },
+    {
+      "input": "adjList = []",
+      "output": "[]",
+      "explanation": "An empty graph: the given reference is null and the answer is null. Worth a guard at the top, since the recursion otherwise dereferences it."
+    }
+  ],
+  "constraints": [
+    "The number of nodes is in the range [0, 100]",
+    "1 <= Node.val <= 100 and Node.val is unique in the test data",
+    "There are no repeated edges and no self-loops",
+    "The graph is connected, so every node is reachable from the given one"
+  ],
+  "bruteForce": {
+    "idea": "Two passes with a list. First traverse the graph collecting every original node into a list and creating a bare copy for each. Then, for every original, look up the copy of each of its neighbours by scanning the collected list for a node with the same val, and wire it in.",
+    "code": [
+      "List<Node> originals = collectAllNodes(node);          // BFS, no wiring yet",
+      "List<Node> copies = new ArrayList<>();",
+      "for (Node original : originals) copies.add(new Node(original.val));",
+      "",
+      "for (int i = 0; i < originals.size(); i++) {",
+      "    for (Node neighbour : originals.get(i).neighbors) {",
+      "        for (int j = 0; j < originals.size(); j++) {   // linear scan to find this neighbour's copy",
+      "            if (originals.get(j) == neighbour) {",
+      "                copies.get(i).neighbors.add(copies.get(j));",
+      "                break;",
+      "            }",
+      "        }",
+      "    }",
+      "}",
+      "return copies.isEmpty() ? null : copies.get(0);"
+    ],
+    "complexity": {
+      "time": "O(n * E) — a full scan of the node list per edge",
+      "space": "O(n + E)"
+    },
+    "whySlow": "The inner scan exists only to answer 'which copy corresponds to this original node', which is a lookup by identity dressed up as a search. Every edge pays a walk over all n nodes to find an answer that was already decided the moment that copy was created. On a dense 100-node graph that is thousands of scans over a hundred entries each, and worse, it needs two full traversals of the graph before any wiring can start — the second pass cannot begin until the first has finished, so the structure of the code is driven by the missing lookup rather than by the problem."
+  },
+  "patternIdentification": "The traversal can arrive at a node that is already being copied — that is what a cycle means — and it can arrive at the same node from several different neighbours. Both are the same situation: a recursive transform that may revisit its input. The fix is to key the results by the input object, which turns the traversal into memoisation. Notice that this single map does two distinct jobs at once. Checked before recursing, it is the base case that terminates cycles; returned instead of recomputing, it is what makes a shared node shared in the copy rather than duplicated. Whenever a recursion over a structure that is not a tree needs to terminate, look for the one lookup table that serves as both the visited set and the result cache.",
+  "optimized": {
+    "idea": "One DFS carrying a Map<Node, Node> from original to copy. On entering a node, return the existing copy if there is one. Otherwise create the copy and put it in the map before recursing into the neighbours — registering first is what makes the cycle terminate, because the recursive call that comes back around finds the half-built copy and returns it instead of starting again. Keying by the node object rather than by val is deliberate: identity is what the problem is actually about, and val being unique is a property of the test data, not of the structure.",
+    "code": [
+      "// Node is the usual { int val; List<Node> neighbors; }",
+      "public static Node cloneGraph(Node node) {",
+      "    return clone(node, new HashMap<>());",
+      "}",
+      "",
+      "private static Node clone(Node node, Map<Node, Node> copies) {",
+      "    if (node == null) return null;",
+      "    Node existing = copies.get(node);",
+      "    if (existing != null) return existing;   // one map, two jobs: ends cycles AND shares nodes",
+      "",
+      "    Node copy = new Node(node.val);",
+      "    copies.put(node, copy);                  // register BEFORE recursing, or a cycle never bottoms out",
+      "    for (Node neighbour : node.neighbors) {",
+      "        copy.neighbors.add(clone(neighbour, copies));",
+      "    }",
+      "    return copy;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n + E)",
+      "space": "O(n) for the map plus O(n) recursion depth"
+    }
+  },
+  "visualization": {
+    "engine": "graphDfs",
+    "input": {
+      "nodes": [
+        "1",
+        "2",
+        "3",
+        "4"
+      ],
+      "edges": [
+        [
+          "1",
+          "2"
+        ],
+        [
+          "2",
+          "3"
+        ],
+        [
+          "3",
+          "4"
+        ],
+        [
+          "4",
+          "1"
+        ]
+      ],
+      "start": "1"
+    },
+    "code": [
+      "Node clone(Node node, Map<Node, Node> copies) {",
+      "    if (node == null) return null;",
+      "    if (copies.containsKey(node)) return copies.get(node);",
+      "    Node copy = new Node(node.val);",
+      "    copies.put(node, copy);",
+      "    for (Node neighbour : node.neighbors) {",
+      "        copy.neighbors.add(clone(neighbour, copies));",
+      "    }",
+      "    return copy;",
+      "}"
+    ]
+  },
+  "commonMistakes": [
+    "Putting the copy into the map after the neighbour loop instead of before it — the four-cycle in example 1 recurses 1, 2, 3, 4, 1, 2, ... until it dies with a StackOverflowError, and the single-node example 2 passes, so the bug looks like a stack-size problem rather than an ordering one.",
+    "Keying the map by node.val instead of by the node object — fine while values are unique, which they are in the given tests, and silently merges two distinct nodes with the same value into one the moment they are not; the copy then comes back with fewer nodes than the original and an edge pointing at the wrong place.",
+    "Assigning the neighbour list by reference with copy.neighbors = node.neighbors — the clone's list holds the original nodes, so the copy is only one node deep, and the test that mutates the original's neighbours sees the clone change too."
+  ],
+  "similar": [
+    "number-of-islands",
+    "graph-valid-tree",
+    "is-graph-bipartite",
+    "number-of-provinces"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 133,
+      "slug": "clone-graph",
+      "title": "Clone Graph",
+      "url": "https://leetcode.com/problems/clone-graph/",
+      "premium": false
+    }
+  }
+}

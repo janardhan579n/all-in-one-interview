@@ -1,0 +1,97 @@
+{
+  "id": "jump-game",
+  "title": "Jump Game",
+  "patternId": "greedy",
+  "difficulty": "intermediate",
+  "tags": [
+    "array",
+    "greedy",
+    "dynamic-programming"
+  ],
+  "statement": "You are given an integer array nums. You start at index 0, and nums[i] is the maximum number of steps you may jump forward from index i. Return true if you can reach the last index, false otherwise.",
+  "realWorld": "Reachability with a budget that is topped up as you go: whether a delivery route is completable given the fuel each stop offers, or whether a chunked download can stream to the end given each chunk's declared look-ahead. The shape — 'can I get there at all' rather than 'what is the cheapest way' — is what makes it greedy rather than a shortest-path search.",
+  "examples": [
+    {
+      "input": "nums = [2,3,1,1,4]",
+      "output": "true",
+      "explanation": "Reach grows 0 -> 2 -> 4 by index 1, which already covers the last index. You never have to decide how far to jump; you only have to know how far you could."
+    },
+    {
+      "input": "nums = [3,2,1,0,4]",
+      "output": "false",
+      "explanation": "The furthest reachable index is 3 and nums[3] is 0, so the sweep arrives at index 4 with reach still 3. The zero at index 3 is a wall that no earlier choice could jump over, since nothing before it reaches past 3."
+    },
+    {
+      "input": "nums = [0]",
+      "output": "true",
+      "explanation": "The single-element case. You are already at the last index, so no jump is needed — the loop never dereferences the zero."
+    }
+  ],
+  "constraints": [
+    "1 <= nums.length <= 10^4",
+    "0 <= nums[i] <= 10^5"
+  ],
+  "bruteForce": {
+    "idea": "Recursively try every jump length from every index and see whether any sequence of choices lands on the last index.",
+    "code": [
+      "static boolean canReach(int[] nums, int index) {",
+      "    if (index >= nums.length - 1) return true;",
+      "    int furthest = Math.min(index + nums[index], nums.length - 1);",
+      "    for (int next = index + 1; next <= furthest; next++) {",
+      "        if (canReach(nums, next)) return true;   // re-explores shared suffixes",
+      "    }",
+      "    return false;",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n!) in the worst case without memoisation; O(n^2) once memoised",
+      "space": "O(n) recursion depth, plus O(n) for the memo"
+    },
+    "whySlow": "Every index re-explores the entire suffix beyond it, and the same suffix is explored once per path that reaches it. Memoising collapses that to O(n^2) — still quadratic, because each index scans all the landing spots it can reach. The real waste is conceptual: the answer does not depend on *which* jump you take, only on how far you could go, and the search is enumerating choices that are indistinguishable in their effect."
+  },
+  "patternIdentification": "This is a feasibility greedy rather than an optimisation greedy: nothing is being maximised, so there is no 'best choice' to prove optimal. Instead there is an invariant — the furthest index reachable using anything seen so far — and the argument is that if the invariant ever fails to cover the current index, no sequence of choices could have covered it either, because reach is already the maximum over every option.",
+  "optimized": {
+    "idea": "Sweep left to right carrying a single number: reach, the furthest index attainable from anything visited so far. At index i, if reach < i then i is unreachable and so is everything after it, so return false. Otherwise update reach to max(reach, i + nums[i]). Once reach covers the last index you are done. Because reach is already a maximum over all earlier options, no alternative set of jumps could do better — that is the whole proof.",
+    "code": [
+      "/** O(n) time, O(1) space. */",
+      "public static boolean canJump(int[] nums) {",
+      "    int reach = 0;   // furthest index attainable from anything seen so far",
+      "",
+      "    for (int i = 0; i < nums.length; i++) {",
+      "        if (i > reach) return false;   // a gap: nothing earlier gets this far",
+      "",
+      "        reach = Math.max(reach, i + nums[i]);",
+      "",
+      "        if (reach >= nums.length - 1) return true;   // early exit",
+      "    }",
+      "    return true;   // reached only when nums.length == 1",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n) — one pass, O(1) work per index, and no sort is needed because the array's own order is already the sweep order",
+      "space": "O(1) — a single int carries all the state that matters"
+    }
+  },
+  "commonMistakes": [
+    "Tracking which jump was taken rather than how far you could reach. The specific jump is irrelevant; only the maximum reach affects the future, and collapsing the state to that one number is what makes the algorithm O(1) space.",
+    "Checking `i > reach` after updating reach instead of before, which lets the sweep walk straight past a gap it should have failed on.",
+    "Comparing against `nums.length` rather than `nums.length - 1`. The target is the last index, not one past it — this off-by-one reports false on [1,0].",
+    "Reaching for DP. A boolean reachable[] table gives the right answer in O(n^2) or O(n) but carries n booleans where one int suffices, and in an interview it signals that the greedy argument was not found.",
+    "Assuming a zero always means failure. A zero is only fatal if nothing before it reaches past it: [2,0,1] is true, [1,0,1] is false."
+  ],
+  "similar": [
+    "non-overlapping-intervals",
+    "gas-station",
+    "max-sum-subarray-k",
+    "climbing-stairs"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 55,
+      "slug": "jump-game",
+      "title": "Jump Game",
+      "url": "https://leetcode.com/problems/jump-game/",
+      "premium": false
+    }
+  }
+}

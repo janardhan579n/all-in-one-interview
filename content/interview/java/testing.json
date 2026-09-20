@@ -1,0 +1,220 @@
+{
+  "id": "java-testing",
+  "trackId": "java",
+  "topic": "testing",
+  "title": "Testing",
+  "summary": "Which tests are worth writing, why H2 lies to you, and how to fix a flaky test instead of retrying it.",
+  "questions": [
+    {
+      "id": "jte-01",
+      "level": "junior",
+      "type": "concept",
+      "question": "What is the test pyramid and what is each layer actually for?",
+      "answer": "The pyramid describes a *distribution*: many fast unit tests at the base, fewer integration tests in the middle, very few end-to-end tests at the top. The shape is a consequence of two costs, not an aesthetic preference.\n\nThe first is **feedback speed**. A unit test runs in milliseconds, so you can run thousands on every save and find a mistake seconds after making it. An end-to-end test needs a deployed system and takes minutes, so it tells you about a mistake long after you have moved on.\n\nThe second, and more important, is **failure localisation**. When a unit test fails you know which class is wrong. When an end-to-end test fails you know only that *something* in a chain of eight components is wrong, and you now have a debugging task rather than a fix. The pyramid is really a statement about where to spend your debugging time.\n\nSo each layer has a job. **Unit tests** verify logic and edge cases — the branches, the boundary values, the error paths — because they are the only layer cheap enough to cover them exhaustively. **Integration tests** verify the wiring: does the query actually return what you think, does the JSON serialise correctly, does the transaction roll back. These are the bugs unit tests structurally cannot catch, because mocks encode your assumptions rather than reality. **End-to-end tests** verify a small number of critical user journeys really work in a realistic environment — signup, checkout — and nothing more.\n\nThe honest caveat: the pyramid is a heuristic from a time when integration tests were much more expensive. Testcontainers changed those economics, and many teams now run something closer to Kent C. Dodds' \"testing trophy\", weighted toward integration. What survives in every version is the top: end-to-end tests are always few, because they are always the slowest and flakiest.",
+      "keyPoints": [
+        "The shape follows from feedback speed and failure localisation, not dogma",
+        "Unit tests cover logic and edge cases exhaustively because they are cheap",
+        "Integration tests catch wiring bugs that mocks structurally cannot",
+        "End-to-end tests cover a handful of critical journeys and nothing else",
+        "Cheaper integration testing has shifted the balance — the narrow top has not moved"
+      ],
+      "followUps": [
+        {
+          "q": "What is an ice cream cone, and why is it bad?",
+          "a": "The inverted pyramid: mostly end-to-end and manual tests, almost no unit tests. Every build takes an hour, failures are ambiguous, flakes are constant, and people start rerunning the suite until it goes green — at which point the tests have stopped providing information at all."
+        },
+        {
+          "q": "Is 80% coverage a sensible target?",
+          "a": "As a floor for noticing untested areas, it is mildly useful. As a goal it corrupts: teams write tests that execute code without asserting anything meaningful to hit the number. Coverage measures which lines ran, not whether a bug would be caught. Mutation testing measures the latter."
+        }
+      ],
+      "redFlags": [
+        "Reciting the layers with no sense of why the proportions matter",
+        "Treating end-to-end tests as the real tests and unit tests as ceremony",
+        "Chasing a coverage percentage as the definition of good testing"
+      ]
+    },
+    {
+      "id": "jte-02",
+      "level": "junior",
+      "type": "concept",
+      "question": "Where exactly is the line between unit, integration and end-to-end tests in a Spring service?",
+      "answer": "The useful boundary is **how much of the system a failure implicates**, and in Spring there is a very concrete version of that question: does the test start an application context, and does it touch anything outside the JVM?\n\nA **unit test** starts no Spring context at all. You instantiate the class yourself, pass in test doubles through the constructor, and assert on its behaviour. Plain JUnit and perhaps Mockito, no `@SpringBootTest`, no database, milliseconds to run. This is where the logic in a service class — the discount rules, the state transitions, the validation — belongs. If you need Spring to test a class, that is usually a hint the class is doing framework work that could be separated from the logic.\n\nAn **integration test** starts some of the context and exercises a real boundary. `@DataJpaTest` against a real Postgres in Testcontainers tests that your query and your entity mapping are correct. `@WebMvcTest` tests that routing, JSON binding, validation and exception handling actually work — the serialisation layer, which no unit test can see. A full `@SpringBootTest` with a random port tests that the whole application wires up and a request flows end to end *within one service*.\n\nAn **end-to-end test** crosses process boundaries you do not control within the test: several deployed services, a real message broker, a real browser or mobile client. Here you are testing the system, not the application, and you pay for it in runtime and flakiness.\n\nThe line people get wrong is calling a `@SpringBootTest` with mocked repositories a unit test. It is neither: it pays the full startup cost of an integration test while testing no real integration.",
+      "keyPoints": [
+        "Unit: no Spring context, collaborators passed in, milliseconds",
+        "Integration: a real boundary — database, HTTP layer, serialisation — usually a slice plus Testcontainers",
+        "End-to-end: crosses process boundaries the test does not control",
+        "Serialisation and query correctness are invisible to unit tests by construction",
+        "`@SpringBootTest` with everything mocked is the worst of both: slow and tests nothing real"
+      ],
+      "followUps": [
+        {
+          "q": "Should a controller have unit tests?",
+          "a": "Rarely worth it. A thin controller's real behaviour is routing, binding, validation and status codes — all of which are framework behaviour that a unit test with a mocked service never exercises. `@WebMvcTest` is the right level. If a controller has logic worth unit testing, that logic probably should not be in the controller."
+        },
+        {
+          "q": "Where do contract tests fit?",
+          "a": "Between integration and end-to-end. Instead of deploying both services, the consumer publishes its expectations and the provider verifies them in its own build (Pact, or Spring Cloud Contract). You get most of the confidence of an end-to-end test about the interface, without the cost or flakiness of running both systems together."
+        }
+      ],
+      "redFlags": [
+        "Calling every test with Mockito a unit test regardless of what it starts",
+        "`@SpringBootTest` on every test class by default",
+        "No test anywhere that exercises a real database query"
+      ]
+    },
+    {
+      "id": "jte-03",
+      "level": "mid",
+      "type": "concept",
+      "question": "What should you mock, what should you never mock, and why is mocking the thing you are testing a trap?",
+      "answer": "Mock at the boundaries you do not own or cannot afford to run: a third-party HTTP service, a payment gateway, an email sender, the clock, the random source. The purpose is to make an *unpredictable or expensive* dependency deterministic — not to avoid writing a test that touches anything.\n\nThings you should **not** mock.\n\n**The class under test.** Using a Mockito spy and stubbing some of its own methods means your assertions now run against a half-real object whose behaviour you defined. The test passes because you told it to. Almost always this is a signal the class has two responsibilities, and the right fix is to extract the part you wanted to stub into a collaborator.\n\n**Value objects and DTOs.** Constructing a real one is trivial and a mock only hides what the data actually looks like.\n\n**The database, via the repository.** Mocking `orderRepository.findByStatus(...)` to return a fixed list tests nothing about the query — and the query is the risky part. Whether your JPQL is correct, whether a lazy association blows up outside the transaction, whether the constraint fires: all invisible.\n\n**Types you do not own.** A mock of a third-party SDK client encodes *your belief* about how that library behaves, and if your belief is wrong every test passes while production fails. Stub the protocol instead — WireMock at the HTTP level — so you are asserting against real serialisation and real status codes.\n\nThe deeper trap is that over-mocking couples tests to implementation. When a test asserts \"the service called `repo.save()` exactly once with this argument\", renaming or restructuring the internals breaks it even though the behaviour is unchanged, and meanwhile a genuine bug in the saved data goes undetected. Verify outcomes; only verify interactions when the interaction *is* the outcome, such as \"a payment was actually charged\".",
+      "keyPoints": [
+        "Mock the unpredictable or expensive boundary — clock, random, external services",
+        "Never mock the class under test; a spy stubbing its own methods asserts on your stub",
+        "Mocking repositories hides the query, which is where the bugs are",
+        "Mocks of third-party types encode your assumptions, not the library's behaviour",
+        "Verify outcomes, not interactions — unless the interaction is the outcome"
+      ],
+      "followUps": [
+        {
+          "q": "How do you test code that uses `Instant.now()`?",
+          "a": "Inject a `java.time.Clock` and use `Clock.fixed(...)` in tests. Static mocking of `Instant.now()` works but is heavy, global, and breaks the moment the code is used in parallel. Making time a dependency also fixes a class of real bugs — midnight boundaries, timezones, DST — that are otherwise untestable."
+        },
+        {
+          "q": "When are fakes better than mocks?",
+          "a": "Whenever the dependency has meaningful behaviour rather than just being called. An in-memory implementation of a repository interface that actually stores and retrieves gives you real behaviour with no stubbing, and one fake replaces dozens of `when(...).thenReturn(...)` lines that all encode the same assumption."
+        }
+      ],
+      "redFlags": [
+        "Spying on the class under test",
+        "Tests that are mostly `verify()` calls",
+        "A mocked repository as the only test of a complex query",
+        "Rewriting tests every time the implementation is refactored"
+      ]
+    },
+    {
+      "id": "jte-04",
+      "level": "mid",
+      "type": "tradeoff",
+      "question": "@SpringBootTest or a slice test like @WebMvcTest or @DataJpaTest — what does each actually cost?",
+      "answer": "`@SpringBootTest` starts the whole application context: every configuration class, every autoconfiguration, every bean. On a real service that is seconds per context, and on a large one, tens of seconds.\n\nThe cost most people miss is not the startup itself but **context caching**. Spring's TestContext framework caches contexts across test classes, keyed by their full configuration — active profiles, properties, which beans are replaced with `@MockitoBean` (or `@MockBean` before Spring Boot 3.4), which initializers are present. Two test classes with identical configuration share one context and you pay once. Change one property or mock one extra bean and you get a **second full context**, cached alongside the first, holding its own connection pool and its own instances. A suite that accumulates thirty unique configurations pays thirty startups and thirty pools. This is the single biggest reason large Spring test suites are slow, and it is fixable: standardise on a small number of test configurations and resist per-class property tweaks.\n\nSlice tests load a deliberately small context. `@WebMvcTest` brings up the MVC infrastructure, your controllers, Jackson, validation and the security filter chain, with services expected to be supplied as test doubles. `@DataJpaTest` brings up JPA, your entities and repositories, and wraps each test method in a transaction that rolls back afterwards. Both start in a fraction of the time and — more valuable — a failure points at one layer.\n\nUse slices for the bulk of your integration testing and keep a small number of `@SpringBootTest` classes to prove the whole thing wires together and that a request flows through the real stack. One trap worth knowing: with `webEnvironment = RANDOM_PORT` the server runs on its own threads and connections, so the test's `@Transactional` rollback does **not** roll back what the server did. You must clean up explicitly.",
+      "keyPoints": [
+        "`@SpringBootTest` loads everything; slices load one layer and fail more precisely",
+        "Context caching is keyed by configuration — each unique combination is another full context",
+        "Per-class property tweaks and extra mocked beans silently multiply startup cost",
+        "`@DataJpaTest` rolls back per test; that rollback does not apply with a real server port",
+        "Keep a handful of full-context tests to prove wiring, and use slices for the rest"
+      ],
+      "followUps": [
+        {
+          "q": "How do you see how many contexts your suite is building?",
+          "a": "Turn on debug logging for `org.springframework.test.context.cache`, which reports cache hits, misses and the current size. The default cache holds 32 contexts and evicts least-recently-used beyond that, so a suite with more unique configurations than that starts rebuilding contexts it already built."
+        },
+        {
+          "q": "Does `@DirtiesContext` help or hurt?",
+          "a": "Almost always hurts. It evicts the cached context so the next test rebuilds it from scratch — a few of them can double your suite runtime. It is a signal that some test mutates shared state. Fix the mutation instead; reach for `@DirtiesContext` only when the state genuinely cannot be reset."
+        }
+      ],
+      "redFlags": [
+        "`@SpringBootTest` on every test class",
+        "Unaware that context caching exists",
+        "`@DirtiesContext` sprinkled around to make tests pass",
+        "Assuming test rollback covers work done by a real embedded server"
+      ]
+    },
+    {
+      "id": "jte-05",
+      "level": "mid",
+      "type": "tradeoff",
+      "question": "Testcontainers or an in-memory database — and in what sense does H2 lie to you?",
+      "answer": "H2 is fast, needs no Docker and starts in milliseconds. The problem is that it is **a different database**, so a passing test tells you your code works against H2, which is not the thing you deploy against.\n\nThe divergences are not exotic. Vendor-specific SQL — Postgres `jsonb` operators, `ON CONFLICT`, arrays, `RETURNING`, full-text search, `ILIKE` — either fails to parse or behaves differently. Type coercion and identifier case-folding differ. Locking and isolation semantics differ: H2's MVStore is not MVCC in the Postgres sense, so a test for a deadlock, a `SELECT ... FOR UPDATE` or serialisation failure proves nothing. Nothing about the query planner transfers, so no performance conclusion is meaningful. `MODE=PostgreSQL` gets you closer on *syntax*, not on *semantics*.\n\nThen comes the cost that actually breaks teams: your Flyway or Liquibase migrations use production DDL, H2 rejects some of it, and you end up maintaining a second set of test migrations. At that moment the schema under test is no longer the schema you deploy, and the tests have stopped being evidence. Worse, the failures H2 hides are the unglamorous ones that cause incidents: a constraint that exists in production but not in test, a column type mismatch, an index-dependent upsert.\n\n**Testcontainers** runs the real Postgres, MySQL, Kafka or Redis in Docker for the duration of your tests, so the database behaves exactly as production does and one set of migrations serves both. The costs are honest: Docker must be available in CI, and container startup adds seconds. Mitigate by reusing a single container for the whole JVM — a static container, or Testcontainers' reuse flag — rather than one per class, and in Spring Boot 3.1+ wire it with `@ServiceConnection` so you do not hand-manage properties.\n\nH2 remains defensible only if you use nothing vendor-specific at all, which is rarer than people think.",
+      "keyPoints": [
+        "H2 is a different database: different dialect, types, locking and planner",
+        "Compatibility mode matches syntax, not semantics",
+        "Separate test migrations mean the tested schema is not the deployed schema",
+        "Testcontainers runs the real engine, so one migration set serves test and production",
+        "Cost is Docker in CI and startup time — amortise with a shared container per JVM"
+      ],
+      "followUps": [
+        {
+          "q": "How do you keep a Testcontainers suite fast?",
+          "a": "Start one container per JVM rather than per class (a static field, or the singleton container pattern), share it across all tests, and clean data between tests by truncating rather than recreating the schema. Run migrations once at startup. Locally, container reuse keeps it warm between runs."
+        },
+        {
+          "q": "Is it enough to test against the real database only in CI?",
+          "a": "It is much better than never, but slow feedback means people push and wait. The stronger position is that the same container-backed tests run identically on a laptop, which is exactly what Testcontainers gives you — the point is one behaviour everywhere, not two tiers of truth."
+        }
+      ],
+      "redFlags": [
+        "\"H2 is close enough\" with no awareness of what diverges",
+        "Maintaining separate DDL for tests and production",
+        "Drawing performance conclusions from an in-memory database",
+        "Believing JPA makes the underlying database irrelevant"
+      ],
+      "related": [
+        "database"
+      ]
+    },
+    {
+      "id": "jte-06",
+      "level": "senior",
+      "type": "scenario",
+      "question": "Your suite fails randomly about one run in five. How do you fix flaky tests rather than retry them?",
+      "answer": "First, name the real cost. An auto-retry rule makes the build green and destroys the suite's value: nobody investigates a failure any more, and a genuine race in production code — which is what a flaky test often is — gets reclassified as noise. Retries are acceptable as a temporary shield while you fix, never as the fix.\n\nThen find the category, because there are only a handful and each has a specific remedy.\n\n**Shared mutable state.** Static caches, singletons mutated by one test, rows left in the database, a Spring bean whose field one test changes. The signature is that a test passes alone and fails in a suite. Prove it by running the suite in a randomised order deliberately — JUnit 5 supports order customisation and random seeds — and by running classes in parallel. The fix is to reset state per test or, better, to stop sharing it.\n\n**Ordering dependence.** A test that only passes after another has created data. Same diagnosis, same cure: each test creates what it needs.\n\n**Time.** `Instant.now()` in an assertion, tests that break at midnight, on a DST boundary, on the 29th of February, or when CI runs in UTC and your laptop does not. Inject a `Clock`, assert on ranges rather than exact instants, and pin the timezone in the build.\n\n**Asynchrony.** The single biggest cause. A test that sleeps 100 ms and asserts is a bet on machine speed, and CI is slower and noisier than your laptop. Replace sleeps with polling on a condition — Awaitility — or, better, expose a deterministic hook: a synchronous executor in tests, a latch the production code signals, or an outbox row you can assert on.\n\n**Environment.** Fixed ports colliding, DNS, network calls to real services, leaked containers.\n\nOperationally: quarantine the flaky test out of the blocking build immediately so the team keeps trusting green, but give it an owner and a deadline — a quarantine with no expiry is deletion with extra steps. Track flake rate per test as a metric; the worst offenders are usually few and worth real time.",
+      "keyPoints": [
+        "Auto-retry hides real races and destroys trust in the suite",
+        "Passes alone, fails in suite = shared state or ordering; find it by randomising order deliberately",
+        "Inject a Clock and pin the timezone instead of asserting on real time",
+        "Replace sleeps with condition polling or a deterministic hook — async is the top cause",
+        "Quarantine with an owner and a deadline, and track flake rate per test"
+      ],
+      "followUps": [
+        {
+          "q": "A test fails only in CI, never locally. Where do you look first?",
+          "a": "Differences in the environment rather than in the code: CPU count and speed (which changes thread scheduling and any timing assumption), timezone and locale, a clean database versus your lived-in local one, parallelism settings, and available memory. Reproduce by constraining CPU locally and running with the CI's timezone and a fresh database."
+        },
+        {
+          "q": "Is a flaky test ever the code's fault rather than the test's?",
+          "a": "Often, and that is the most valuable outcome. A test that intermittently sees a stale read or a missing update is frequently reporting a genuine race, a missing happens-before edge or a transaction boundary that is wrong. Deleting such a test deletes a bug report."
+        }
+      ],
+      "redFlags": [
+        "Adding a retry rule and calling it solved",
+        "Fixing async flakiness by increasing the sleep",
+        "`@Disabled` with no ticket and no owner",
+        "Never having run the suite in a different order on purpose"
+      ]
+    },
+    {
+      "id": "jte-07",
+      "level": "senior",
+      "type": "concept",
+      "question": "What makes a test valuable? Why does a test that never fails have no value?",
+      "answer": "A test is an investment: it costs writing time, runtime on every build, and maintenance every time the code near it changes. Its value is roughly **the probability it catches a real defect, times the cost of that defect escaping**. Both factors can be zero, and a great many tests have exactly that.\n\nThe clearest zero-value case is the test that **cannot fail for any change you would actually make**. Asserting that a getter returns what the setter set. Asserting that a mock you configured two lines earlier returns what you configured. Verifying that a method you just called was called. These execute code, so coverage rises, but no realistic bug makes them red. They are pure cost, and worse, they create false confidence: a green suite that would stay green through a serious regression.\n\nThe second failure mode is the **change detector** — a test that mirrors the implementation step by step, asserting on internal calls and ordering. It fails constantly during refactoring, teaching the team that failures mean \"update the test\" rather than \"investigate\". Once people update tests reflexively to make them pass, the suite has inverted: it now costs time *and* hides bugs.\n\nThe positive version: a valuable test asserts **observable behaviour** at a stable boundary. Given this input and this state, the system produces this output or this externally visible effect. Such a test survives refactoring — which is the whole point, since the main job of a test suite is to let you change the inside safely — and it fails when behaviour actually changes.\n\nPractically: name the test for the behaviour it protects, so a failure message is a specification; give each test one reason to fail; cover the interesting branches and boundaries rather than the happy path five times. And if you want to measure whether your assertions are real, use **mutation testing** — PIT deliberately introduces faults and reports which ones your suite catches. Line coverage tells you code ran; mutation score tells you the tests would have noticed.",
+      "keyPoints": [
+        "Value = chance of catching a real defect × cost of that defect, minus maintenance",
+        "A test no realistic change can break is pure cost and false confidence",
+        "Change detectors fail on refactoring and train the team to ignore failures",
+        "Assert observable behaviour at a stable boundary so tests survive refactoring",
+        "Mutation testing measures assertion strength; line coverage only measures execution"
+      ],
+      "followUps": [
+        {
+          "q": "Should a test ever be deleted?",
+          "a": "Yes, and it is underused. A test that duplicates another, that asserts on removed behaviour, or that has been rewritten to match every refactor is a liability. The question to ask is: if this test failed tomorrow, would I learn something? If the honest answer is no, delete it."
+        },
+        {
+          "q": "How do you test behaviour when the outcome is a side effect, not a return value?",
+          "a": "Assert on the observable effect at the boundary you own: the row that was written, the message on the outbox table, the HTTP request WireMock received. That is still behaviour. Verifying that a collaborator method was invoked is the implementation-coupled version of the same check, and it breaks when you change how the effect is produced."
+        }
+      ],
+      "redFlags": [
+        "Tests asserting on getters and mock configuration",
+        "Judging a suite entirely by coverage percentage",
+        "Updating tests reflexively so the build passes",
+        "Never deleting a test"
+      ]
+    }
+  ]
+}

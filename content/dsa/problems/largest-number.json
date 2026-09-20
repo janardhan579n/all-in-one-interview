@@ -1,0 +1,102 @@
+{
+  "id": "largest-number",
+  "title": "Largest Number",
+  "patternId": "sorting",
+  "difficulty": "intermediate",
+  "tags": [
+    "sorting",
+    "comparator",
+    "greedy",
+    "string"
+  ],
+  "statement": "Given a list of non-negative integers, arrange them so that concatenating them end to end forms the largest possible number. Return the result as a string, because it may not fit in a 64-bit integer.",
+  "realWorld": "Any ordering defined by a domain rule rather than by the natural order of the values: version strings where 1.10 must follow 1.9, release artefacts sorted by a composite score, auction bids ranked by price-per-impression rather than price. The engineering lesson is that Comparator is the extension point — you never rewrite the sort, you write the comparison, and getting the comparison right is the whole job.",
+  "examples": [
+    {
+      "input": "nums = [10,2]",
+      "output": "\"210\"",
+      "explanation": "'2' + '10' = '210' beats '10' + '2' = '102', so 2 comes first. Comparing the numbers (10 > 2) or their leading digits (both start with 1 vs 2) would put 10 first and produce the smaller answer."
+    },
+    {
+      "input": "nums = [3,30,34,5,9]",
+      "output": "\"9534330\"",
+      "explanation": "Pairwise: '95' > '59' so 9 precedes 5; '534' > '345' so 5 precedes 34; '343' > '334' so 34 precedes 3; and the decisive pair, '330' > '303', so 3 precedes 30 even though 30 is the larger number and both start with the digit 3."
+    },
+    {
+      "input": "nums = [0,0]",
+      "output": "\"0\"",
+      "explanation": "Concatenation gives '00', which is not a number. If the largest element after sorting is 0 then every element is 0, so testing the first element is exactly the right condition to collapse the whole result to '0'."
+    }
+  ],
+  "constraints": [
+    "1 <= nums.length <= 100",
+    "0 <= nums[i] <= 10^9",
+    "the answer may exceed a 64-bit integer — it must be returned as a String"
+  ],
+  "bruteForce": {
+    "idea": "Generate every ordering of the numbers, concatenate each one, and keep the largest string.",
+    "code": [
+      "String best = \"\";",
+      "for (List<Integer> order : allPermutations(nums)) {   // n! orderings",
+      "    StringBuilder sb = new StringBuilder();",
+      "    for (int value : order) {",
+      "        sb.append(value);",
+      "    }",
+      "    String candidate = sb.toString();",
+      "    if (candidate.compareTo(best) > 0) {",
+      "        best = candidate;",
+      "    }",
+      "}",
+      "return best;"
+    ],
+    "complexity": {
+      "time": "O(n! * n)",
+      "space": "O(n)"
+    },
+    "whySlow": "Every ordering is built from scratch, but the answer is decided entirely by pairwise choices: for any two numbers a and b, whichever of ab and ba reads larger tells you which must come first, and that verdict does not depend on the other n-2 numbers at all. The permutations differ only in decisions that can be made independently, so factorially many arrangements are generated to re-answer the same n(n-1)/2 questions over and over. Ten numbers already means 3.6 million concatenations to settle 45 comparisons."
+  },
+  "patternIdentification": "The problem says 'arrange to maximise' and the relationship between any two elements can be decided on its own, without reference to the rest. That is a sort with a custom comparator, and the entire problem is defining the comparator — the algorithm never changes. The test to apply before you trust it is transitivity: a comparator that is not transitive does not define an order, and Java's TimSort will detect it and throw 'Comparison method violates its general contract'. Here transitivity holds because comparing concatenations is a lexicographic comparison of equal-length strings, which is a total order. Whenever you can state the rule for which of two elements wins, and that rule is transitive, sort by it.",
+  "optimized": {
+    "idea": "Convert the numbers to strings and sort with a comparator that compares concatenations rather than digits: a comes before b when a+b reads larger than b+a. Comparing digit by digit is the trap — 3 must beat 30 because '330' > '303', even though the two agree on their first digit and 30 is the larger number; the concatenation comparison automatically handles the case where one string is a prefix of the other, which is where every digit-wise rule breaks. For descending order the comparator returns (b+a).compareTo(a+b). One edge case survives the sort: if the first element is '0' then every element is 0 and the concatenation would be '000...', so return '0'.",
+    "code": [
+      "public static String largestNumber(int[] nums) {",
+      "    String[] parts = new String[nums.length];",
+      "    for (int i = 0; i < nums.length; i++) {",
+      "        parts[i] = Integer.toString(nums[i]);",
+      "    }",
+      "    // a before b when a+b reads larger than b+a — compare concatenations, never digits",
+      "    Arrays.sort(parts, (a, b) -> (b + a).compareTo(a + b));",
+      "    if (parts[0].equals(\"0\")) return \"0\";",
+      "    StringBuilder out = new StringBuilder();",
+      "    for (String part : parts) {",
+      "        out.append(part);",
+      "    }",
+      "    return out.toString();",
+      "}"
+    ],
+    "complexity": {
+      "time": "O(n log n * k) for k-digit numbers",
+      "space": "O(n)"
+    }
+  },
+  "commonMistakes": [
+    "Sorting the numbers themselves in descending order. [3,30] then produces '303' instead of '330' and [10,2] produces '102' instead of '210', while an input like [5,2] happens to come out right — so a quick sanity check passes and the submission fails.",
+    "Forgetting the all-zeroes collapse. [0,0] returns '00', which is not a valid number representation; this is the single case most otherwise-correct submissions fail, because every other input hides it.",
+    "Writing the comparator as (a, b) -> (a + b).compareTo(b + a). The arguments are in the order that gives ascending output, so the digits come out smallest-first and [3,30,34,5,9] returns '3033459' instead of '9534330'."
+  ],
+  "similar": [
+    "h-index",
+    "sort-list",
+    "sort-colors",
+    "merge-intervals"
+  ],
+  "practice": {
+    "leetcode": {
+      "id": 179,
+      "slug": "largest-number",
+      "title": "Largest Number",
+      "url": "https://leetcode.com/problems/largest-number/",
+      "premium": false
+    }
+  }
+}
