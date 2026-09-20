@@ -18,7 +18,15 @@
   # instead of publishing it. Netlify keeps the last good deploy live when a build fails, which
   # turns "deploy on every push" from a risk into a safety net. Both gates are fast — the
   # validator is about a second, the test suite under ten.
-  command = "npm ci && npm run validate:content && npm test && npm run build"
+  #
+  # `sync-content` comes FIRST and explicitly. It copies content/ into src/content-bundle/, which
+  # is generated and therefore gitignored — so on a clean CI checkout it does not exist. The test
+  # suite reads that bundle, and the first version of this line ran the tests before the build
+  # that generates it: 17 failures on Netlify, none of them reproducible locally, because a
+  # developer's working copy always has the bundle sitting there from the last `npm run dev`.
+  # `npm run build` runs it again through `prebuild`; running it twice costs a second and removes
+  # a whole class of "works on my machine".
+  command = "npm ci && npm run sync-content && npm run validate:content && npm test && npm run build"
   # Relative to `base`, so this is frontend/dist.
   publish = "dist"
 
