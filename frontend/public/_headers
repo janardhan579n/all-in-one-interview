@@ -18,7 +18,22 @@
 /index.html
   Cache-Control: public, max-age=0, must-revalidate
 
+# A strict content security policy is nearly free here, because the site loads nothing from
+# anywhere else: no fonts, no analytics, no CDN, no trackers, no third-party scripts. Everything
+# it needs is in its own bundle, so the policy can say "self, and nothing else".
+#
+# Two exceptions, both real rather than lazy:
+#   style-src 'unsafe-inline' — React writes inline styles for anything computed, such as the
+#     animated width of a progress bar or a distribution chart. Removing it would mean hashing
+#     every one of those on each build.
+#   img-src / font-src data: — the inline SVG icons.
+#
+# `connect-src 'self'` is the line that matters most: it is what stops an injected script from
+# sending anything anywhere. `form-action 'none'` matters because the app posts no forms at all,
+# so any form submission would be something the app did not put there.
 /*
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
   X-Frame-Options: SAMEORIGIN
+  Permissions-Policy: geolocation=(), microphone=(), camera=(), payment=(), usb=()
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; form-action 'none'; frame-ancestors 'self'; base-uri 'self'; object-src 'none'

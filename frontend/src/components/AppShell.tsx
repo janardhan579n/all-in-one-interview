@@ -49,6 +49,17 @@ const NAVIGATION: NavItem[] = [
   { to: '/bookmarks', label: 'Bookmarks & Notes', icon: '🔖' },
 ];
 
+/**
+ * Where this visitor's progress is being kept.
+ *
+ * This used to read "● offline", which named an internal mode and looked like a fault — and on
+ * a static deploy it is stuck there permanently, because there is no backend to reach and never
+ * will be. "Offline" also plainly contradicts the evidence: the page loaded over the internet.
+ *
+ * So it reports the consequence the visitor can act on instead. Either their progress is going
+ * to a database on the machine running the API, or it is going to this browser and will not
+ * follow them to another device without Progress → Export.
+ */
 function ConnectionBadge() {
   const { connection } = useAppState();
   if (connection === 'checking') {
@@ -58,7 +69,7 @@ function ConnectionBadge() {
     return (
       <span
         className="rounded-full bg-good/15 px-2 py-1 text-[11px] font-medium text-good"
-        title="Connected to the Spring Boot backend — progress is stored in SQLite"
+        title="Connected to the Spring Boot API — progress, notes and bookmarks are stored in its SQLite database."
       >
         ● backend
       </span>
@@ -66,10 +77,10 @@ function ConnectionBadge() {
   }
   return (
     <span
-      className="rounded-full bg-warn/15 px-2 py-1 text-[11px] font-medium text-warn"
-      title="The backend is not reachable. Content is served from the bundle and progress is stored in this browser."
+      className="rounded-full bg-surface-sunken px-2 py-1 text-[11px] font-medium text-ink-muted"
+      title="No API server, which is normal for a published site: the whole library is bundled into the page. Your progress, notes and bookmarks live in this browser only — use Progress → Export to move them to another device."
     >
-      ● offline
+      ● saved in this browser
     </span>
   );
 }
@@ -180,15 +191,41 @@ function SearchBox() {
   );
 }
 
+/**
+ * Beginner ⇄ Interview.
+ *
+ * Only `LessonPage` and `ConceptPage` read `explanationMode` — 2 of 21 pages. Rendering the
+ * toggle on the other 19 meant most clicks changed nothing visible, which is a good way to
+ * teach someone that a control is decorative. Measured on the built site: the dashboard, the
+ * problems index and a problem page were byte-identical in both modes.
+ *
+ * So it is shown where it does something and absent where it does not. The honest alternative
+ * would be to extend dual explanations to problems, which is content work across 165 files
+ * rather than a header fix.
+ */
+export function usesExplanationMode(pathname: string): boolean {
+  // /dsa/:id — a lesson. /dsa alone is the index, which has no dual content.
+  if (/^\/dsa\/[^/]+$/.test(pathname)) return true;
+  // /system-design/:id — a concept. Case studies live under /system-design/case-studies/... and
+  // do not carry a second register, so they are excluded by the segment count.
+  if (/^\/system-design\/[^/]+$/.test(pathname) && !pathname.startsWith('/system-design/case-studies')) {
+    return true;
+  }
+  return false;
+}
+
 function ModeToggle() {
   const { explanationMode, setExplanationMode } = useAppState();
+  const { pathname } = useLocation();
+  if (!usesExplanationMode(pathname)) return null;
+
   return (
     <div className="flex overflow-hidden rounded-lg border border-line" role="group" aria-label="Explanation depth">
       <button
         type="button"
         onClick={() => setExplanationMode('beginner')}
         aria-pressed={explanationMode === 'beginner'}
-        title="Plain language, no jargon"
+        title="Plain language, no jargon — changes the analogy and explanations on this page"
         className={`px-2.5 py-1.5 text-xs font-medium transition-colors ${
           explanationMode === 'beginner' ? 'bg-brand text-white' : 'text-ink-muted hover:bg-surface-sunken'
         }`}
@@ -199,7 +236,7 @@ function ModeToggle() {
         type="button"
         onClick={() => setExplanationMode('interview')}
         aria-pressed={explanationMode === 'interview'}
-        title="Precise technical language, as you would use in an interview"
+        title="The language an interviewer expects — changes the analogy and explanations on this page"
         className={`px-2.5 py-1.5 text-xs font-medium transition-colors ${
           explanationMode === 'interview' ? 'bg-brand text-white' : 'text-ink-muted hover:bg-surface-sunken'
         }`}
