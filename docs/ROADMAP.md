@@ -317,8 +317,59 @@ These are deliberate scope decisions, not oversights. None of them has a fake bu
 | ⬜ | **More case studies** | `content/system-design/case-studies/` | 4 built; news feed, ride sharing, video streaming, search autocomplete are the obvious next four. **Now the largest remaining gap**, and every concept they would draw on exists as of Phase 10. |
 | ⬜ | **Translation depth** | `content/i18n/` | 14 of 87 documents per language. Data structures, system-design concepts and problems are still English-only — which the coverage badge states plainly. |
 | ⬜ | **Multi-user accounts** | `user/LocalUserService.java` | Single local user by design (§1: no mandatory auth). The service is the seam if this ever changes. |
-| ⬜ | **Mobile-first layout** | — | Responsive down to tablet; desktop-primary as specified (§27). Visualisations with wide scenes scroll horizontally on a phone. |
-| ⬜ | **Browser end-to-end suite** | `frontend/` | Unit tests plus a manual Playwright pass today; a committed Playwright suite over the main journeys is the next test investment. |
+| ✅ | **Mobile-first layout** | `AppShell.tsx`, `ArchitectureCanvas.tsx` | Usable at 375px. The nav drawer was pushing `main` into the same flex row and making the page 617px wide inside a 375px viewport — found by measuring `scrollWidth` against `clientWidth`, not by looking. Architecture SVGs now scale by `viewBox` rather than scrolling inside a clipped box. |
+| ✅ | **Browser end-to-end suite** | `frontend/e2e/` | 51 Playwright tests: every route boots without a console error, the insight gate does not leak the optimised solution early, a visualiser advances its highlighted line, the offline path loads from the bundle, and no route scrolls horizontally at 375px. Every test was deliberately broken once to confirm it can fail. |
+
+---
+
+## Phase 13 — making the green ticks mean something
+
+The differential harness covered 32 problems and reported them all as agreeing. Closing the gap
+to 153 was the stated goal; what the work actually produced was a harness that can now fail in
+two ways it previously could not.
+
+| | |
+|---|---|
+| Verified pairs | 32 → **162** (158 agreeing, 4 disagreeing on purpose) |
+| Brute forces made runnable | 66 |
+| Structural preconditions | 12 → 44 |
+| Real defects found | `move-zeroes` (infinite loop on any input containing a zero) |
+
+Three of the 165 are unverified, all on purpose: `serialize-deserialize-tree` (the property is
+round-trip, not string equality) and `pivot-index` and `running-sum`, where the naive approach *is*
+the optimal one and a contrived slow version would be a green tick over the same idea twice.
+
+Three findings outlasted the count:
+
+**Seven agreements were hollow.** Every one of 400 trials produced the same answer, or threw.
+A cycle detector was never shown a cycle; `same-tree` was handed two independently random trees,
+which are never equal. The runner now counts distinct answers and calls that
+`AGREE_BUT_VACUOUS`, because a test that can only come out one way is not a test.
+
+**Four brute forces are wrong on purpose**, and the page says so — that is the most useful thing
+those pages do. For these the harness inverts: disagreement is the pass, and agreement is
+reported as `FAULT_NOT_REPRODUCED`. Without that, tidying one of them into a correct
+implementation would leave every check in the project green while the page asserted a fault that
+no longer existed.
+
+**Some answers are valid rather than unique.** `reorganize-string` asks for *an* arrangement with
+no two adjacent letters equal, and two correct implementations routinely return different strings.
+Equality was the wrong question. The runner now checks the property instead — each answer is a
+permutation of the input with no equal neighbours, and the two agree on whether any arrangement
+exists — which is a stronger claim than equality, because equality would pass two implementations
+that are wrong in the same way and this will not.
+
+The design problems needed a different shape of test altogether. A stateful class cannot be checked
+one call at a time: `get(2)` on an LRU cache is correct or not depending on every operation before
+it, and eviction only shows up once capacity is exceeded — a cache that never evicts agrees with a
+correct one right up until it matters. Both objects are now built with the same capacity and driven
+through the same random sequence of operations, compared after every call, so a divergence is
+reported at the step that caused it with the sequence up to that point as the reproduction.
+
+The pattern across Phases 9–13 is the same each time. Phase 9 caught a wrong trie by *looking*.
+Phase 10 caught a clustering hash by *testing the property*. Phase 11 caught wrong animations by
+*running the data*. Phase 12 caught brute-force defects by *differential testing*. Phase 13
+caught tests that could not fail by *asking what each green tick would have taken to go red*.
 
 ---
 
@@ -332,6 +383,9 @@ These are deliberate scope decisions, not oversights. None of them has a fake bu
   Predictable and diff-friendly, but adding a node to a dense stage means nudging neighbours
   by hand. Auto-layout was rejected (ADR-005) because it moves nodes between stages, which
   destroys the "what's new since the last stage" reading.
+- `pivot-index` and `running-sum` have no brute force on purpose. The naive approach *is* the
+  optimal one, and inventing an artificially slow version would produce a green tick over two
+  implementations of the same idea — the exact failure the harness exists to prevent.
 - Quiz questions are multiple-choice only. Free-text answers need marking logic that, without
   an AI tutor, would come down to keyword matching — worse than not offering it.
 

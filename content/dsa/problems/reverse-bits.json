@@ -34,11 +34,13 @@
   "bruteForce": {
     "idea": "Build the 32-character binary string, reverse it, and parse it back.",
     "code": [
-      "StringBuilder sb = new StringBuilder();",
-      "for (int i = 0; i < 32; i++) {",
-      "    sb.append((n >>> i) & 1);",
-      "}",
-      "return (int) Long.parseLong(sb.toString(), 2);"
+      "public static int reverseBits(int n) {",
+      "    StringBuilder sb = new StringBuilder();",
+      "    for (int i = 0; i < 32; i++) {",
+      "        sb.append((n >>> i) & 1);",
+      "    }",
+      "    return (int) Long.parseLong(sb.toString(), 2);",
+      "}"
     ],
     "complexity": {
       "time": "O(32)",

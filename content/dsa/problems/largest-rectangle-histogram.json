@@ -35,14 +35,17 @@
   "bruteForce": {
     "idea": "Fix each bar as the limiting height and expand left and right while the neighbours are at least as tall.",
     "code": [
-      "long best = 0;",
-      "for (int i = 0; i < heights.length; i++) {",
-      "    int left = i, right = i;",
-      "    while (left - 1 >= 0 && heights[left - 1] >= heights[i]) left--;",
-      "    while (right + 1 < heights.length && heights[right + 1] >= heights[i]) right++;",
-      "    best = Math.max(best, (long) heights[i] * (right - left + 1));",
-      "}",
-      "return best;"
+      "/** O(n^2) time, O(1) space. Returns long to match the optimised signature. */",
+      "public static long largestRectangleArea(int[] heights) {",
+      "    long best = 0;",
+      "    for (int i = 0; i < heights.length; i++) {",
+      "        int left = i, right = i;",
+      "        while (left - 1 >= 0 && heights[left - 1] >= heights[i]) left--;",
+      "        while (right + 1 < heights.length && heights[right + 1] >= heights[i]) right++;",
+      "        best = Math.max(best, (long) heights[i] * (right - left + 1));",
+      "    }",
+      "    return best;",
+      "}"
     ],
     "complexity": {
       "time": "O(n^2)",

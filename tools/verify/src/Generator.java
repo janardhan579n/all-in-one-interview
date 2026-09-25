@@ -53,8 +53,21 @@ final class Generator {
 
     private static Domain domain = Domain.OPEN;
 
+    /**
+     * Whether a generated tree must be a binary SEARCH tree.
+     *
+     * validate-bst, kth-smallest-in-bst and lowest-common-ancestor-bst are meaningless on a
+     * random tree: two implementations would agree that it is not a BST and the test would prove
+     * nothing about the case the problem is actually asking about. Set from the problem id.
+     */
+    private static boolean bstMode = false;
+
     static void use(Domain next) {
         domain = next == null ? Domain.OPEN : next;
+    }
+
+    static void bst(boolean value) {
+        bstMode = value;
     }
 
     private static int pick(Random random) {
@@ -76,7 +89,81 @@ final class Generator {
                 || type == char.class || type == String.class
                 || type == int[].class || type == char[].class || type == String[].class
                 || type == int[][].class || type == char[][].class
-                || type == List.class;
+                || type == double[].class
+                || type == List.class
+                || type == Support.TreeNode.class || type == Support.ListNode.class
+                || type == Support.Node.class
+                || type == Support.ListNode[].class || type == Support.Node[].class;
+    }
+
+    /**
+     * Trees and linked lists, built randomly.
+     *
+     * Without these, every tree and list problem in the bank reported UNSUPPORTED_SIGNATURE and
+     * went untested — which is a quarter of the library, and the quarter where an off-by-one in
+     * a pointer dance is hardest to spot by reading.
+     *
+     * The shapes are deliberately lumpy. A perfectly balanced tree exercises none of the cases
+     * that break real code, so nodes are attached to a randomly chosen existing node, which
+     * produces everything from a balanced tree to a degenerate chain.
+     */
+    private static Support.TreeNode randomTree(Random random) {
+        int n = length(random);
+        if (n == 0) return null;
+        Support.TreeNode root = new Support.TreeNode(pick(random));
+        List<Support.TreeNode> nodes = new ArrayList<>();
+        nodes.add(root);
+        for (int i = 1; i < n; i++) {
+            Support.TreeNode child = new Support.TreeNode(pick(random));
+            for (int attempt = 0; attempt < 12; attempt++) {
+                Support.TreeNode parent = nodes.get(random.nextInt(nodes.size()));
+                if (random.nextBoolean()) {
+                    if (parent.left == null) { parent.left = child; break; }
+                } else {
+                    if (parent.right == null) { parent.right = child; break; }
+                }
+            }
+            nodes.add(child);
+        }
+        return root;
+    }
+
+    /** A binary search tree, for the problems whose whole premise is the ordering. */
+    static Support.TreeNode randomBst(Random random) {
+        int n = Math.max(1, length(random));
+        int[] values = new int[n];
+        for (int i = 0; i < n; i++) values[i] = pick(random);
+        Arrays.sort(values);
+        values = Arrays.stream(values).distinct().toArray();
+        return buildBst(values, 0, values.length - 1);
+    }
+
+    private static Support.TreeNode buildBst(int[] sorted, int low, int high) {
+        if (low > high) return null;
+        int mid = (low + high) >>> 1;
+        Support.TreeNode node = new Support.TreeNode(sorted[mid]);
+        node.left = buildBst(sorted, low, mid - 1);
+        node.right = buildBst(sorted, mid + 1, high);
+        return node;
+    }
+
+    private static Support.ListNode randomList(Random random) {
+        int n = length(random);
+        Support.ListNode head = null;
+        for (int i = n - 1; i >= 0; i--) head = new Support.ListNode(pick(random), head);
+        return head;
+    }
+
+    /** `Node` is this bank's name for a linked-list node; clone-graph gets a repair instead. */
+    private static Support.Node randomNodeList(Random random) {
+        int n = length(random);
+        Support.Node head = null;
+        for (int i = n - 1; i >= 0; i--) {
+            Support.Node node = new Support.Node(pick(random));
+            node.next = head;
+            head = node;
+        }
+        return head;
     }
 
     /**
@@ -134,6 +221,26 @@ final class Generator {
             for (int i = 0; i < n; i++) list.add(pick(random));
             return list;
         }
+        if (type == double[].class) {
+            // Probabilities and weights: kept in [0,1] and rounded, so a disagreement is a real
+            // one rather than the last bits of a float.
+            double[] out = new double[length(random)];
+            for (int i = 0; i < out.length; i++) out[i] = Math.round(random.nextDouble() * 100) / 100.0;
+            return out;
+        }
+        if (type == Support.ListNode[].class) {
+            Support.ListNode[] lists = new Support.ListNode[1 + random.nextInt(4)];
+            for (int i = 0; i < lists.length; i++) lists[i] = randomList(random);
+            return lists;
+        }
+        if (type == Support.Node[].class) {
+            Support.Node[] lists = new Support.Node[1 + random.nextInt(4)];
+            for (int i = 0; i < lists.length; i++) lists[i] = randomNodeList(random);
+            return lists;
+        }
+        if (type == Support.TreeNode.class) return bstMode ? randomBst(random) : randomTree(random);
+        if (type == Support.ListNode.class) return randomList(random);
+        if (type == Support.Node.class) return randomNodeList(random);
         throw new IllegalArgumentException("unsupported " + type);
     }
 
@@ -181,8 +288,60 @@ final class Generator {
             for (int i = 0; i < a.length; i++) out[i] = a[i].clone();
             return out;
         }
+        if (value instanceof double[] a) return a.clone();
+        if (value instanceof Support.ListNode[] a) {
+            Support.ListNode[] out = new Support.ListNode[a.length];
+            for (int i = 0; i < a.length; i++) out[i] = copyList(a[i]);
+            return out;
+        }
+        if (value instanceof Support.Node[] a) {
+            Support.Node[] out = new Support.Node[a.length];
+            for (int i = 0; i < a.length; i++) out[i] = copyNodeList(a[i]);
+            return out;
+        }
         if (value instanceof List<?> list) return new ArrayList<>(list);
+        if (value instanceof Support.TreeNode tree) return copyTree(tree);
+        if (value instanceof Support.ListNode node) return copyList(node);
+        if (value instanceof Support.Node node) return copyNodeList(node);
         return value;   // int, long, boolean, double, char, String are all immutable
+    }
+
+    private static Support.TreeNode copyTree(Support.TreeNode node) {
+        if (node == null) return null;
+        Support.TreeNode copy = new Support.TreeNode(node.val);
+        copy.left = copyTree(node.left);
+        copy.right = copyTree(node.right);
+        return copy;
+    }
+
+    /**
+     * Cycle-safe, deliberately.
+     *
+     * The first version walked `next` until null, which meant a cyclic list could never be
+     * generated: the copy would spin forever before either implementation ran. So linked-list-cycle
+     * was tested only on acyclic lists and agreed, 400 times, that a list with no cycle has no
+     * cycle — a green tick for the one input the problem is not about. An identity map fixes it.
+     */
+    private static Support.ListNode copyList(Support.ListNode head) {
+        Map<Support.ListNode, Support.ListNode> seen = new IdentityHashMap<>();
+        for (Support.ListNode at = head; at != null && !seen.containsKey(at); at = at.next) {
+            seen.put(at, new Support.ListNode(at.val));
+        }
+        for (Map.Entry<Support.ListNode, Support.ListNode> entry : seen.entrySet()) {
+            entry.getValue().next = seen.get(entry.getKey().next);
+        }
+        return seen.get(head);
+    }
+
+    private static Support.Node copyNodeList(Support.Node head) {
+        Map<Support.Node, Support.Node> seen = new IdentityHashMap<>();
+        for (Support.Node at = head; at != null && !seen.containsKey(at); at = at.next) {
+            seen.put(at, new Support.Node(at.val));
+        }
+        for (Map.Entry<Support.Node, Support.Node> entry : seen.entrySet()) {
+            entry.getValue().next = seen.get(entry.getKey().next);
+        }
+        return seen.get(head);
     }
 
     private static int[] ints(Random random, int length) {

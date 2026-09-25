@@ -27,11 +27,13 @@
   "bruteForce": {
     "idea": "Walk the list once to count the nodes, then walk again to node n/2.",
     "code": [
-      "int n = 0;",
-      "for (Node cur = head; cur != null; cur = cur.next) n++;",
-      "Node cur = head;",
-      "for (int i = 0; i < n / 2; i++) cur = cur.next;",
-      "return cur;"
+      "public static Node middleNode(Node head) {",
+      "    int n = 0;",
+      "    for (Node cur = head; cur != null; cur = cur.next) n++;   // pass one: count",
+      "    Node cur = head;",
+      "    for (int i = 0; i < n / 2; i++) cur = cur.next;           // pass two: walk to the middle",
+      "    return cur;",
+      "}"
     ],
     "complexity": {
       "time": "O(n), two passes",

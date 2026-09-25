@@ -37,15 +37,20 @@
   "bruteForce": {
     "idea": "Append every value to a growing list. On each call, sum the last k entries of the list and divide.",
     "code": [
-      "private final List<Integer> all = new ArrayList<>();",
-      "private final int size;",
+      "class MovingAverage {",
+      "    public MovingAverage(int size) { this.size = size; }",
       "",
-      "public double next(int val) {",
-      "    all.add(val);",
-      "    int from = Math.max(0, all.size() - size);",
-      "    double sum = 0;",
-      "    for (int i = from; i < all.size(); i++) sum += all.get(i);",
-      "    return sum / (all.size() - from);",
+      "    private final List<Integer> all = new ArrayList<>();",
+      "    private final int size;",
+      "",
+      "",
+      "    public double next(int val) {",
+      "        all.add(val);",
+      "        int from = Math.max(0, all.size() - size);",
+      "        double sum = 0;",
+      "        for (int i = from; i < all.size(); i++) sum += all.get(i);",
+      "        return sum / (all.size() - from);",
+      "    }",
       "}"
     ],
     "complexity": {

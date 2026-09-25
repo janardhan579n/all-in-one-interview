@@ -28,15 +28,18 @@
   "bruteForce": {
     "idea": "For every possible starting index, add up the k elements that follow and keep the largest total.",
     "code": [
-      "int best = Integer.MIN_VALUE;",
-      "for (int start = 0; start + k <= nums.length; start++) {",
-      "    int sum = 0;",
-      "    for (int i = start; i < start + k; i++) {",
-      "        sum += nums[i];",
+      "public static int maxSumOfSizeK(int[] nums, int k) {",
+      "    if (nums.length < k) throw new IllegalArgumentException(\"array shorter than k\");",
+      "    int best = Integer.MIN_VALUE;",
+      "    for (int start = 0; start + k <= nums.length; start++) {",
+      "        int sum = 0;",
+      "        for (int i = start; i < start + k; i++) {   // re-add all k elements, every window",
+      "            sum += nums[i];",
+      "        }",
+      "        best = Math.max(best, sum);",
       "    }",
-      "    best = Math.max(best, sum);",
-      "}",
-      "return best;"
+      "    return best;",
+      "}"
     ],
     "complexity": {
       "time": "O(n*k)",

@@ -36,7 +36,7 @@
   "bruteForce": {
     "idea": "Sort in place the way you would an array: choose a pivot and partition around it. With no random access, the only pivot available for free is the head, so partition the remaining nodes into a 'less' list and a 'not less' list and recurse on each.",
     "code": [
-      "Node quickSort(Node head) {",
+      "public static Node sortList(Node head) {",
       "    if (head == null || head.next == null) return head;",
       "    Node pivot = head;                      // the only node we can reach in O(1)",
       "    Node lessHead = new Node(0), less = lessHead;",
@@ -47,10 +47,18 @@
       "    }",
       "    less.next = null;",
       "    more.next = null;",
-      "    Node left = quickSort(lessHead.next);",
-      "    Node right = quickSort(moreHead.next);",
+      "    Node left = sortList(lessHead.next);",
+      "    Node right = sortList(moreHead.next);",
       "    pivot.next = right;",
       "    return concat(left, pivot);",
+      "}",
+      "",
+      "private static Node concat(Node a, Node b) {",
+      "    if (a == null) return b;",
+      "    Node tail = a;",
+      "    while (tail.next != null) tail = tail.next;",
+      "    tail.next = b;",
+      "    return a;",
       "}"
     ],
     "complexity": {

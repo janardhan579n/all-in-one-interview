@@ -1,0 +1,999 @@
+{
+  "id": "distributed-cache",
+  "title": "Design a Distributed Cache",
+  "difficulty": "advanced",
+  "estimatedMinutes": 40,
+  "summary": "Every other case study says 'add a cache' and moves on. This is the one that builds it: where a key lives when the cluster changes size, what gets thrown away when memory runs out, and the three named failure modes that turn a cache from a shield into an amplifier.",
+  "steps": [
+    {
+      "key": "requirements",
+      "title": "1. Clarify the problem",
+      "content": "\"Design a distributed cache\" hides several very different systems, so pin down which one before drawing anything.\n\n- **What is being cached?** Small counters, medium JSON documents, or large rendered fragments? The average value size decides memory layout, network cost and whether per-entry overhead matters.\n- **Is it a look-aside cache the application talks to explicitly, or a transparent read-through layer?** Look-aside is simpler and puts the policy in application code; read-through hides the backing store but owns loading, which means it owns a failure mode too.\n- **Is stale data acceptable, and for how long?** This is the single most shaping question. \"Seconds\" gives you TTLs and cache-aside. \"Never\" means you are not designing a cache, you are designing a replicated database, and you should say so.\n- **Must a cached entry survive a node restart?** Almost always no — and that answer buys you enormous simplifications.\n- **What is the backing store, and what does it do if the cache disappears?** If it cannot survive the full load, the cache is load-bearing infrastructure and needs to be designed like it.\n\n**For this walkthrough**: a look-aside key-value cache in front of a relational database, string keys and opaque values averaging around 2 KB, seconds of staleness acceptable, entries need not survive restarts, and the backing store cannot absorb a full miss storm — which is the constraint that makes the failure modes in step 9 through 11 matter."
+    },
+    {
+      "key": "functional",
+      "title": "2. Functional requirements",
+      "content": "- `GET key` returns a value or a miss.\n- `SET key value [ttl]` stores a value with an optional expiry.\n- `DELETE key` removes an entry, for invalidation after a write.\n- Multi-get for a batch of keys, because N round trips for N keys is the most common way a cache makes an endpoint slower.\n- An atomic `ADD`-style operation (set only if absent) — this is the primitive that single-flight and distributed locks are built from.\n- An eviction policy that runs automatically when memory fills, with the policy configurable per namespace.\n- Keys are distributed across nodes such that adding or removing a node moves as few keys as possible.\n- Optional replication per key range, so a node failure is a failover rather than a cold slice.\n\nNotice what is absent: no range scans, no secondary indexes, no transactions, no joins. A cache earns its speed by refusing to do those things. If a requirement creeps in that needs them, that is the moment to say the answer is a database."
+    },
+    {
+      "key": "nonfunctional",
+      "title": "3. Non-functional requirements",
+      "content": "- **Latency**: p99 under 1 ms for a hit, server-side. The cache exists to be dramatically faster than the thing behind it; a cache with a 10 ms p99 in front of a 15 ms database is not worth its operational cost.\n- **Hit rate**: 95% target, and this is a *design* number, not a vanity metric. At 190,000 reads/s a 95% hit rate sends 9,500 misses/s to the database; 90% sends 19,000/s. **Five points of hit rate doubles the load on the database**, which is why memory sizing and eviction policy are first-class design decisions rather than tuning details.\n- **Availability**: high, but with a crucial asymmetry — the cache is allowed to be *empty*, and never allowed to be *wrong*. Losing entries costs latency and database load, both recoverable. Serving a stale value that the application treats as current can corrupt downstream state, and that is not.\n- **Durability: none required.** Say this explicitly, because it is the assumption that licenses everything else: no write-ahead log on the hot path, no fsync, no synchronous replication, no consensus. A cache that tries to be durable is paying a database's costs for a cache's guarantees.\n- **Elasticity**: adding capacity must not cost a hit-rate collapse. This sounds obvious and is the requirement that naive designs violate most catastrophically — see step 7.\n- **Scale target**: 200,000 operations/s average, 500M distinct keys in the working set."
+    },
+    {
+      "key": "estimation",
+      "title": "4. Back-of-the-envelope estimation",
+      "content": "**Traffic.** 200,000 ops/s average, 95% reads → **190,000 reads/s** and 10,000 writes/s. At a 3x peak factor, **600,000 ops/s**.\n\n**Memory — the number that shapes everything.** A cached entry is not just its value. It is the key, the value, and the bookkeeping the cache needs to manage it: hash table slot, the two pointers for the LRU list, expiry timestamp, size and flags. Call that overhead 80 bytes.\n\n- Per entry: 40 B key + 2,048 B value + 80 B overhead = **2,168 B**\n- Full working set: 500M × 2,168 B = **~1.08 TB**\n\n**Node count.** At 64 GB of usable data memory per node, 1,084 GB ÷ 64 GB ≈ **17 nodes**. Provision **20** for headroom and to leave room for replica placement. At peak, 600,000 ÷ 20 = **30,000 ops/s per node**, which an in-memory store handles comfortably — this cluster is sized by memory, not by CPU, and saying that out loud is worth a lot.\n\n**Why overhead deserves its own line.** The 80 bytes is 3.7% of a 2 KB value and irrelevant. On a 64-byte value it is not: 64 + 40 + 80 = 184 bytes, so **~65% of what you store is not your data**. A cache of small counters needs roughly three times the memory a naive `count × value_size` calculation suggests. This is the estimation mistake interviewers watch for.\n\n**Network.** 190,000 reads/s × 2,048 B ≈ **389 MB/s ≈ 3.1 Gbps** aggregate, about 19 MB/s per node. Fine on 10 GbE, but worth noticing that a cache of large values becomes a network problem before it becomes a CPU problem.\n\n**Database protection.** Misses at 95% hit rate: 5% × 190,000 = **9,500/s**. At 90%: **19,000/s**. If one of 20 nodes dies and its keys go cold, an extra 5% of reads miss — 9,500 more per second, **doubling database load from a single node loss**. That number is the entire argument for replication, and it is also why the placement function in step 7 matters so much: with a naive one, losing a node remaps almost everything, not 5%."
+    },
+    {
+      "key": "api",
+      "title": "5. API design",
+      "content": "The wire protocol should be boring: a compact binary framing over a persistent TCP connection, with pipelining so a client can have many requests in flight without waiting. Keep the connection pooled — TCP handshake and TLS negotiation per operation would dominate a sub-millisecond operation entirely.\n\nThree design points are worth arguing for:\n\n**Multi-get is not a convenience, it is a correctness-of-latency feature.** An endpoint that needs 50 keys and issues 50 sequential round trips spends 50 × RTT, which at 0.5 ms is 25 ms — and the cache has made the request slower than reading the whole thing from the database in one query. Multi-get scatters to the relevant nodes in parallel and gathers, so the cost is one round trip, not fifty.\n\n**`ADD` (set-if-absent) must be atomic and must return whether it succeeded.** It is the primitive that single-flight, distributed locks and \"only one worker rebuilds this key\" are all built on. Without it, every stampede defence degrades into a race.\n\n**Values are opaque bytes.** The cache does not parse, index or validate them. Serialization format is the client's business. This is what keeps the server simple enough to be fast, and it is why a version tag belongs *inside* the value or the key — after a deploy changes a struct's shape, a cache full of the old shape must be invalidated, and the cheapest way is a version prefix in the key so old entries simply become unreachable and age out."
+    },
+    {
+      "key": "datamodel",
+      "title": "6. What a node actually holds",
+      "content": "Inside one node there are two structures, and they are the reason the cache is fast.\n\n**A hash table from key to entry.** Gives O(1) average lookup. Sized as a power of two with open addressing or chaining; resized by doubling, ideally incrementally so a rehash does not stall the node for a full pause while 30,000 ops/s queue up behind it.\n\n**A doubly-linked list threaded through those same entries**, maintaining recency order. This is the LRU structure, and step 8 explains why it is a list rather than a timestamp.\n\nEach entry carries: the key bytes, the value bytes, `expires_at`, `last_accessed`, a size field, and the two list pointers. Everything except the key and value is the 80 bytes of overhead from the estimation.\n\n**Allocation matters more than it looks.** A cache does millions of allocations and frees per second of wildly varying sizes, which is a worst case for a general-purpose allocator: it fragments, and fragmented memory is memory you paid for and cannot use. The standard answer is **slab allocation** — carve memory into fixed-size classes (64 B, 128 B, 256 B…), round each value up to a class, and reuse freed chunks within the class. You waste some space rounding up, and you never fragment. The cost is a real operational hazard worth naming: if the workload's value sizes shift after the slabs are carved, one class can be full while another sits empty, and the cache evicts live data while holding unusable free memory.\n\n**Expiry is lazy plus sampled, not scheduled.** Actively scanning for expired keys would mean touching every entry periodically, which destroys cache locality and burns CPU on keys nobody wants. Instead: check expiry on read (lazy), and have a background task sample a small random set of keys periodically and evict the expired ones (sampled). The consequence is that an expired key occupies memory until it is read or sampled, and you should say so — the memory accounting is approximate by design."
+    },
+    {
+      "key": "placement",
+      "title": "7. Placement: why hash(key) % N is a trap",
+      "content": "With 20 nodes, the obvious placement function is `node = hash(key) % 20`. It is O(1), stateless, needs no coordination, and distributes keys evenly. It is also the single most dangerous line in a naive cache design.\n\n**The failure.** Add a 21st node to increase capacity. The modulus changes from 20 to 21, and a key stays on its old node only if `hash % 20 == hash % 21` — which happens for roughly **1 key in 21, about 4.8%**. Every other key, **more than 95% of the cache**, now hashes to a different node. Those nodes do not have it. Every lookup misses.\n\nWork out what that does with the numbers from step 4. Misses go from 9,500/s to roughly 95% of 190,000 = **180,500/s**, a nineteen-fold increase arriving instantly. The database, sized for 9,500, falls over. And note the exquisite timing: **you triggered this by adding capacity**. The operation intended to make the system healthier is the one that takes it down, which is why this failure survives design review — it looks like growth, not like risk.\n\nThe same arithmetic applies to a node *failing*. An unplanned loss of one node out of 20 should cost you 5% of the keyspace. With modulo it costs 95%, because the modulus changed. A design where a single machine dying produces a full cache flush is not a design you can operate.\n\n**Consistent hashing.** Map both keys and nodes onto the same circular hash space, and assign each key to the first node found walking clockwise from the key's position. Adding a node inserts one point on the ring; it takes over only the keys between it and its predecessor. Removing a node hands its range to its successor. Nothing else moves.\n\nThe result: adding the 21st node moves about **1/21 ≈ 4.8%** of keys instead of 95%. Losing a node costs exactly that node's share. The difference is not incremental — it is the difference between a routine operation and an outage.\n\n**Virtual nodes are not optional.** With one point per node on the ring, the segments between 20 randomly-placed points vary enormously: the largest can easily be several times the smallest, so one node holds several times the data and traffic of another. That imbalance is permanent, and it is worse than it sounds because the overloaded node evicts more aggressively and therefore has the worst hit rate in the cluster.\n\nThe fix is to place each physical node at many points — typically 100 to 200 tokens each. With 20 nodes × 150 tokens = 3,000 points, the law of large numbers flattens the distribution to within a few percent. Virtual nodes also make heterogeneous hardware expressible: a machine with twice the memory gets twice the tokens. The cost is a larger ring to store and a slightly slower lookup (a binary search over a sorted token array rather than a single modulo), which is nothing. See [consistent-hashing](/system-design/consistent-hashing) for the ring mechanics in full.\n\n**Where does the ring live?** Either in a smart client (every application instance holds the ring and routes directly — one network hop, but ring updates must propagate to every client) or in a proxy tier (clients are dumb, the proxy routes — two hops, but one place to update and one place to observe). Both are defensible; name the trade rather than assuming one."
+    },
+    {
+      "key": "eviction",
+      "title": "8. Eviction: what you throw away when memory fills",
+      "content": "Memory is finite and the working set is not, so something must go. The policy decides which, and it directly sets your hit rate.\n\n**LRU, and how it is actually O(1).** The naive implementation stores a `last_accessed` timestamp per entry and scans for the minimum when evicting — O(n) per eviction, which at 30,000 ops/s per node is not viable. The real implementation is two structures cooperating:\n\n- A **hash map** from key to node, giving O(1) lookup.\n- A **doubly-linked list** of those same nodes in recency order, most-recent at the head.\n\nOn a **get**: hash map finds the node in O(1); unlink it from its current position using its `prev`/`next` pointers, which is O(1) *because you already have the node* and never have to search for it; relink at the head, O(1).\n\nOn a **set** when full: the tail is the least recently used entry by construction. Unlink it, delete its key from the map, insert the new entry at the head. O(1).\n\nThat \"because you already have the node\" is the whole trick, and it is worth saying explicitly — the doubly-linked list is chosen over a singly-linked one precisely because removing from the middle needs the predecessor pointer, and a singly-linked list would make it O(n).\n\nThe practical refinement: strict LRU requires moving a node on *every* read, which means taking a write lock on the list on the read path and turns a read-mostly structure into a contended one. Real caches approximate — a CLOCK / second-chance bit, or the sampled approach of picking a handful of random keys and evicting the least recently used among them. Approximate LRU with 5 samples gets within a couple of percent of true LRU at a fraction of the contention.\n\n**LFU, and what it is actually better at.** LFU evicts the least *frequently* used entry rather than the least recently used. It wins where popularity is stable and skewed: a set of keys that are consistently hot stay resident even when a burst of one-off traffic passes through, because one access does not outrank a thousand. LRU would evict the genuinely popular entry to make room for the one-off.\n\nIts weaknesses are equally concrete. A key that was extremely popular last month accumulates a huge count and resists eviction long after anyone wants it — **cache pollution** — which is why practical LFU implementations decay counts over time. And maintaining frequency counts costs more memory and more work per access than two pointers. Window-TinyLFU, which combines a small LRU admission window with a frequency filter, is the current practical answer and a good thing to be able to name.\n\n**TTL is a different tool, not a competing policy.** Eviction is about memory pressure; TTL is about staleness. Every entry should carry one even when memory is plentiful, because a TTL is the bound on how wrong the cache can be — the upper limit on how long a missed invalidation goes unnoticed. TTLs also need **jitter**: if 100,000 keys are populated at the same moment with the same 3600 s TTL, they expire in the same second, and step 9 happens to all of them at once. `ttl + random(0, 0.1 × ttl)` spreads it.\n\n**And now the honest part: LRU is wrong for a scan.** LRU assumes recently-used implies soon-to-be-used-again. A sequential pass over a large dataset — an analytics job, a nightly export, a backfill, a crawler — violates that assumption completely: every key it touches is recent, and none will be touched again. LRU dutifully promotes every one of them to the head and evicts the genuinely hot working set to make room. **One analytics query can empty a cache that took hours to warm**, and the symptom is a hit-rate collapse and a database load spike with no change in user traffic to explain it.\n\nThe defences are all about admission rather than eviction: segmented LRU, where new entries enter a small probationary segment and are only promoted to the protected segment on a *second* access (a scan never gets a second access, so it never displaces the protected set); an admission filter that rejects an entry unless it is estimated to be more valuable than what it would evict, which is the core idea of TinyLFU; or simply routing scan-shaped workloads to a separate cache pool or to a read replica so they never touch the hot pool at all. The last one is the least clever and frequently the right answer."
+    },
+    {
+      "key": "stampede",
+      "title": "9. Failure mode 1: stampede (thundering herd)",
+      "content": "**The mechanism.** One key is very hot — a homepage feed, a feature-flag blob, a top-sellers list — serving 50,000 requests/s entirely from cache. Its TTL expires. The next request misses and goes to the database. So does the next, and the next, because the first one has not finished yet and so has not repopulated the cache. If the backing query takes 200 ms, roughly 10,000 requests pile into that window, and all of them execute the same expensive query simultaneously.\n\nThis is the cache **amplifying** load rather than absorbing it, and it is a step change: the database goes from ~0 queries for that key to 10,000 concurrent ones in the same millisecond. Connection pools exhaust, the query slows under contention, which widens the window, which admits more requests. It is self-reinforcing, and the usual outcome is that the database falls over while the cache sits there empty and idle.\n\nThree defences, layered:\n\n**Single-flight (request coalescing).** Only one request per key is permitted to recompute it; the rest wait for its result. Locally this is a per-key map of in-flight futures — the second caller through finds a future and awaits it instead of issuing its own query. Cluster-wide it needs a distributed lock: `ADD lock:<key> <token> NX EX 10` against the cache itself, where exactly one caller wins the atomic set-if-absent. This is precisely why `ADD` had to be an atomic primitive back in step 5.\n\nThe waiters need a policy of their own. Blocking them all on the lock holder converts a load problem into a latency problem — and if the holder dies, they block until the lock's TTL expires. Serving the stale value while one worker refreshes is usually better: stale for 200 ms beats 10,000 queries, and beats a 10-second stall.\n\n**Jittered TTLs**, as in the previous step, so that a group of keys populated together does not expire together. This does not help a single hot key but prevents the far worse correlated version where thousands of keys expire in the same second.\n\n**Early / probabilistic refresh.** Rather than waiting for expiry, refresh a key *before* it expires, with probability rising as the expiry approaches. A common formulation recomputes when `now - delta × beta × ln(rand()) >= expiry`, where `delta` is how long the recompute takes: expensive keys start trying earlier. The effect is that hot keys are almost always refreshed by a single background request while the old value is still being served, so the miss window never opens. This is the strongest of the three because it removes the stampede rather than managing it, and it costs a small number of redundant refreshes on keys that would have expired unused."
+    },
+    {
+      "key": "penetration",
+      "title": "10. Failure mode 2: penetration (keys that do not exist)",
+      "content": "**The mechanism.** A cache only protects against repeated requests for things that *exist*. A request for a key with no value behind it misses the cache, queries the database, finds nothing, and stores nothing — so the *next* request for that same key does exactly the same thing. The cache is transparent to it.\n\nA crawler walking sequential product ids, a client with a bug generating malformed keys, or ordinary traffic for recently-deleted items all produce a stream of requests that bypass the cache entirely and land 100% on the database. At 5,000 such requests/s against a database sized for 9,500 misses, this is a meaningful and completely invisible load source — invisible because your hit-rate dashboard shows misses, which look like normal cache behaviour rather than like an unprotected path.\n\n**Negative caching** is the first and cheapest fix: when the database returns nothing, cache that fact. Store a distinguishable tombstone — not an empty string, which is ambiguous with a legitimately empty value — with a **short** TTL, 30 to 60 seconds. Short, because the entry might be created at any moment and you do not want to serve \"does not exist\" for an hour after it starts existing. The cost is memory spent on keys that are worthless by definition, which an adversarial or buggy client can inflate: negative entries need their own bounded memory budget so they cannot evict real data.\n\n**A bloom filter** handles the case negative caching cannot: a large, sparse, or actively hostile key space where the misses are mostly *distinct*, so caching each one individually just fills memory with singletons. Maintain a bloom filter of all keys that exist. Before touching the cache or the database, test it: the filter can say \"definitely not present\", which lets you return a miss in microseconds without any I/O at all.\n\nThe asymmetry is what makes it work. Bloom filters have **false positives but never false negatives** — a \"maybe present\" answer costs you one normal lookup, which you were going to do anyway, while a \"definitely absent\" answer is always correct. A filter for 500M keys at a 1% false-positive rate costs roughly 600 MB, which is under 0.06% of the 1.08 TB the cache already uses — an excellent trade. See [bloom-filter](/system-design/bloom-filter) for the sizing maths.\n\nThe operational catch, and the reason a bloom filter is not a free win: **a standard bloom filter cannot delete**. Clearing a bit might clear it for another key that hashes to the same position, producing a false negative — the one error class you cannot tolerate, because it means a key that exists is reported absent. So deletions force either a counting bloom filter (four times the memory) or periodic rebuilds from the source of truth, and during a rebuild you are running on a filter that is slightly stale. Budget for that rebuild before you commit to the design.\n\n**Rate limiting per client** belongs alongside both. Negative caching and bloom filters reduce the cost per bad request; they do not bound the number of them. See [rate-limiting](/system-design/rate-limiting)."
+    },
+    {
+      "key": "consistency",
+      "title": "11. Failure mode 3: the inconsistency window after a write",
+      "content": "The moment the same data exists in two places, they can disagree. A cache is a second copy by definition, so the only question is how long the disagreement lasts and what it can break.\n\n**Cache-aside (look-aside).** Reads check the cache, fall through to the database on a miss, and populate. Writes go to the database and then **delete** the cache entry.\n\nDelete rather than update, and the reason is specific: two concurrent writers that both update the cache can have their database writes commit in one order and their cache writes land in the other, leaving the cache holding the older value permanently — it is not stale for a TTL, it is stale until something else touches the key. Deleting is idempotent and order-independent; whoever reads next repopulates from the current database state.\n\nA narrower race survives even so. A reader misses, reads the database, and is descheduled before writing to the cache. A writer commits a new value and deletes the (absent) cache entry. The reader wakes and writes its now-stale value, which sits there for the full TTL. Mitigations: a short TTL to bound it, versioned values so a stale write can be detected and rejected, or delayed double-delete (invalidate again a few hundred milliseconds after the write). None is free, and the honest answer in an interview is to name the race and bound it with a TTL rather than claim it away.\n\n**Write-through.** Every write goes to the cache and the database synchronously. The cache is never stale, and every written key is immediately warm. The costs are real: write latency is now the sum of both systems rather than just the database, and you have made the cache part of the *write* path, so a cache failure now fails writes — you have converted a component whose loss was survivable into one whose loss is an outage. It also caches everything written regardless of whether anyone will read it, which is wasted memory in a write-heavy workload.\n\n**Write-behind (write-back).** Write to the cache, acknowledge, and flush to the database asynchronously. The fastest writes by a wide margin, and it can coalesce repeated updates to the same key into one database write — genuinely valuable for counters and view tallies.\n\n**And it risks losing data, which must be stated plainly.** Between the acknowledgement and the flush, the only copy of that write lives in the memory of a process with no durability guarantee. If the node dies in that window, the write is gone, and you already told the client it succeeded. This is the one configuration where a cache failure is not merely expensive — it is *wrong*, and it violates the \"a cache may be empty, never wrong\" principle from step 3. Write-behind is acceptable only for data whose loss you can genuinely tolerate: view counts, last-seen timestamps, analytics tallies. It is never acceptable for anything a user would notice missing, and it is disqualifying for money.\n\n**Bounding the window is the real deliverable.** You cannot eliminate inconsistency; you can make it short and known. A TTL is the hard ceiling on how wrong the cache can be, which is why every entry gets one even when explicit invalidation is in place — invalidation messages get lost, deploys miss a code path, and the TTL is what stops a missed invalidation from lasting forever."
+    },
+    {
+      "key": "replication",
+      "title": "12. Replication, and what a cache owes you",
+      "content": "Start from the principle that makes this tractable: **a cache is not a database, and losing it must be survivable.** No consensus protocol, no synchronous quorum writes, no write-ahead log on the hot path. Every one of those exists to guarantee that an acknowledged write is never lost, and a cache makes no such promise — the source of truth is elsewhere, by construction. Paying database costs for cache guarantees is the most common way a cache design goes wrong.\n\nThat principle has an edge, and finding it is the actual design decision here:\n\n**The real question is whether a node's death costs you a cold cache or a wrong answer.**\n\nA cold cache is a performance event. A slice of the keyspace misses, load moves to the database, and the cache refills. It is measurable, bounded, and recoverable. A wrong answer is a correctness event: the application acts on a value that is not true, and the damage can outlive the outage. The entire replication design follows from keeping every failure in the first category.\n\n**Sizing the cold-cache cost.** With 20 nodes and a consistent-hashing ring, losing one puts 5% of the keyspace on a neighbour that does not have it. Misses jump from 9,500/s to 19,000/s — **double the database load, from one machine** — and stay elevated until the affected range refills. If the database has that headroom, no replication is needed and you should say so rather than adding it reflexively. If it does not, you need replicas, and the driver is the backing store's capacity, not a general preference for redundancy.\n\n**Replication, when you need it.** Each ring range has a primary and one asynchronous replica placed on a different failure domain — a different rack or availability zone, since a rack-level loss that takes both copies makes the replica decorative. Async, always: a synchronous replica would put a second network round trip on the write path of a system whose entire value is sub-millisecond response, and buy durability nobody asked for.\n\nThe price of async is a real and specific hazard. **Reading from replicas can serve values that are older than the primary's**, because replication lag means an invalidation may not have arrived. A `DELETE` applied to the primary and not yet to the replica means a read routed to that replica returns data you explicitly deleted. That is a wrong answer, from the category you were trying to stay out of. So: route reads to the primary by default and use replicas only for failover, *or* accept replica reads deliberately for keys where lag-scale staleness is provably harmless. Do not let it happen by accident through a load balancer that spreads reads for throughput.\n\n**Hot keys need a different answer entirely.** One key at 50,000 requests/s saturates a single node no matter how many replicas the range has, because every request for that key routes to the same place. Replication helps only if reads are allowed to spread. The alternatives: replicate the key to *every* node under a suffixed name and have clients pick one at random, or push it into a small in-process cache in each application instance with a very short TTL so most requests never leave the process. Both trade a bounded window of inconsistency for removing the hotspot, which for a genuinely hot key is almost always the right trade.\n\n**A cold start needs a plan.** When a node is replaced, it comes up empty and immediately receives its full share of traffic, all of which misses. Ramp it in gradually rather than adding its tokens to the ring all at once, or warm it from its replica before it takes traffic. \"We restarted the cache tier and the database fell over\" is a common incident with an easy fix that is only easy if you thought of it first."
+    },
+    {
+      "key": "memory",
+      "title": "13. Memory is the real constraint",
+      "content": "CPU is not the limit here — 30,000 ops/s per node is unremarkable. Network is not the limit at 19 MB/s per node. **Memory is the limit**, it is the expensive resource, and almost every meaningful decision in this design is really a memory decision.\n\n**Per-key overhead is not rounding error.** Eighty bytes of bookkeeping is 3.7% of a 2 KB value and 65% of a 64-byte one. A cache of small values needs roughly three times what `count × value_size` suggests, and this is where estimates are most often wrong by a factor that matters. The mitigations are worth knowing: pack many small values into one entry (hash-field encodings, or one entry per user rather than one per user attribute), or compress values above a size threshold — LZ4 typically gets 2-4x on JSON for a few microseconds of CPU, which is an excellent trade when memory is the binding constraint and CPU is idle.\n\n**An eviction policy is mandatory, not optional**, and the reason is blunt. A cache with no eviction policy does not gracefully stop caching when it fills. It either starts refusing writes — so new data is never cached and the hit rate decays toward zero as the working set moves on — or it keeps allocating until the OS intervenes. On a machine with swap, the process begins paging, and an in-memory cache reading from disk is slower than the database it was placed in front of; the system is now worse than if the cache did not exist. On a machine without swap, the OOM killer takes the process, and the entire node's keyspace vanishes at once. Both outcomes are worse than evicting something. **Set a `maxmemory` limit below the machine's physical memory, with an explicit policy, before the first byte is cached** — the default of \"no limit, no policy\" is a production incident waiting for enough traffic.\n\n**When the working set exceeds memory, the cache does not degrade gracefully — it collapses.** This is worth understanding precisely because the failure is non-linear.\n\nWhile the working set fits, hit rate is high and eviction is rare. As the working set passes capacity, entries start being evicted before they are re-read. Each eviction of a still-wanted entry causes a future miss, which causes a fetch, which causes an insert, which causes another eviction. The cache spends its time cycling data through memory rather than serving it — **thrashing** — and the hit rate does not decline smoothly from 95% toward 80%. It falls off a cliff, because the marginal entry being evicted is now one that *would* have been hit.\n\nThe database load moves inversely and just as sharply: 95% → 80% hit rate takes misses from 9,500/s to 38,000/s, a **fourfold increase from a 15-point drop**. That is usually enough to take down a backing store sized for the healthy case, which means an under-provisioned cache does not merely fail to help — it becomes the cause of an outage.\n\n**So instrument the leading indicators, not the lagging one.** Hit rate is what you notice after the problem; **eviction rate and average entry lifetime** are what move first. If entries are being evicted after 30 seconds when your TTL is an hour, the working set already exceeds memory and you are on the edge of the cliff, regardless of what the hit rate currently says. Alert on that, add nodes, and never let this system discover its capacity limit under production traffic."
+    },
+    {
+      "key": "failure",
+      "title": "14. Scaling and failure handling",
+      "content": "**Scaling** is memory-driven, and the mechanics are in the ring. Adding a node inserts its ~150 tokens and moves ~1/N of keys; those keys arrive cold on the new node, so stream them from the previous owner or ramp the tokens in gradually rather than all at once. Removing a node is the reverse — drain by migrating its ranges to successors before shutting it down, so the loss is planned and warm instead of sudden and cold.\n\n**Failure handling**, by component:\n\n- **One cache node dies**: 5% of the keyspace goes cold and database misses double. Survivable if the database has headroom. The client must detect the dead node quickly (health checks and short connect timeouts) and route to the successor, because a client that waits on a TCP timeout for every key in that range has turned a partial cold slice into a latency outage across all requests.\n- **The whole cache tier is unavailable**: this is the case to design for explicitly. Every request now goes to the database, which is sized for 5% of them. Without protection the database dies and recovery is impossible, because when the cache comes back it is empty and the miss storm continues. The defences are a **circuit breaker** in front of the database plus load shedding — serve degraded responses, or errors, to a fraction of traffic in order to keep the database alive. It is better to fail 50% of requests and recover in minutes than to fail 100% of them for an hour. See [circuit-breaker](/system-design/circuit-breaker).\n- **A node is slow rather than dead**: worse than a clean failure, because health checks pass while every request to it takes 500 ms. Aggressive per-request timeouts (a few milliseconds — the whole point is that the cache is fast) and treating a timeout as a miss. Falling through to the database on a slow cache is almost always right.\n- **Network partition splitting the cluster**: clients on each side see a different subset of nodes and route accordingly, so the same key can be written on both sides with different values. For a cache this is tolerable in a way it never would be for a database: entries are TTL-bounded and the source of truth is elsewhere, so the divergence self-heals. This is exactly the asymmetry from step 3 — the cache is allowed to be empty or briefly divergent, never authoritative.\n- **A deploy changes a serialized value's shape**: old entries deserialize into garbage or throw. Prefix keys with a schema version so old entries become unreachable and age out naturally, rather than flushing the cache on every deploy and eating a miss storm each time.\n- **Cold start after a cluster-wide restart**: everything misses at once. Never restart the whole tier together; roll it, warm from replicas, or ramp tokens in."
+    },
+    {
+      "key": "final",
+      "title": "15. Final architecture and the argument for it",
+      "content": "Application (with single-flight per key and a bloom filter for existence checks) → ring-aware client or proxy tier → ~20 cache nodes, each with a hash map plus doubly-linked list running approximate LRU under a hard `maxmemory` limit, placed on a consistent-hashing ring with ~150 virtual nodes each, with an async replica per range on a separate failure domain → database behind a circuit breaker.\n\nThe argument, in the order you would make it:\n\n1. **Placement is chosen first**, because `hash % N` makes adding capacity an outage: one new node remaps 95% of keys and multiplies database load nineteenfold at the exact moment you were trying to grow. The ring with virtual nodes moves 1/N and distributes evenly.\n2. **Eviction is mandatory**, because a full cache with no policy either stops caching or gets OOM-killed, and both are worse than evicting. LRU is O(1) via hash map plus doubly-linked list; LFU is better for stable skewed popularity; TTL bounds staleness rather than memory. And LRU is genuinely wrong for scans — one analytics pass evicts everything useful, so admission control or a separate pool is required.\n3. **The three failure modes each have a named fix**: stampede → single-flight, jittered TTLs, early refresh; penetration → negative caching and a bloom filter; the post-write inconsistency window → cache-aside with delete-not-update, bounded by a TTL, with write-behind rejected for anything whose loss would be noticed.\n4. **Replication is sized by the backing store's headroom**, not by a general taste for redundancy, and the governing rule is that a node's death must cost a cold cache and never a wrong answer.\n5. **Memory is the binding constraint throughout**: per-key overhead can be the majority of a small entry, and exceeding the working set collapses the hit rate non-linearly rather than degrading it, which is why eviction rate — not hit rate — is the metric to alert on."
+    }
+  ],
+  "estimation": {
+    "assumptions": [
+      "200,000 cache operations/s at average load, 95% reads",
+      "500M distinct keys in the working set",
+      "~40-byte keys, ~2 KB average value",
+      "~80 bytes of per-entry overhead (hash slot, two LRU pointers, TTL, size, flags)",
+      "95% target hit rate; 64 GB of usable data memory per node",
+      "3x peak factor"
+    ],
+    "calculations": [
+      {
+        "label": "Reads/s (average)",
+        "value": "~190,000/s",
+        "working": "95% × 200,000 — the other 10,000/s are writes"
+      },
+      {
+        "label": "Operations/s (peak)",
+        "value": "~600,000/s",
+        "working": "200,000 × 3"
+      },
+      {
+        "label": "Memory for the full working set",
+        "value": "~1.08 TB",
+        "working": "500M × (40 B key + 2,048 B value + 80 B overhead) = 500M × 2,168 B"
+      },
+      {
+        "label": "Cache nodes required",
+        "value": "~17, provision 20",
+        "working": "1,084 GB / 64 GB = 16.9 — sized by memory, not CPU"
+      },
+      {
+        "label": "Ops/s per node at peak",
+        "value": "~30,000/s",
+        "working": "600,000 / 20 — comfortable for an in-memory store"
+      },
+      {
+        "label": "Overhead share on a small value",
+        "value": "~65%",
+        "working": "64 B value + 40 B key + 80 B overhead = 184 B; 120/184 is not your data"
+      },
+      {
+        "label": "Database misses at 95% vs 90% hit rate",
+        "value": "9,500/s vs 19,000/s",
+        "working": "5% × 190,000 vs 10% × 190,000 — five points of hit rate doubles database load"
+      },
+      {
+        "label": "Aggregate read bandwidth at peak reads",
+        "value": "~3.1 Gbps",
+        "working": "190,000 × 2,048 B = 389 MB/s ≈ 19 MB/s per node"
+      },
+      {
+        "label": "Keys remapped by adding one node (20 → 21)",
+        "value": "95% with modulo, ~5% with a ring",
+        "working": "hash % N keeps only ~1/21; the ring moves only the new node's ~1/21 share"
+      }
+    ]
+  },
+  "api": [
+    {
+      "method": "GET",
+      "path": "GET <key>",
+      "request": "key: up to 250 bytes of opaque string",
+      "response": "HIT: value bytes + flags + remaining TTL | MISS: not-found marker",
+      "notes": "The hot path. Sub-millisecond p99 server-side. The client must distinguish a genuine miss from a timeout or a connection error — a timeout should be treated as a miss and fall through, never retried inline against a node that is already slow."
+    },
+    {
+      "method": "GET",
+      "path": "MGET <key1> <key2> … <keyN>",
+      "request": "up to a few hundred keys",
+      "response": "a value or a miss marker per key, in request order",
+      "notes": "Not a convenience. Fifty sequential gets at 0.5 ms RTT cost 25 ms and make the cache slower than one database query. The client scatters to the nodes owning each key in parallel and gathers, so the cost is one round trip plus the slowest node."
+    },
+    {
+      "method": "POST",
+      "path": "SET <key> <value> [ttl]",
+      "request": "value bytes, optional TTL in seconds",
+      "response": "STORED, or an out-of-memory signal if no entry could be evicted",
+      "notes": "Always pass a TTL, with jitter — ttl + random(0, 0.1 × ttl) — so keys populated together do not expire together. The TTL is the hard ceiling on how long a missed invalidation can go unnoticed."
+    },
+    {
+      "method": "POST",
+      "path": "ADD <key> <value> <ttl>",
+      "request": "value bytes, TTL in seconds",
+      "response": "STORED if the key was absent, NOT_STORED if it already existed",
+      "notes": "Atomic set-if-absent. This is the primitive single-flight locks are built on: exactly one caller wins, so exactly one recomputes a hot key. Without it every stampede defence is a race."
+    },
+    {
+      "method": "DELETE",
+      "path": "DELETE <key>",
+      "request": "—",
+      "response": "DELETED or NOT_FOUND",
+      "notes": "The invalidation primitive for cache-aside. Delete rather than update on a write: deletion is idempotent and order-independent, whereas two concurrent updates can land in the opposite order to their database commits and leave the cache permanently stale."
+    },
+    {
+      "method": "GET",
+      "path": "STATS",
+      "request": "—",
+      "response": "hits, misses, evictions, expired, bytes used, entry count, average entry lifetime",
+      "notes": "Eviction rate and average entry lifetime are the leading indicators; hit rate is the lagging one. Entries dying in 30 seconds under an hour-long TTL means the working set already exceeds memory, whatever the hit rate currently reads."
+    }
+  ],
+  "dataModel": [
+    {
+      "name": "cache_entry (in memory, per node)",
+      "fields": [
+        {
+          "name": "key",
+          "type": "bytes (≤250)",
+          "notes": "~40 B typical; include a schema version prefix so a deploy ages old shapes out"
+        },
+        {
+          "name": "value",
+          "type": "opaque bytes",
+          "notes": "~2 KB typical; the cache never parses it"
+        },
+        {
+          "name": "expires_at",
+          "type": "uint32 (unix seconds)",
+          "notes": "checked lazily on read plus sampled in the background — never scanned"
+        },
+        {
+          "name": "last_accessed",
+          "type": "uint32",
+          "notes": "for sampled/approximate LRU; strict LRU uses list position instead"
+        },
+        {
+          "name": "size",
+          "type": "uint32",
+          "notes": "for the memory accounting that drives eviction"
+        },
+        {
+          "name": "prev / next",
+          "type": "pointers",
+          "notes": "the doubly-linked LRU list threaded through the entry — the reason unlink is O(1)"
+        }
+      ],
+      "indexes": [
+        "Hash map key → entry: O(1) lookup, power-of-two sized, resized incrementally so a rehash never stalls the node",
+        "Doubly-linked list over the same entries in recency order: head is newest, tail is the eviction candidate",
+        "~80 bytes of the above is overhead — 3.7% of a 2 KB value, ~65% of a 64-byte one"
+      ]
+    },
+    {
+      "name": "ring (cluster topology)",
+      "fields": [
+        {
+          "name": "token",
+          "type": "uint64",
+          "notes": "a position on the hash circle; sorted array, located by binary search"
+        },
+        {
+          "name": "node_id",
+          "type": "string",
+          "notes": "the physical node owning this token"
+        },
+        {
+          "name": "vnode_count",
+          "type": "int",
+          "notes": "~150 per physical node; more tokens for a machine with more memory"
+        },
+        {
+          "name": "replica_of",
+          "type": "range id",
+          "notes": "the successor holding the async replica, placed in a different failure domain"
+        },
+        {
+          "name": "version",
+          "type": "int",
+          "notes": "bumped on membership change; clients on an old version route to stale owners"
+        }
+      ],
+      "indexes": [
+        "Sorted by token: a key's owner is the first token clockwise from hash(key)",
+        "20 nodes × 150 tokens = 3,000 points, which flattens load imbalance to a few percent",
+        "Held by every client (one hop, must propagate) or by a proxy tier (two hops, one place to update)"
+      ]
+    },
+    {
+      "name": "existence filter (bloom)",
+      "fields": [
+        {
+          "name": "bit_array",
+          "type": "bitset",
+          "notes": "~600 MB for 500M keys at a 1% false-positive rate — under 0.06% of the cache's own memory"
+        },
+        {
+          "name": "hash_count",
+          "type": "int",
+          "notes": "k ≈ 7 for that rate"
+        },
+        {
+          "name": "generation",
+          "type": "int",
+          "notes": "rebuilt periodically from the source of truth, because a standard bloom filter cannot delete"
+        }
+      ],
+      "indexes": [
+        "False positives are harmless (one wasted normal lookup); false negatives would be fatal, and a plain bloom filter has none",
+        "Deletions force a counting variant (4x memory) or a rebuild — budget for the rebuild before committing to this"
+      ]
+    }
+  ],
+  "evolution": [
+    {
+      "stage": "Stage 1 — one app server",
+      "problem": "Nothing is wrong. A hash map with an LRU list inside the application process, holding a few hundred megabytes.",
+      "change": "An in-process LRU cache in the application, with the database directly behind it.",
+      "why": "There is no network hop, no serialization, no separate system to operate, and lookups are nanoseconds rather than the hundreds of microseconds a network cache costs. For a single process this is strictly better than anything distributed, and reaching for a cache cluster here would be adding an operational dependency to solve a problem that does not exist yet.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "client",
+            "label": "Clients",
+            "type": "client",
+            "x": 80,
+            "y": 300
+          },
+          {
+            "id": "app",
+            "label": "App server",
+            "type": "server",
+            "x": 340,
+            "y": 300
+          },
+          {
+            "id": "lru",
+            "label": "In-process LRU",
+            "type": "cache",
+            "x": 600,
+            "y": 160,
+            "note": "Lives inside the process: no network hop, no serialization — and one independent copy per process."
+          },
+          {
+            "id": "db",
+            "label": "Database",
+            "type": "db",
+            "x": 600,
+            "y": 440
+          }
+        ],
+        "edges": [
+          {
+            "from": "client",
+            "to": "app"
+          },
+          {
+            "from": "app",
+            "to": "lru"
+          },
+          {
+            "from": "app",
+            "to": "db",
+            "label": "miss",
+            "dashed": true
+          }
+        ]
+      }
+    },
+    {
+      "stage": "Stage 2 — six app servers",
+      "problem": "Scaling out to six instances broke the cache in two ways. Each process kept its own copy, so each saw only a sixth of the traffic and warmed independently — the per-server hit rate fell from 92% to around 45% and database read load went up rather than down. Worse, a pricing record updated through one instance stayed stale on the other five for the full TTL, and a customer was shown two different prices on consecutive page loads.",
+      "change": "Move to a single shared remote cache node that all app servers talk to.",
+      "why": "One copy means one warm set — every server benefits from every other server's misses, so the hit rate returns to the low nineties. It also gives a single invalidation point: deleting a key once removes it for everybody, which is what makes the stale-price bug fixable at all. The cost is a real one to name: a network hop of a few hundred microseconds per lookup, and a new component whose failure is now everybody's failure.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "client",
+            "label": "Clients",
+            "type": "client",
+            "x": 70,
+            "y": 300
+          },
+          {
+            "id": "lb",
+            "label": "Load balancer",
+            "type": "lb",
+            "x": 330,
+            "y": 300
+          },
+          {
+            "id": "app1",
+            "label": "App servers 1–3",
+            "type": "server",
+            "x": 590,
+            "y": 150
+          },
+          {
+            "id": "app2",
+            "label": "App servers 4–6",
+            "type": "server",
+            "x": 590,
+            "y": 450
+          },
+          {
+            "id": "cache",
+            "label": "Shared cache node",
+            "type": "cache",
+            "x": 850,
+            "y": 150,
+            "why": {
+              "without": "Six independent in-process caches each see a sixth of the traffic, so each warms separately and the hit rate collapses — and an invalidation on one server leaves five others serving the old value until their TTLs expire.",
+              "with": "One copy of the data and one invalidation point. Every server benefits from every other server's misses, and a delete removes the entry for everybody at once.",
+              "conclusion": "You pay a few hundred microseconds of network per lookup and gain a shared warm set plus correct invalidation — and you have created a component whose failure is now everyone's."
+            }
+          },
+          {
+            "id": "db",
+            "label": "Database",
+            "type": "db",
+            "x": 850,
+            "y": 450
+          }
+        ],
+        "edges": [
+          {
+            "from": "client",
+            "to": "lb"
+          },
+          {
+            "from": "lb",
+            "to": "app1"
+          },
+          {
+            "from": "lb",
+            "to": "app2"
+          },
+          {
+            "from": "app1",
+            "to": "cache"
+          },
+          {
+            "from": "app2",
+            "to": "cache"
+          },
+          {
+            "from": "app1",
+            "to": "db",
+            "label": "miss",
+            "dashed": true
+          },
+          {
+            "from": "app2",
+            "to": "db",
+            "label": "miss",
+            "dashed": true
+          }
+        ]
+      }
+    },
+    {
+      "stage": "Stage 3 — the working set outgrew one node",
+      "problem": "The single cache node hit its 64 GB ceiling. Eviction ran continuously, entries were being discarded roughly 40 seconds after insertion against a one-hour TTL, and the hit rate fell from 93% to 71% — which quadrupled database read load with no change in user traffic to explain it. The cache had started thrashing: cycling data through memory rather than serving it.",
+      "change": "Shard across four nodes, with the client choosing a node by hash(key) % 4.",
+      "why": "Memory is the binding constraint, and sharding is what makes it additive — four nodes hold four times the working set, and the eviction rate drops back to near zero. Modulo placement is the obvious function: stateless, O(1), no coordination, and it distributes keys evenly. It is also, as the next stage discovers, the most dangerous line in the design.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "client",
+            "label": "Clients",
+            "type": "client",
+            "x": 70,
+            "y": 300
+          },
+          {
+            "id": "app",
+            "label": "App servers",
+            "type": "server",
+            "x": 330,
+            "y": 300,
+            "note": "Computes hash(key) % 4 client-side and connects directly to the chosen node."
+          },
+          {
+            "id": "n0",
+            "label": "Cache node 0",
+            "type": "cache",
+            "x": 590,
+            "y": 100,
+            "why": {
+              "without": "One node at its memory ceiling evicts entries 40 seconds into an hour-long TTL. The hit rate does not decline gently — it falls off a cliff, because the entry being evicted is now one that would have been hit.",
+              "with": "Four nodes make capacity additive: the working set fits, eviction returns to near zero and the hit rate recovers.",
+              "conclusion": "Sharding solved the memory ceiling and introduced a placement function — and the placement function is now load-bearing in a way modulo cannot support."
+            }
+          },
+          {
+            "id": "n1",
+            "label": "Cache node 1",
+            "type": "cache",
+            "x": 590,
+            "y": 230
+          },
+          {
+            "id": "n2",
+            "label": "Cache node 2",
+            "type": "cache",
+            "x": 590,
+            "y": 360
+          },
+          {
+            "id": "n3",
+            "label": "Cache node 3",
+            "type": "cache",
+            "x": 590,
+            "y": 490
+          },
+          {
+            "id": "db",
+            "label": "Database",
+            "type": "db",
+            "x": 850,
+            "y": 295
+          }
+        ],
+        "edges": [
+          {
+            "from": "client",
+            "to": "app"
+          },
+          {
+            "from": "app",
+            "to": "n0",
+            "label": "hash(key) % 4"
+          },
+          {
+            "from": "app",
+            "to": "n1"
+          },
+          {
+            "from": "app",
+            "to": "n2"
+          },
+          {
+            "from": "app",
+            "to": "n3"
+          },
+          {
+            "from": "app",
+            "to": "db",
+            "label": "miss",
+            "dashed": true
+          }
+        ]
+      }
+    },
+    {
+      "stage": "Stage 4 — adding capacity caused the outage",
+      "problem": "A fifth node was added to get ahead of growth. The modulus changed from 4 to 5, so a key kept its home only when hash % 4 equalled hash % 5 — about one key in five. Roughly 80% of the cache became unreachable in an instant: every lookup for those keys missed, database read load jumped from a few thousand per second to tens of thousands, connection pools saturated and the site was down for 11 minutes. The operation intended to add capacity is what removed it.",
+      "change": "Replace modulo placement with a consistent-hashing ring, each physical node placed at ~150 virtual node tokens.",
+      "why": "On a ring, a node owns the keys between its token and its predecessor's. Adding a node inserts tokens and takes over only the ranges immediately behind them — about 1/N of keys move, not 1 − 1/N. Going from 4 nodes to 5 moves ~20% instead of ~80%; at 20 nodes it is ~5% instead of ~95%. Virtual nodes are not decoration: with one token each, the gaps between four randomly placed points differ by multiples, so one node holds several times the data of another and, being the most pressured, has the worst hit rate in the cluster. 150 tokens each flattens that to a few percent and lets a larger machine take proportionally more tokens.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "client",
+            "label": "Clients",
+            "type": "client",
+            "x": 70,
+            "y": 300
+          },
+          {
+            "id": "router",
+            "label": "Ring-aware client",
+            "type": "proxy",
+            "x": 330,
+            "y": 300,
+            "why": {
+              "without": "hash(key) % N ties every key's location to the cluster size, so changing the size relocates almost everything. Adding one node to four moves ~80% of keys; to twenty, ~95%. The cache empties precisely when you are adding capacity, and a single node failure does the same thing.",
+              "with": "A hash ring with ~150 virtual nodes per machine. A key belongs to the first token clockwise, so a new node takes over only the ranges behind its own tokens — about 1/N of keys.",
+              "conclusion": "Scaling becomes a routine operation instead of an outage, and the virtual nodes are what stop random token placement from leaving one machine with several times its share."
+            }
+          },
+          {
+            "id": "n0",
+            "label": "Node 0 (~150 vnodes)",
+            "type": "cache",
+            "x": 590,
+            "y": 100
+          },
+          {
+            "id": "n1",
+            "label": "Node 1 (~150 vnodes)",
+            "type": "cache",
+            "x": 590,
+            "y": 230
+          },
+          {
+            "id": "n2",
+            "label": "Node 2 (~150 vnodes)",
+            "type": "cache",
+            "x": 590,
+            "y": 360
+          },
+          {
+            "id": "n3",
+            "label": "Node 3 (~150 vnodes)",
+            "type": "cache",
+            "x": 590,
+            "y": 490
+          },
+          {
+            "id": "n4",
+            "label": "Node 4 (added)",
+            "type": "cache",
+            "x": 850,
+            "y": 230,
+            "note": "Inserting its tokens moves only the ranges immediately behind them — ~20% of keys at five nodes, not ~80%."
+          }
+        ],
+        "edges": [
+          {
+            "from": "client",
+            "to": "router"
+          },
+          {
+            "from": "router",
+            "to": "n0"
+          },
+          {
+            "from": "router",
+            "to": "n1"
+          },
+          {
+            "from": "router",
+            "to": "n2"
+          },
+          {
+            "from": "router",
+            "to": "n3"
+          },
+          {
+            "from": "router",
+            "to": "n4",
+            "label": "~1/N of keys move",
+            "dashed": true
+          }
+        ]
+      }
+    },
+    {
+      "stage": "Stage 5 — 20 nodes, 190,000 reads/s",
+      "problem": "Three incidents in one quarter, none of which placement or eviction could have prevented. The homepage feed key expired at peak and roughly 10,000 requests missed inside the 200 ms it took to rebuild, all issuing the same query at once and exhausting the database's connection pool. Separately, a crawler walking sequential product ids generated a steady 5,000 requests/s for keys that do not exist, every one passing straight through the cache to the database — invisible on the hit-rate dashboard because misses look like normal behaviour. And a routine kernel patch on node 3 took its 5% of the keyspace cold at peak, doubling database misses for 90 seconds.",
+      "change": "Add single-flight per key with jittered TTLs and probabilistic early refresh; add negative caching plus a bloom filter for existence checks; add one async replica per ring range on a separate failure domain, and put a circuit breaker in front of the database.",
+      "why": "Each incident is a named failure mode with a specific fix. A stampede is the cache amplifying load rather than absorbing it, so one request rebuilds while the rest wait or take the stale value — and early refresh removes the miss window altogether. Penetration bypasses the cache entirely, so absence itself must be cached, with a bloom filter for the sparse hostile case where caching each miss individually would just fill memory with singletons. The cold slice is the design decision this system turns on: a node's death must cost a cold cache, never a wrong answer — which is exactly why the replica is async and used for failover rather than for spreading reads, since a replica that has not yet applied an invalidation would serve data you explicitly deleted.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "client",
+            "label": "Clients",
+            "type": "client",
+            "x": 70,
+            "y": 300
+          },
+          {
+            "id": "app",
+            "label": "App + single-flight",
+            "type": "server",
+            "x": 330,
+            "y": 300,
+            "note": "One in-flight rebuild per key, won via atomic ADD. Waiters take the stale value rather than blocking."
+          },
+          {
+            "id": "bloom",
+            "label": "Bloom filter",
+            "type": "cache",
+            "x": 330,
+            "y": 500,
+            "why": {
+              "without": "Requests for keys that do not exist miss the cache and hit the database every single time — the cache is transparent to them, and the load is invisible because misses look like ordinary cache behaviour.",
+              "with": "A filter over the keys that exist answers 'definitely absent' in microseconds with no I/O, backed by short-TTL negative entries for the ones that slip through.",
+              "conclusion": "False positives cost one normal lookup; false negatives cannot occur. The catch is deletion — a plain filter cannot remove a key, so budget for periodic rebuilds."
+            }
+          },
+          {
+            "id": "p1",
+            "label": "Shard A primary",
+            "type": "cache",
+            "x": 590,
+            "y": 110
+          },
+          {
+            "id": "rep1",
+            "label": "Shard A replica",
+            "type": "replica",
+            "x": 850,
+            "y": 110,
+            "note": "Async, different failure domain. Failover only — reading from it could serve an entry whose invalidation has not arrived."
+          },
+          {
+            "id": "p2",
+            "label": "Shard B primary",
+            "type": "cache",
+            "x": 590,
+            "y": 300
+          },
+          {
+            "id": "rep2",
+            "label": "Shard B replica",
+            "type": "replica",
+            "x": 850,
+            "y": 300
+          },
+          {
+            "id": "db",
+            "label": "Database\\n(behind a breaker)",
+            "type": "db",
+            "x": 590,
+            "y": 500
+          }
+        ],
+        "edges": [
+          {
+            "from": "client",
+            "to": "app"
+          },
+          {
+            "from": "app",
+            "to": "bloom",
+            "label": "exists?",
+            "dashed": true
+          },
+          {
+            "from": "app",
+            "to": "p1"
+          },
+          {
+            "from": "app",
+            "to": "p2"
+          },
+          {
+            "from": "p1",
+            "to": "rep1",
+            "label": "async"
+          },
+          {
+            "from": "p2",
+            "to": "rep2",
+            "label": "async"
+          },
+          {
+            "from": "app",
+            "to": "db",
+            "label": "single-flight miss",
+            "dashed": true
+          }
+        ]
+      }
+    }
+  ],
+  "tradeoffs": [
+    {
+      "option": "Consistent hashing ring with virtual nodes",
+      "pros": [
+        "Adding or removing a node moves only ~1/N of keys instead of nearly all of them, so scaling is routine rather than an outage",
+        "A node failure costs exactly that node's share of the keyspace, which makes the blast radius predictable and sizeable in advance",
+        "Virtual nodes flatten load imbalance to a few percent and let heterogeneous machines take proportional shares"
+      ],
+      "cons": [
+        "The ring is shared state that must be versioned and propagated; clients on a stale ring route to the wrong owner and miss",
+        "Lookup is a binary search over a few thousand tokens rather than one modulo, and the token table costs memory in every client",
+        "Range ownership changes mean key migration logic you would not otherwise have to write or test"
+      ]
+    },
+    {
+      "option": "hash(key) % N placement",
+      "pros": [
+        "Trivially simple, stateless, O(1), with no topology to distribute or keep in sync",
+        "Perfectly even distribution with no virtual-node machinery",
+        "Nothing to get wrong as long as N never changes"
+      ],
+      "cons": [
+        "Changing N remaps almost every key — 4→5 moves ~80%, 20→21 moves ~95% — so the cache empties at the exact moment you add capacity",
+        "The same applies to a node failing, turning a 5% cold slice into a full cache flush and a nineteenfold database load spike",
+        "Makes cluster size effectively immutable in practice, which is not a property you can live with"
+      ]
+    },
+    {
+      "option": "LRU eviction",
+      "pros": [
+        "O(1) with a hash map plus a doubly-linked list, and the constant factor is tiny",
+        "Adapts immediately when the popular set changes — a newly hot key survives from its first access",
+        "Simple enough to reason about during an incident, which matters more than it sounds"
+      ],
+      "cons": [
+        "Catastrophically wrong for scans: one sequential pass over a large dataset promotes every key it touches and evicts the entire genuinely hot working set",
+        "One access counts the same as a thousand, so a burst of one-off traffic displaces consistently popular entries",
+        "Strict LRU takes a write lock on the list on every read, so a read-mostly structure becomes contended and must be approximated"
+      ]
+    },
+    {
+      "option": "LFU eviction",
+      "pros": [
+        "Keeps consistently popular entries resident when one-off traffic passes through, because a single access cannot outrank a thousand",
+        "Substantially better hit rates where popularity is stable and heavily skewed",
+        "Naturally scan-resistant: scanned keys never accumulate enough frequency to be admitted"
+      ],
+      "cons": [
+        "Cache pollution — a key that was hot last month keeps a large count and resists eviction long after anyone wants it, unless counts are decayed",
+        "Slow to adapt: a newly popular key must out-count established ones before it is protected",
+        "Frequency counters cost memory per entry and work per access, on top of the recency structure"
+      ]
+    },
+    {
+      "option": "Cache-aside (look-aside) with delete-on-write",
+      "pros": [
+        "Only requested data is cached, so memory holds the read working set rather than everything written",
+        "A cache outage degrades to slower reads rather than failed writes — the loss is survivable, which is the property a cache should have",
+        "Deletion is idempotent and order-independent, so concurrent writers cannot leave the cache permanently stale"
+      ],
+      "cons": [
+        "Every miss pays database latency plus a populate, and a cold start means every request pays it at once",
+        "A narrow read-then-write race survives: a reader can populate a stale value after a writer's delete, and it sits there for the full TTL",
+        "Cache logic is spread through application code, so one path that forgets to invalidate becomes a stale-data bug nobody can find"
+      ]
+    },
+    {
+      "option": "Write-through",
+      "pros": [
+        "The cache is never stale with respect to the database, which removes the invalidation race entirely",
+        "Every written key is immediately warm, so a read-after-write always hits",
+        "Caching policy lives in one place instead of being scattered across call sites"
+      ],
+      "cons": [
+        "Write latency becomes cache plus database instead of database alone",
+        "The cache is now on the write path, so its failure fails writes — you have converted a survivable loss into an outage",
+        "Caches everything written whether or not it will ever be read, wasting memory in write-heavy workloads"
+      ]
+    },
+    {
+      "option": "Write-behind (write-back)",
+      "pros": [
+        "By far the lowest write latency — the client is acknowledged as soon as memory is updated",
+        "Coalesces repeated updates to the same key into a single database write, which is a large win for counters and tallies",
+        "Absorbs write bursts that would otherwise overwhelm the backing store"
+      ],
+      "cons": [
+        "Acknowledged writes live only in a process with no durability guarantee — a node death between ack and flush loses data you already reported as successful",
+        "This makes the cache authoritative for a window, violating the rule that a cache may be empty but never wrong",
+        "Recovery after a crash is genuinely ambiguous: you cannot tell which acknowledged writes reached the database",
+        "Disqualifying for anything a user would notice missing, and not defensible for money"
+      ]
+    }
+  ],
+  "interviewStages": [
+    {
+      "key": "requirements",
+      "prompt": "Design a distributed cache. What do you establish before drawing anything?",
+      "hints": [
+        "One clarifying question shapes the design more than any other",
+        "Think about what the backing store does if the cache disappears entirely"
+      ],
+      "modelAnswer": [
+        "How stale may data be? 'Seconds' gives TTLs and cache-aside; 'never' means this is a replicated database, not a cache, and I should say so",
+        "Average value size, because it decides memory layout, network cost and whether per-entry overhead dominates",
+        "Look-aside or read-through — look-aside puts the policy in application code, read-through owns loading and therefore owns a failure mode",
+        "Must entries survive a restart? Almost always no, and that answer removes the write-ahead log, fsync and consensus from the design",
+        "Can the database absorb a full miss storm? If not, the cache is load-bearing and needs a circuit breaker behind it",
+        "State the governing asymmetry: the cache may be empty, and may never be wrong"
+      ]
+    },
+    {
+      "key": "estimation",
+      "prompt": "500M keys, 2 KB average value, 200,000 ops/s at 95% reads. Size the cluster.",
+      "hints": [
+        "A cached entry is more than its value — what else does the node have to store per key?",
+        "Work out what a 5-point drop in hit rate does to the database"
+      ],
+      "modelAnswer": [
+        "Per entry: 40 B key + 2,048 B value + ~80 B overhead (hash slot, two LRU pointers, TTL, size, flags) = 2,168 B",
+        "500M × 2,168 B ≈ 1.08 TB; at 64 GB usable per node that is ~17 nodes, provision 20",
+        "600,000 ops/s at peak ÷ 20 = 30,000/s per node — this cluster is sized by memory, not CPU, and I would say that explicitly",
+        "Flag the small-value case: on a 64 B value the overhead is ~65% of what you store, so a counter cache needs roughly 3x the naive estimate",
+        "Misses at 95% = 9,500/s; at 90% = 19,000/s. Five points of hit rate doubles database load, which is why memory sizing is a design decision"
+      ]
+    },
+    {
+      "key": "placement",
+      "prompt": "You have 20 cache nodes and you add a 21st. Walk me through what happens.",
+      "hints": [
+        "Start with hash(key) % N and work out how many keys keep their home",
+        "Then say what that does to the database using your miss numbers"
+      ],
+      "modelAnswer": [
+        "With modulo, a key stays only if hash % 20 == hash % 21 — about 1 in 21, so over 95% of keys relocate and every lookup for them misses",
+        "Misses go from 9,500/s to roughly 180,500/s instantly, which kills a database sized for the healthy case",
+        "Note the timing: the operation that caused the outage was adding capacity, which is why this survives design review — it looks like growth, not risk",
+        "The same arithmetic applies to a node failing: a 5% cold slice becomes a 95% flush",
+        "Consistent hashing fixes it — a key belongs to the first node clockwise on the ring, so a new node takes over only the ranges behind its tokens: ~1/21 ≈ 5%",
+        "Virtual nodes are required, not optional: with one token each, random placement leaves one node with several times its share, and the overloaded node evicts hardest and has the worst hit rate"
+      ]
+    },
+    {
+      "key": "eviction",
+      "prompt": "Implement LRU eviction in O(1), then tell me when LRU is the wrong choice.",
+      "hints": [
+        "Two data structures cooperating — which two, and why is the list doubly-linked?",
+        "Think about a nightly analytics job passing over the whole dataset"
+      ],
+      "modelAnswer": [
+        "Hash map key → node for O(1) lookup, plus a doubly-linked list of those same nodes in recency order",
+        "On get: find the node in O(1), unlink it using its prev/next pointers and relink at the head — O(1) precisely because you already hold the node and never search for it. A singly-linked list would make removal O(n)",
+        "On insert when full: the tail is the LRU entry by construction; unlink it, remove its key from the map, insert at the head",
+        "Strict LRU takes a write lock on every read, so real systems approximate — CLOCK, or sample ~5 random keys and evict the oldest",
+        "LRU is wrong for scans: a sequential pass makes every key it touches 'recent', so LRU evicts the real working set to hold data nobody will read again. One analytics query can empty a cache that took hours to warm",
+        "Fixes are admission-side: segmented LRU where entries are promoted only on a second access, a TinyLFU-style admission filter, or routing scan workloads to a separate pool or a read replica"
+      ]
+    },
+    {
+      "key": "failure-modes",
+      "prompt": "Name the ways a cache makes things worse rather than better, and how you fix each one.",
+      "hints": [
+        "Three distinct mechanisms — one about a hot key, one about keys that do not exist, one about writes",
+        "For each, what is the specific mechanism, not just the name?"
+      ],
+      "modelAnswer": [
+        "Stampede: a hot key expires, and every request during the rebuild window misses and issues the same query — 10,000 concurrent queries where there were none. Fix with single-flight via atomic ADD, jittered TTLs so keys populated together do not expire together, and probabilistic early refresh, which removes the miss window rather than managing it",
+        "Penetration: keys with nothing behind them miss every time and never get cached, so a crawler or a buggy client lands 100% on the database, invisibly, because misses look normal. Fix with short-TTL negative entries under their own memory budget, and a bloom filter for the sparse case — false positives cost one normal lookup, false negatives cannot happen",
+        "The bloom filter's catch is deletion: a plain filter cannot remove a key without risking a false negative, so you need a counting variant or periodic rebuilds",
+        "Post-write inconsistency: cache-aside with delete-not-update, because two concurrent updates can land in the opposite order to their database commits and leave the cache permanently stale",
+        "Name the surviving read-then-write race and bound it with a short TTL rather than claiming it away"
+      ]
+    },
+    {
+      "key": "replication",
+      "prompt": "A cache node dies at peak. What happens, and do you replicate?",
+      "hints": [
+        "Quantify the cost first using your miss numbers",
+        "What is the one thing losing a node must never cost you?"
+      ],
+      "modelAnswer": [
+        "With a ring, 5% of the keyspace goes cold: misses go from 9,500/s to 19,000/s — one machine doubles database load, and it stays elevated until the range refills",
+        "Whether to replicate is decided by the database's headroom, not by a general taste for redundancy. If it can absorb double, say so and skip the replicas",
+        "If you replicate: one async replica per range on a different failure domain. Async because a synchronous hop would put a second round trip on a sub-millisecond path to buy durability nobody asked for",
+        "The design question is whether a node's death costs a cold cache or a wrong answer. A cold cache is a bounded performance event; a wrong answer outlives the outage",
+        "So replicas are for failover, not for spreading reads: a replica that has not applied an invalidation will serve an entry you explicitly deleted",
+        "A hot key is a separate problem — replication does not help because every request routes to the same place. Fan it out under suffixed names, or push it into a short-TTL in-process cache",
+        "Plan the cold start: ramp a replacement node's tokens in gradually or warm it from its replica, or restarting the tier takes the database down"
+      ]
+    },
+    {
+      "key": "memory",
+      "prompt": "What happens when the working set grows past what the cluster can hold?",
+      "hints": [
+        "Does the hit rate decline smoothly?",
+        "Which metric moves before the hit rate does?"
+      ],
+      "modelAnswer": [
+        "It does not degrade gracefully, it collapses. Entries start being evicted before they are re-read, each such eviction causes a future miss, fetch, insert and another eviction — the cache thrashes, cycling data rather than serving it",
+        "The hit rate falls off a cliff because the marginal evicted entry is now one that would have been hit. 95% → 80% takes misses from 9,500/s to 38,000/s, a fourfold jump from a 15-point drop",
+        "So an under-provisioned cache does not merely fail to help; it becomes the cause of an outage in a backing store sized for the healthy case",
+        "An eviction policy is mandatory, not optional: with none, a full cache either refuses writes (hit rate decays to zero as the working set moves) or allocates until it swaps or is OOM-killed. A cache paging from disk is slower than the database it fronts",
+        "Set maxmemory below physical memory with an explicit policy before the first byte is cached",
+        "Alert on eviction rate and average entry lifetime, not hit rate. Entries dying in 30 seconds under an hour TTL means you are already on the cliff edge, whatever the hit rate reads"
+      ]
+    }
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "architecture",
+      "question": "You run 20 cache nodes with node = hash(key) % 20 and add a 21st. What fraction of keys keep their existing home?",
+      "options": [
+        "About 95% — only the new node's share moves",
+        "About 5% — the modulus changed, so nearly every key relocates and the cache effectively empties",
+        "100% — modulo placement is stable under resize",
+        "50% — keys split evenly between old and new placement"
+      ],
+      "answerIndex": 1,
+      "explanation": "A key keeps its home only when hash % 20 equals hash % 21, which is roughly 1 in 21. Over 95% of the cache becomes unreachable at once, taking misses from 9,500/s to about 180,500/s against a database sized for the smaller number. The sting is the timing: adding capacity is what causes the outage. A consistent-hashing ring inverts the figures — only the new node's ~1/21 share moves."
+    },
+    {
+      "id": "q2",
+      "type": "architecture",
+      "question": "Why is a doubly-linked list, rather than a singly-linked one or a timestamp field, used for O(1) LRU?",
+      "options": [
+        "Doubly-linked lists use less memory",
+        "The hash map gives you the node directly, and prev/next let you unlink it from the middle in O(1) — a singly-linked list would need an O(n) search for the predecessor, and a timestamp would need an O(n) scan to find the minimum",
+        "It allows the list to be traversed in both directions for range queries",
+        "It makes the cache thread-safe without locking"
+      ],
+      "answerIndex": 1,
+      "explanation": "The whole trick is that lookup and reordering are separate O(1) steps that compose. The hash map hands you the exact node, so no search is needed; the prev and next pointers let you splice it out and relink at the head without touching anything else. Drop either structure and the operation becomes linear. Strict LRU still takes a write lock on every read, which is why production caches approximate it with CLOCK or sampled eviction."
+    },
+    {
+      "id": "q3",
+      "type": "architecture",
+      "question": "A key serving 50,000 requests/s expires. The rebuild query takes 200 ms. What happens, and what is the strongest fix?",
+      "options": [
+        "Nothing — the cache serves the stale value until the new one is written",
+        "Roughly 10,000 requests miss during the rebuild window and all issue the same query at once; the strongest fix is probabilistic early refresh, which repopulates before expiry so the miss window never opens",
+        "The load balancer queues the requests automatically",
+        "The cache node crashes under the read volume"
+      ],
+      "answerIndex": 1,
+      "explanation": "This is a stampede: the cache amplifies load instead of absorbing it, going from zero queries for that key to 10,000 concurrent ones in a millisecond, and the contention widens the window which admits more requests. Single-flight caps it at one rebuild, and jittered TTLs stop thousands of keys expiring together. Early refresh is strongest because it eliminates the miss window rather than managing it, at the cost of a few redundant refreshes."
+    },
+    {
+      "id": "q4",
+      "type": "architecture",
+      "question": "Which statement best captures what a cache owes you, and what it does not?",
+      "options": [
+        "A cache must be durable, because losing entries means losing data",
+        "A cache may be empty but must never be wrong — losing it costs latency and database load, both recoverable, whereas a stale value treated as current can corrupt downstream state",
+        "A cache should use synchronous replication so no entry is ever lost",
+        "A cache must be strongly consistent with the database at all times"
+      ],
+      "answerIndex": 1,
+      "explanation": "That asymmetry licenses the entire design: no write-ahead log, no fsync, no consensus, no synchronous quorum — all of which exist to guarantee an acknowledged write survives, a promise the cache never makes because the source of truth is elsewhere. It also explains why replicas are async and used for failover rather than read spreading (a lagging replica can serve an entry you deleted), and why write-behind is the one configuration that breaks the rule, since it makes the cache authoritative for a window in which a crash loses acknowledged writes."
+    }
+  ],
+  "related": [
+    "cache",
+    "consistent-hashing",
+    "bloom-filter",
+    "replication",
+    "sharding",
+    "circuit-breaker"
+  ]
+}

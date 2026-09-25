@@ -36,16 +36,18 @@
   "bruteForce": {
     "idea": "Sort the array, then walk it once, counting the current run and resetting whenever the gap to the previous value is neither 0 (a duplicate) nor 1.",
     "code": [
-      "if (nums.length == 0) return 0;",
-      "Arrays.sort(nums);",
-      "int best = 1, run = 1;",
-      "for (int i = 1; i < nums.length; i++) {",
-      "    if (nums[i] == nums[i - 1]) continue;",
-      "    if (nums[i] == nums[i - 1] + 1) run++;",
-      "    else run = 1;",
-      "    best = Math.max(best, run);",
-      "}",
-      "return best;"
+      "public static int longestConsecutive(int[] nums) {",
+      "    if (nums.length == 0) return 0;",
+      "    Arrays.sort(nums);                  // a total order, when only adjacency is needed",
+      "    int best = 1, run = 1;",
+      "    for (int i = 1; i < nums.length; i++) {",
+      "        if (nums[i] == nums[i - 1]) continue;",
+      "        if (nums[i] == nums[i - 1] + 1) run++;",
+      "        else run = 1;",
+      "        best = Math.max(best, run);",
+      "    }",
+      "    return best;",
+      "}"
     ],
     "complexity": {
       "time": "O(n log n)",

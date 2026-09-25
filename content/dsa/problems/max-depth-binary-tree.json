@@ -28,11 +28,18 @@
   "bruteForce": {
     "idea": "Enumerate every root-to-leaf path, measure each, keep the longest.",
     "code": [
-      "void allPaths(TreeNode node, int depth) {",
+      "public static int maxDepth(TreeNode root) {",
+      "    int[] best = {0};               // a mutable accumulator, rather than a returned value",
+      "    allPaths(root, 1, best);",
+      "    return best[0];",
+      "}",
+      "",
+      "/** Walk every root-to-leaf path, and record the depth each leaf sits at. */",
+      "private static void allPaths(TreeNode node, int depth, int[] best) {",
       "    if (node == null) return;",
-      "    if (node.left == null && node.right == null) best = Math.max(best, depth);",
-      "    allPaths(node.left,  depth + 1);",
-      "    allPaths(node.right, depth + 1);",
+      "    if (node.left == null && node.right == null) best[0] = Math.max(best[0], depth);",
+      "    allPaths(node.left,  depth + 1, best);",
+      "    allPaths(node.right, depth + 1, best);",
       "}"
     ],
     "complexity": {

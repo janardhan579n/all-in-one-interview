@@ -8,7 +8,7 @@
     "two-pointers",
     "sorting"
   ],
-  "statement": "Given an integer array, return all unique triplets [a, b, c] such that a + b + c == 0. The solution set must not contain duplicate triplets.",
+  "statement": "Given an integer array, return all unique triplets [a, b, c] such that a + b + c == 0, in any order. The solution set must not contain duplicate triplets.",
   "realWorld": "Portfolio balancing: find sets of three positions whose net exposure cancels out. The deduplication requirement mirrors real reconciliation work, where the same combination reported twice is a bug.",
   "examples": [
     {
@@ -34,15 +34,19 @@
   "bruteForce": {
     "idea": "Three nested loops over all triplets, with a set to deduplicate results.",
     "code": [
-      "Set<List<Integer>> found = new HashSet<>();",
-      "for (int i = 0; i < n; i++)",
-      "    for (int j = i + 1; j < n; j++)",
-      "        for (int k = j + 1; k < n; k++)",
-      "            if (nums[i] + nums[j] + nums[k] == 0) {",
-      "                List<Integer> t = new ArrayList<>(List.of(nums[i], nums[j], nums[k]));",
-      "                Collections.sort(t);",
-      "                found.add(t);",
-      "            }"
+      "public static List<List<Integer>> threeSum(int[] nums) {",
+      "    int n = nums.length;",
+      "    Set<List<Integer>> found = new HashSet<>();",
+      "    for (int i = 0; i < n; i++)",
+      "        for (int j = i + 1; j < n; j++)",
+      "            for (int k = j + 1; k < n; k++)",
+      "                if (nums[i] + nums[j] + nums[k] == 0) {",
+      "                    List<Integer> t = new ArrayList<>(List.of(nums[i], nums[j], nums[k]));",
+      "                    Collections.sort(t);",
+      "                    found.add(t);",
+      "                }",
+      "    return new ArrayList<>(found);",
+      "}"
     ],
     "complexity": {
       "time": "O(n^3)",

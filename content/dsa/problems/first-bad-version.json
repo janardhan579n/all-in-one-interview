@@ -35,10 +35,12 @@
   "bruteForce": {
     "idea": "Ask about every version in order and stop at the first true.",
     "code": [
-      "for (int version = 1; version <= n; version++) {",
-      "    if (isBadVersion(version)) return version;",
-      "}",
-      "return -1;"
+      "public static int firstBadVersion(int n) {",
+      "    for (int version = 1; version <= n; version++) {",
+      "        if (isBadVersion(version)) return version;   // one probe eliminates exactly one candidate",
+      "    }",
+      "    return -1;",
+      "}"
     ],
     "complexity": {
       "time": "O(n)",

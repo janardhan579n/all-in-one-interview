@@ -37,17 +37,20 @@
   "bruteForce": {
     "idea": "Try every possible split. Enumerate all 2^n assignments of nodes to the two sides, and for each one check that no edge has both ends on the same side.",
     "code": [
-      "for (int mask = 0; mask < (1 << n); mask++) {",
-      "    boolean ok = true;",
-      "    for (int u = 0; u < n && ok; u++) {",
-      "        for (int v : graph[u]) {",
-      "            int sideU = (mask >> u) & 1, sideV = (mask >> v) & 1;",
-      "            if (sideU == sideV) { ok = false; break; }",
+      "public static boolean isBipartite(int[][] graph) {",
+      "    int n = graph.length;",
+      "    for (int mask = 0; mask < (1 << n); mask++) {   // every assignment of n nodes to two sides",
+      "        boolean ok = true;",
+      "        for (int u = 0; u < n && ok; u++) {",
+      "            for (int v : graph[u]) {",
+      "                int sideU = (mask >> u) & 1, sideV = (mask >> v) & 1;",
+      "                if (sideU == sideV) { ok = false; break; }",
+      "            }",
       "        }",
+      "        if (ok) return true;",
       "    }",
-      "    if (ok) return true;",
-      "}",
-      "return false;"
+      "    return false;",
+      "}"
     ],
     "complexity": {
       "time": "O(2^n * (n + E))",

@@ -31,16 +31,18 @@
   "bruteForce": {
     "idea": "For each index, multiply every other element together.",
     "code": [
-      "int n = nums.length;",
-      "int[] answer = new int[n];",
-      "for (int i = 0; i < n; i++) {",
-      "    int product = 1;",
-      "    for (int j = 0; j < n; j++) {",
-      "        if (j != i) product *= nums[j];",
+      "public static int[] productExceptSelf(int[] nums) {",
+      "    int n = nums.length;",
+      "    int[] answer = new int[n];",
+      "    for (int i = 0; i < n; i++) {",
+      "        int product = 1;",
+      "        for (int j = 0; j < n; j++) {",
+      "            if (j != i) product *= nums[j];",
+      "        }",
+      "        answer[i] = product;",
       "    }",
-      "    answer[i] = product;",
-      "}",
-      "return answer;"
+      "    return answer;",
+      "}"
     ],
     "complexity": {
       "time": "O(n^2)",

@@ -8,7 +8,7 @@
     "recursion",
     "combinatorics"
   ],
-  "statement": "Given an array of distinct integers, return all possible subsets (the power set). The solution set must not contain duplicate subsets.",
+  "statement": "Given an array of distinct integers, return all possible subsets (the power set), in any order. The solution set must not contain duplicate subsets.",
   "realWorld": "Feature-flag combination testing, generating every possible configuration of optional components, and exploring candidate index sets in a query planner.",
   "examples": [
     {
@@ -29,12 +29,17 @@
   "bruteForce": {
     "idea": "Iterate a bitmask from 0 to 2^n - 1 and include element i whenever bit i is set.",
     "code": [
-      "for (int mask = 0; mask < (1 << n); mask++) {",
-      "    List<Integer> subset = new ArrayList<>();",
-      "    for (int i = 0; i < n; i++) {",
-      "        if ((mask & (1 << i)) != 0) subset.add(nums[i]);",
+      "public static List<List<Integer>> subsets(int[] nums) {",
+      "    int n = nums.length;",
+      "    List<List<Integer>> result = new ArrayList<>();",
+      "    for (int mask = 0; mask < (1 << n); mask++) {",
+      "        List<Integer> subset = new ArrayList<>();",
+      "        for (int i = 0; i < n; i++) {",
+      "            if ((mask & (1 << i)) != 0) subset.add(nums[i]);",
+      "        }",
+      "        result.add(subset);",
       "    }",
-      "    result.add(subset);",
+      "    return result;",
       "}"
     ],
     "complexity": {

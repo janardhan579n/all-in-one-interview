@@ -306,7 +306,7 @@ function LanguagePicker() {
         // The label must not depend on the visible text: the name collapses to just the globe
         // below the `sm` breakpoint, which would leave a screen reader with an unlabelled button.
         aria-label={`Change language — currently ${current.name}`}
-        className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-sm transition-colors ${
+        className={`flex min-h-[44px] items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-sm transition-colors sm:min-h-0 ${
           language === 'en'
             ? 'border-line text-ink-muted hover:bg-surface-sunken hover:text-ink'
             : 'border-brand bg-brand/10 text-brand'
@@ -374,7 +374,7 @@ function Settings() {
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="rounded-lg border border-line px-2.5 py-1.5 text-sm text-ink-muted hover:bg-surface-sunken"
+        className="grid min-h-[44px] min-w-[44px] place-items-center rounded-lg border border-line px-2.5 py-1.5 text-sm text-ink-muted hover:bg-surface-sunken sm:min-h-0 sm:min-w-0"
         aria-label="Settings"
         aria-expanded={open}
       >
@@ -416,6 +416,19 @@ export function AppShell({ children }: { children: ReactNode }) {
     setMobileOpen(false);
   }, [location.pathname]);
 
+  // Below `lg` the nav was pushing into the same flex row as the page content instead of
+  // covering it, which left `main` squeezed into a sliver and the page wider than the
+  // viewport — the drawer needs to overlay the content, not share a row with it. Escape and a
+  // click on the backdrop close it, matching how any other overlay on the site behaves.
+  useEffect(() => {
+    if (!mobileOpen) return undefined;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMobileOpen(false);
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [mobileOpen]);
+
   return (
     <div className="min-h-screen">
       <a href="#main" className="skip-link">
@@ -423,10 +436,10 @@ export function AppShell({ children }: { children: ReactNode }) {
       </a>
 
       <header className="sticky top-0 z-20 border-b border-line bg-surface/95 backdrop-blur">
-        <div className="flex items-center gap-3 px-4 py-2.5">
+        <div className="flex flex-wrap items-center gap-3 px-4 py-2.5">
           <button
             type="button"
-            className="rounded-lg border border-line px-2 py-1.5 text-sm lg:hidden"
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-lg border border-line text-sm lg:hidden"
             onClick={() => setMobileOpen((value) => !value)}
             aria-label="Toggle navigation"
             aria-expanded={mobileOpen}
@@ -441,11 +454,14 @@ export function AppShell({ children }: { children: ReactNode }) {
             </span>
           </Link>
 
-          <div className="mx-auto flex-1 px-2">
+          {/* Below `sm` there is not enough width for the search box beside the logo and the
+              icon cluster, so it wraps onto a full-width row of its own instead of being
+              squeezed down to a few unusable pixels. */}
+          <div className="order-last basis-full sm:order-none sm:mx-auto sm:min-w-0 sm:flex-1 sm:basis-auto sm:px-2">
             <SearchBox />
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="ml-auto flex items-center gap-2 sm:ml-0">
             <ConnectionBadge />
             <div className="hidden sm:block">
               <ModeToggle />
@@ -457,10 +473,20 @@ export function AppShell({ children }: { children: ReactNode }) {
       </header>
 
       <div className="mx-auto flex max-w-[1400px]">
+        {/* Backdrop: only present below `lg`, while the drawer is open. Clicking it closes the
+            drawer, same as Escape. */}
+        {mobileOpen ? (
+          <div
+            className="fixed inset-0 z-30 bg-ink/40 lg:hidden"
+            onClick={() => setMobileOpen(false)}
+            aria-hidden="true"
+          />
+        ) : null}
+
         <aside
           className={`${
-            mobileOpen ? 'block' : 'hidden'
-          } w-full shrink-0 border-r border-line px-3 py-4 lg:block lg:w-60`}
+            mobileOpen ? 'fixed inset-y-0 left-0 z-40 block w-[85vw] max-w-xs overflow-y-auto shadow-xl' : 'hidden'
+          } shrink-0 border-r border-line bg-surface px-3 py-4 lg:static lg:z-auto lg:block lg:w-60 lg:max-w-none lg:shadow-none lg:overflow-visible`}
         >
           <nav aria-label="Main">
             <ul className="space-y-0.5">
@@ -470,7 +496,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                     to={item.to}
                     end={item.to === '/'}
                     className={({ isActive }) =>
-                      `flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors ${
+                      `flex min-h-[44px] items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors lg:min-h-0 ${
                         isActive ? 'bg-brand-soft font-medium text-brand' : 'text-ink-muted hover:bg-surface-sunken'
                       }`
                     }
@@ -484,7 +510,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                         <li key={child.to}>
                           <Link
                             to={child.to}
-                            className="block rounded px-2 py-1 text-[13px] text-ink-muted hover:text-ink"
+                            className="flex min-h-[40px] items-center rounded px-2 py-1 text-[13px] text-ink-muted hover:text-ink lg:min-h-0"
                           >
                             {child.label}
                           </Link>

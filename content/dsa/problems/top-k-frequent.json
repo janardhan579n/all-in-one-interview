@@ -38,15 +38,17 @@
   "bruteForce": {
     "idea": "Count occurrences into a map, dump the entries into a list, sort the whole list by count descending, and take the first k.",
     "code": [
-      "Map<Integer, Integer> counts = new HashMap<>();",
-      "for (int value : nums) counts.merge(value, 1, Integer::sum);",
+      "public static int[] topKFrequent(int[] nums, int k) {",
+      "    Map<Integer, Integer> counts = new HashMap<>();",
+      "    for (int value : nums) counts.merge(value, 1, Integer::sum);",
       "",
-      "List<Map.Entry<Integer, Integer>> entries = new ArrayList<>(counts.entrySet());",
-      "entries.sort((a, b) -> b.getValue() - a.getValue());   // orders ALL m distinct values",
+      "    List<Map.Entry<Integer, Integer>> entries = new ArrayList<>(counts.entrySet());",
+      "    entries.sort((a, b) -> b.getValue() - a.getValue());   // orders ALL m distinct values",
       "",
-      "int[] out = new int[k];",
-      "for (int i = 0; i < k; i++) out[i] = entries.get(i).getKey();   // …and we read k of them",
-      "return out;"
+      "    int[] out = new int[k];",
+      "    for (int i = 0; i < k; i++) out[i] = entries.get(i).getKey();   // …and we read k of them",
+      "    return out;",
+      "}"
     ],
     "complexity": {
       "time": "O(n + m log m), where m is the number of distinct values",

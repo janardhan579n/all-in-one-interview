@@ -35,14 +35,16 @@
   "bruteForce": {
     "idea": "For every window of s2 with length s1.length(), build a fresh 26-element count array and compare it with s1's.",
     "code": [
-      "int[] need = new int[26];",
-      "for (char ch : s1.toCharArray()) need[ch - 'a']++;",
-      "for (int i = 0; i + s1.length() <= s2.length(); i++) {",
-      "    int[] window = new int[26];",
-      "    for (int t = i; t < i + s1.length(); t++) window[s2.charAt(t) - 'a']++;",
-      "    if (Arrays.equals(need, window)) return true;",
-      "}",
-      "return false;"
+      "public static boolean checkInclusion(String s1, String s2) {",
+      "    int[] need = new int[26];",
+      "    for (char ch : s1.toCharArray()) need[ch - 'a']++;",
+      "    for (int i = 0; i + s1.length() <= s2.length(); i++) {",
+      "        int[] window = new int[26];",
+      "        for (int t = i; t < i + s1.length(); t++) window[s2.charAt(t) - 'a']++;",
+      "        if (Arrays.equals(need, window)) return true;",
+      "    }",
+      "    return false;",
+      "}"
     ],
     "complexity": {
       "time": "O(n * m) where m = s1.length()",

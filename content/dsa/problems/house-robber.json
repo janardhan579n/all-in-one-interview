@@ -28,10 +28,15 @@
   "bruteForce": {
     "idea": "Try every valid subset of non-adjacent houses and keep the richest.",
     "code": [
-      "int rob(int[] nums, int i) {",
+      "public static int rob(int[] nums) {",
+      "    return robFrom(nums, 0);",
+      "}",
+      "",
+      "/** Take-or-skip, decided afresh at every house, all the way to the end of the street. */",
+      "private static int robFrom(int[] nums, int i) {",
       "    if (i >= nums.length) return 0;",
-      "    int takeThis = nums[i] + rob(nums, i + 2);   // skip the neighbour",
-      "    int skipThis = rob(nums, i + 1);",
+      "    int takeThis = nums[i] + robFrom(nums, i + 2);   // skip the neighbour",
+      "    int skipThis = robFrom(nums, i + 1);",
       "    return Math.max(takeThis, skipThis);",
       "}"
     ],

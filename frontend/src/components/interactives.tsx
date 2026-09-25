@@ -69,8 +69,13 @@ export function ComplexityChart() {
         </div>
       </div>
 
-      <div className="overflow-x-auto">
-        <svg viewBox={`0 0 ${width} ${height}`} className="h-[300px] w-full min-w-[520px]" role="img" aria-label="Growth of common complexity classes">
+      <div>
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          className="aspect-[620/300] w-full"
+          role="img"
+          aria-label="Growth of common complexity classes"
+        >
           <line x1={padding.left} y1={height - padding.bottom} x2={width - padding.right} y2={height - padding.bottom} stroke="rgb(var(--line))" />
           <line x1={padding.left} y1={padding.top} x2={padding.left} y2={height - padding.bottom} stroke="rgb(var(--line))" />
 

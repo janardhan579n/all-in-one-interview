@@ -38,18 +38,20 @@
   "bruteForce": {
     "idea": "The answer is the largest number of meetings running at any instant, so check every instant that matters — every meeting's start time — and count how many intervals cover it.",
     "code": [
-      "int best = 0;",
-      "for (int[] probe : intervals) {",
-      "    int at = probe[0];               // concurrency only changes at a start",
-      "    int concurrent = 0;",
-      "    for (int[] other : intervals) {",
-      "        if (other[0] <= at && at < other[1]) {   // covers this instant",
-      "            concurrent++;",
+      "public static int minMeetingRooms(int[][] intervals) {",
+      "    int best = 0;",
+      "    for (int[] probe : intervals) {",
+      "        int at = probe[0];               // concurrency only changes at a start",
+      "        int concurrent = 0;",
+      "        for (int[] other : intervals) {",
+      "            if (other[0] <= at && at < other[1]) {   // covers this instant",
+      "                concurrent++;",
+      "            }",
       "        }",
+      "        best = Math.max(best, concurrent);",
       "    }",
-      "    best = Math.max(best, concurrent);",
-      "}",
-      "return best;"
+      "    return best;",
+      "}"
     ],
     "complexity": {
       "time": "O(n^2)",

@@ -29,7 +29,11 @@
   "bruteForce": {
     "idea": "Recurse: from each cell, branch right and down, counting the paths that reach the corner.",
     "code": [
-      "int paths(int r, int c, int m, int n) {",
+      "public static int uniquePaths(int m, int n) {",
+      "    return paths(0, 0, m, n);",
+      "}",
+      "",
+      "private static int paths(int r, int c, int m, int n) {",
       "    if (r >= m || c >= n) return 0;      // fell off the grid",
       "    if (r == m - 1 && c == n - 1) return 1;",
       "    return paths(r + 1, c, m, n) + paths(r, c + 1, m, n);",

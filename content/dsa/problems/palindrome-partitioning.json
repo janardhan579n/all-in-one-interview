@@ -56,6 +56,16 @@
       "        if (allPalindromes) result.add(pieces);   // validated only after every cut is placed",
       "    }",
       "    return result;",
+      "}",
+      "",
+      "private static boolean isPalindrome(String piece) {",
+      "    int left = 0, right = piece.length() - 1;",
+      "    while (left < right) {",
+      "        if (piece.charAt(left) != piece.charAt(right)) return false;",
+      "        left++;",
+      "        right--;",
+      "    }",
+      "    return true;",
       "}"
     ],
     "complexity": {

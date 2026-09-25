@@ -35,17 +35,19 @@
   "bruteForce": {
     "idea": "For every start index, extend to every end index, count the characters in that substring, and check whether length minus the most common count is within k.",
     "code": [
-      "int best = 0;",
-      "for (int i = 0; i < s.length(); i++) {",
-      "    for (int j = i; j < s.length(); j++) {",
-      "        int[] count = new int[26];",
-      "        for (int t = i; t <= j; t++) count[s.charAt(t) - 'A']++;",
-      "        int maxFreq = 0;",
-      "        for (int c = 0; c < 26; c++) maxFreq = Math.max(maxFreq, count[c]);",
-      "        if (j - i + 1 - maxFreq <= k) best = Math.max(best, j - i + 1);",
+      "public static int characterReplacement(String s, int k) {",
+      "    int best = 0;",
+      "    for (int i = 0; i < s.length(); i++) {",
+      "        for (int j = i; j < s.length(); j++) {",
+      "            int[] count = new int[26];",
+      "            for (int t = i; t <= j; t++) count[s.charAt(t) - 'A']++;   // the recount",
+      "            int maxFreq = 0;",
+      "            for (int c = 0; c < 26; c++) maxFreq = Math.max(maxFreq, count[c]);",
+      "            if (j - i + 1 - maxFreq <= k) best = Math.max(best, j - i + 1);",
+      "        }",
       "    }",
-      "}",
-      "return best;"
+      "    return best;",
+      "}"
     ],
     "complexity": {
       "time": "O(n^3)",

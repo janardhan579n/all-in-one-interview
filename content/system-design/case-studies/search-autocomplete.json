@@ -1,0 +1,1012 @@
+{
+  "id": "search-autocomplete",
+  "title": "Design Search Autocomplete",
+  "difficulty": "advanced",
+  "estimatedMinutes": 40,
+  "summary": "Return the best few completions for whatever the user has typed so far, fast enough that they arrive before the next keystroke. This is a latency problem before it is a data problem: a ~100 ms end-to-end budget is what rules out almost every design you would otherwise reach for.",
+  "steps": [
+    {
+      "key": "requirements",
+      "title": "1. Clarify the problem",
+      "content": "The useful questions here are unusual, because the hard constraint is a deadline rather than a volume:\n\n- **What is the latency target, and is it end-to-end or server-side?** This is the first question, not a detail. If the answer is \"200 ms server-side\" you can build almost anything. If it is \"100 ms from keystroke to pixels\" you have ~50 ms of server budget and most designs are already eliminated.\n- **How fresh must suggestions be?** \"Trending topics must appear within a minute\" and \"yesterday's data is fine\" are two completely different systems.\n- **Prefix matching only, or fuzzy?** Typo tolerance, mid-word matching and synonyms each multiply the index and the lookup cost.\n- **Personalised or global?** A single global ranking is one shared index. Per-user ranking means you cannot precompute the answer.\n- **How many suggestions, and how many languages?** Top 5 in one language is a 34 GB index. Top 10 across forty languages is not.\n\nFor this walkthrough: global (non-personalised) prefix matching, top 5 suggestions shown, exact prefixes only, freshness of a few hours is acceptable, and a p99 of **100 ms end-to-end including the network**.\n\nAsk about the deadline first and you will be designing against the right constraint for the rest of the hour."
+    },
+    {
+      "key": "functional",
+      "title": "2. Functional requirements",
+      "content": "- `GET /suggest?q={prefix}` returns the top 5 completions for that prefix, ordered by popularity.\n- Suggestions are drawn from what people have actually searched for, so popularity is measured from query logs rather than from documents.\n- Results update as the user types: each request is independent and the newest one wins.\n- A blocklist suppresses specific terms, and suppression must take effect quickly — much faster than the index build cycle.\n- An empty prefix returns nothing (or a small curated list), not the global top 5 of everything.\n\nOut of scope, and worth naming: typo correction, mid-string matching (\"pizza\" matching \"best pizza\"), personalised ranking, and cross-language transliteration. Each is a genuine feature and each one changes the index structure — which is precisely why they belong in a scoping sentence rather than in an unspoken assumption."
+    },
+    {
+      "key": "nonfunctional",
+      "title": "3. Non-functional requirements — the deadline is the design",
+      "content": "**A suggestion that arrives after the user has typed the next character is not a slow suggestion. It is a wrong one.** It renders under a prefix that no longer matches what is in the box, so it either flickers and vanishes or — worse — the user clicks it just as it is replaced. Autocomplete has no degraded mode where it is merely slower; past the deadline it is actively harmful, and the right behaviour is to show nothing.\n\nA comfortable typist leaves ~200 ms between keystrokes. So the budget is roughly **100 ms end-to-end, p99**, and it decomposes about like this:\n\n| Component | Budget |\n|---|---|\n| Network round trip (mobile / cross-country) | ~40 ms |\n| TLS termination, load balancer, routing | ~5 ms |\n| Actual suggestion lookup | **~2 ms** |\n| Serialisation, GC pauses, queueing, headroom | ~43 ms |\n| Browser: parse, render, paint | ~10 ms |\n\nStare at that table for a moment, because it is the whole case study. **The network already ate 40% of the budget before your service saw the request**, and the part you actually control is a couple of milliseconds. That single fact rules out, immediately and without further discussion:\n\n- any disk seek on the request path,\n- any query that scans and sorts candidates at request time,\n- any cross-service call, and certainly any cross-region call,\n- anything that touches a relational database.\n\nEverything else follows:\n\n- **Availability**: 99.9%, and failure means returning an empty list quickly. Autocomplete is an accelerator; the search box works without it.\n- **Freshness**: hours, not seconds. This is the requirement we deliberately trade away to buy the latency, and doing it knowingly is the whole trick.\n- **Scale target**: 200M searches/day, ~4 autocomplete requests per search."
+    },
+    {
+      "key": "estimation",
+      "title": "4. Back-of-the-envelope estimation",
+      "content": "Plausible figures for a system of this shape, not any particular company's.\n\n**Request rate.** 200M searches/day. A 20-character query with naive per-keystroke requests would be 200M × 20 = 4 billion requests/day ÷ 86,400 ≈ **46,000 requests/s**. With client-side debouncing, keystroke bursts collapse to about 4 requests per query: 200M × 4 = 800M/day ÷ 86,400 ≈ **9,300 requests/s**, peak at 3× ≈ **28,000/s**. The browser just removed 80% of your traffic before it left the device — which is why the client is part of this architecture, not an afterthought.\n\n**Index size.** Thirty days of logs is 200M × 30 = **6 billion query events**, collapsing to perhaps 400M distinct queries, of which the top **50M by frequency** are worth keeping (the rest are typed once and never again).\n\n**Trie nodes.** 50M queries × ~20 characters is a billion characters, but prefix sharing collapses that hard — \"pizza near me\" and \"pizza recipe\" share six nodes. Assume ~5 unshared characters per query after sharing: **~250M nodes**.\n\n**Memory per node.** Top-10 completions stored as ids rather than strings: 10 × (4-byte query id + 4-byte score) = 80 B, plus child pointers ~40 B, plus the character and flags ~8 B ≈ **128 bytes**. 250M × 128 B = **32 GB**. Add a query-id → string dictionary at 50M × 40 B = 2 GB, for **~34 GB total**.\n\nThat number is the answer to the whole problem: **34 GB fits in one machine's RAM.** The 2 ms lookup budget is achievable because nothing ever leaves memory.\n\n**Why ids and not strings.** Storing the completion strings at every node instead: 250M nodes × 10 completions × ~40 B = **100 GB** — 3× larger, for data that is duplicated thousands of times over (\"pizza near me\" is in the top-10 of every node along its own prefix). One indirection through a dictionary saves 68 GB.\n\n**Why top-k at each node is not optional.** Without it, answering a one-character prefix means finding the best 10 in its entire subtree. That subtree holds roughly 250M ÷ 26 ≈ **10M nodes**. At an optimistic 100 ns per node — pointer chasing, cache misses — that is 10,000,000 × 100 ns = **1 second**. Against a 50 ms server budget that is **20× over**, on the single most common class of request. The whole design exists to avoid that traversal.\n\n**Edge caching.** Prefixes of 1–3 characters number 26 + 676 + 17,576 = **18,278** — a set small enough to hold entirely at the CDN, and they account for roughly 60% of requests. Caching them removes 9,300 × 0.6 ≈ 5,600 requests/s, leaving **~3,700/s** at the origin.\n\n**Build.** 6 billion log events, aggregated and sorted into a trie in ~90 minutes, run every 6 hours. Worst-case staleness: **~7.5 hours**."
+    },
+    {
+      "key": "api",
+      "title": "5. API design",
+      "content": "One endpoint carries the product, and almost every interesting decision about it is a caching or latency decision rather than a data one.\n\n`GET /api/v1/suggest?q=piz&limit=5&lang=en`\n\n- **GET, and the prefix in the path or query string — never a POST body.** A POST is uncacheable by every intermediary between the user and the origin, and this endpoint's entire scaling story is caching. This is one of the rare places where the HTTP method is a capacity decision.\n- **`Cache-Control: public, max-age=60`.** A short TTL is what makes the CDN layer work at all. Sixty seconds of staleness on \"what were the top completions for `piz`\" is invisible; the alternative is 9,300 requests/s at the origin instead of 3,700.\n- **Normalise the prefix before it becomes a cache key.** Lowercase, trim, collapse internal whitespace, strip accents according to the language's rules. `Piz`, `piz ` and `piz` are one cache entry, not three, and the hit rate depends on it.\n- **Return an empty array rather than a 404 for an unknown prefix.** A 404 is a client-side error path, and error paths are slow and noisy. \"No suggestions\" is a perfectly ordinary result.\n- **Include the index version in the response** (e.g. `X-Index-Version: 2024-W31-04`). When a suggestion looks wrong, the first question is always \"which snapshot served that?\" and you want the answer in the response rather than in a log join.\n\nA second, unrelated endpoint logs what the user actually selected (`POST /api/v1/events/search`), fire-and-forget, on a different host and a different budget. It never touches the suggest path — but it is the feedback loop that produces tomorrow's index, and a design that omits it has no way to learn."
+    },
+    {
+      "key": "datamodel",
+      "title": "6. Data model",
+      "content": "The serving structure and the storage structure are deliberately different things, which is unusual and worth saying out loud.\n\n**The serving index is not a database.** It is a trie held in memory, built offline, loaded from an immutable file and never written to at runtime. There is no schema, no transaction, no lock. That is not an optimisation — it is the only shape that fits a 2 ms budget.\n\n**`trie_node` (in memory).** A character, a child map, and — the part that matters — a fixed array of the top 10 `(query_id, score)` pairs for the subtree rooted at this node. The array is the entire design: see the next step.\n\n**`query_dictionary` (in memory).** `query_id → (query_string, frequency, last_seen)`. Nodes store 4-byte ids; this resolves the five ids that actually get returned. Fifty million entries, ~2 GB.\n\n**`query_log` (append-only, offline).** Raw search events with timestamp, language, region, and the rank of the suggestion the user selected (or null if they typed it out). That last field is the ranking signal — a suggestion shown 10,000 times and never clicked should fall, and only the log knows that.\n\n**`index_snapshot` (object storage).** Version, build timestamp, node count, byte size, checksum, status. Serving nodes hold a pointer to one version; deploying a new index is changing that pointer. Keeping the last several versions is what makes a rollback a thirty-second operation rather than a ninety-minute rebuild.\n\n**`blocklist` (small, live).** A few thousand terms, pushed to every serving node within seconds and applied as a filter *after* the trie lookup. It cannot wait for the six-hourly build — this is the one piece of mutable state on the request path, and it is kept tiny and filter-shaped precisely so it does not compromise the immutability of everything else."
+    },
+    {
+      "key": "not-search",
+      "title": "7. Why this is not full-text search",
+      "content": "Autocomplete sits next to a search engine and looks like a small version of it. It is not, and conflating them is the most common way to get this design wrong. Read the `search-engine` material alongside this and note where they diverge:\n\n| | Full-text search | Autocomplete |\n|---|---|---|\n| Input | A complete query | A **prefix** of a query |\n| Corpus | Documents | Past **queries** |\n| Structure | Inverted index: term → document list | **Trie**: prefix → precomputed top-k |\n| The hard part | Ranking relevance across millions of documents | Returning *anything at all* within ~50 ms |\n| Budget | 200–500 ms is acceptable | 100 ms end-to-end, or it is worthless |\n\nThe structural difference is that an inverted index is keyed by **whole terms**. Looking up `piz` in one finds documents containing the literal token \"piz\" — almost none — and to find terms *beginning* with `piz` it must range-scan the term dictionary and then union and rank the posting lists behind every match. That is a large amount of work to produce five strings, and it is work proportional to how many terms share the prefix, which is exactly the wrong thing for it to be proportional to.\n\nThe trie inverts the problem: the prefix *is* the path. Walking `p → i → z` is three pointer dereferences, and the answer is sitting at the end of the walk. Cost is proportional to **how much the user typed** — always between 1 and ~20 steps — and not to how much data matches.\n\nAnd the ranking question is different in kind. Search ranks documents against a query, so relevance is computed per request. Autocomplete ranks *queries* by how often people searched them — a property of the corpus, not of the request, which is why it can be computed once, offline, and baked into the structure. That is the observation that makes a 2 ms lookup possible at all. A design that reaches for Elasticsearch here has imported a request-time ranking engine to answer a question that was already answered yesterday."
+    },
+    {
+      "key": "trie",
+      "title": "8. The trie, and why the top-k lives at every node",
+      "content": "Start with the structure from the `trie` material: one node per character, shared prefixes shared once, so `pizza near me` and `pizza recipe` walk the same six nodes before diverging. Fifty million queries collapse into ~250M nodes instead of a billion characters.\n\n**The naive version, and why it is 20× too slow.** Store queries at their terminal nodes. To answer `piz`: walk three nodes, then traverse the entire subtree below, collect every terminal, sort by frequency, take 10. Correct, and hopeless. The subtree under a short prefix is enormous — under a single character it is roughly 250M ÷ 26 ≈ 10M nodes — and at an optimistic 100 ns per node (pointer chasing across 32 GB is nearly all cache misses) that is **1 full second**. Twenty times the entire server budget, on the most common request shape there is. The cost is proportional to how many queries match, and short prefixes match nearly everything, so **the cheapest request for the user is the most expensive request for the server**. That inversion is fatal.\n\n**The fix: precompute the answer at every node.** During the offline build, each node stores the top 10 completions of its own subtree, as `(query_id, score)` pairs. Then a lookup is:\n\n1. Walk the prefix — `len(prefix)` pointer dereferences, at most ~20.\n2. Read the array at the node you land on.\n3. Resolve 5 ids through the dictionary.\n\n**O(subtree) became O(prefix length).** And `len(prefix)` is bounded by what a human can type, which means lookup cost is not merely smaller — it is *constant for practical purposes*, and completely independent of how much data matches. The shortest prefix, the one that used to cost a second, now costs three dereferences like everything else.\n\n**What it costs.** Memory: every node carries 80 bytes of top-k, which is most of the 32 GB. You are storing `pizza near me` in the top-10 of `p`, `pi`, `piz`, `pizz`, `pizza`, and so on down its own path — deliberate, massive redundancy, traded for the traversal you no longer do. Build time: the top-k arrays are computed bottom-up, each node merging its children's arrays, which is why the build is a batch job and not something you do while serving.\n\n**And the update cost — which is the next stage's whole problem.** Changing one query's frequency can change the top-k of *every ancestor node on its path*. A single update is not a single write; it is a re-merge up a chain of up to twenty nodes, any of which is being read by a live request. Hold that thought."
+    },
+    {
+      "key": "offline-build",
+      "title": "9. Building the index offline, and why it is read-only",
+      "content": "The obvious design is to update the trie as searches arrive: increment a count, re-merge the top-k up the ancestor chain, done. It fails for reasons that are worth being able to state precisely, because \"we build it offline\" sounds like laziness until you can say why the alternative is worse.\n\n**1. The update is not local.** As the previous step established, one increment re-merges up to twenty ancestors. At 9,300 searches/s that is ~186,000 node mutations per second against a structure being read 9,300 times a second.\n\n**2. Concurrency destroys the latency budget.** Protecting those nodes means locks — and the contended nodes are the short prefixes, which are also the most-read nodes in the entire index. A read that blocks for 3 ms has spent 6% of its end-to-end budget waiting. Lock-free alternatives (copy-on-write subtrees) trade the stall for allocation churn and GC pauses, which land on the p99 you are trying to protect.\n\n**3. A partially-updated trie serves wrong answers.** If a node's top-k array is re-merged non-atomically, a concurrent read sees a half-written list: duplicates, or ids that no longer resolve.\n\n**4. Nothing converges.** Every serving replica has seen a different subset of traffic, so every replica has a different index. Two users typing `piz` a second apart get different suggestions and neither is reproducible. When someone reports a bad suggestion there is no artifact to inspect.\n\n**So: build it offline, ship it as an immutable snapshot.**\n\nA batch pipeline reads ~30 days of logs (6 billion events), aggregates by normalised query string, applies recency weighting so last week counts more than last month, drops anything below a frequency floor, keeps the top 50M, then builds the trie bottom-up — computing each node's top-k by merging its children's — and writes it as a single contiguous, checksummed file. ~90 minutes, every 6 hours.\n\nServing nodes hold a pointer to one loaded snapshot. Deployment is: fetch the new file, build the structure in spare memory, verify the checksum, health-check it against a sample of live prefixes, then **swap the pointer**. In-flight requests finish against the old snapshot; the next request gets the new one; the old memory is released. No locks, no partial states, and a rollback is the same pointer swap in reverse — thirty seconds, not ninety minutes.\n\n**The price, stated honestly.** A query that becomes popular at 09:00 does not appear until the next build completes — **up to ~7.5 hours** with a 6-hourly cadence and a 90-minute build. For a breaking news term that is genuinely bad. You have three options and should name them rather than pretend the problem away: shorten the cadence (hourly builds, at real cost in compute and operational noise); add a small, separately-built **trending layer** over the last hour of logs, merged into results at query time — a second, tiny index rather than a mutable main one; or accept it, on the grounds that the head of the query distribution is remarkably stable and it is the long tail that moves. **The blocklist is the one thing that must not wait**, which is why it is a live filter applied after the lookup rather than a property baked into the build."
+    },
+    {
+      "key": "sharding",
+      "title": "10. Sharding, replication, and not doing either too early",
+      "content": "The index is 34 GB. That fits on one machine, so **do not shard it** — the honest answer, and the one that scores.\n\n**Replicate first.** Every serving node holds the complete index, so any node answers any prefix, routing is trivial, and adding capacity is adding a node. At ~28,000 peak requests/s and maybe 20,000/s per node, you need two for the load and more for the failure domains and regions. Replication buys throughput *and* availability with none of sharding's complexity.\n\n**Regions are not optional, though, and that is a latency point rather than a capacity one.** 40 ms of the 100 ms budget is network round trip, and a cross-continental request is 150–250 ms — over budget before the server is reached. A full replica in each region is the only fix, and it is cheap precisely because the index is 34 GB of immutable bytes: shipping a file to five regions is a solved problem, and there is no write path to coordinate.\n\n**When sharding does become necessary**, it is index growth that forces it — forty language-specific indexes, or per-region variants, taking the total past 400 GB. Then shard **by prefix**: partition on the first two characters, giving 676 buckets that you group into ~64 shards balanced by *traffic* rather than by bucket count, since `th` and `qz` are not remotely equal.\n\nThe reason prefix sharding is right here — and the reason it would be wrong for a search engine — is that **a request carries its own routing key**. The prefix the user typed determines the shard, so every request is single-shard: one hop, no scatter, no gather, no merge. Compare sharding by hash of the full query, which would scatter every prefix lookup across all 64 shards and then merge 64 top-k lists, turning a 2 ms lookup into a distributed join and putting the p99 at the mercy of the slowest shard.\n\nThe costs are real and should be stated: the prefix distribution is skewed, so shards must be rebalanced as language mix shifts; a hot prefix during a news event lands entirely on one shard with no way to spread it; and the router must now be correct and fast, which is a component that did not exist before."
+    },
+    {
+      "key": "client-edge",
+      "title": "11. The browser and the CDN are part of the design",
+      "content": "Two tiers sit in front of the service and between them they handle most of the traffic. Omitting them from the diagram is the most common gap in an autocomplete answer, because they are the cheapest capacity in the whole system.\n\n**In the browser:**\n\n- **Debounce, ~100 ms.** Do not fire on every keystroke; fire once the user pauses. This is what turns 46,000 requests/s into 9,300/s — an 80% reduction, achieved with four lines of JavaScript and no servers at all. It also improves the *user's* experience, because mid-burst suggestions were never going to be read.\n- **Cancel in-flight requests.** When the prefix changes, abort the outstanding request. Without cancellation, responses race: a slow response for `piz` can land after the fast one for `pizza` and overwrite correct suggestions with stale ones. Abort, and additionally tag each request with its prefix and discard any response whose prefix does not match the input box's current value — the abort may not reach the server in time, and the display must be correct regardless.\n- **Cache locally.** Backspacing from `pizza` to `pizz` should render instantly from memory. It is the same prefix the user just had, and a network round trip for it is 40 ms spent on nothing.\n- **Prefetch by extension.** When the response for `piz` arrives, it can include suggestions for `piza`…`pizz` too. One round trip covers the next few keystrokes, and the next keystroke renders in 0 ms.\n\n**At the CDN:**\n\n- **Cache short prefixes at the edge.** There are only 18,278 prefixes of 1–3 characters, they are ~60% of all requests, and their answers are identical for every user. Caching them with a 60-second TTL drops origin traffic from 9,300/s to ~3,700/s and — more importantly — serves them from a POP ~10 ms away instead of a region ~40 ms away. That is 30 ms returned to a 100 ms budget, which is more than the entire server-side pipeline consumes.\n- **Let long prefixes miss.** A 12-character prefix is nearly unique, so caching it is pure eviction pressure. Cache by prefix length: aggressive under 4 characters, short TTL to 6, pass through beyond.\n\nThe sequencing matters, and it is the point of this step: the debounce cut 80%, the edge cache cut 60% of what remained, and only then did the origin need to handle the residue. **The two cheapest components in this architecture run on machines you do not own.**"
+    },
+    {
+      "key": "architecture",
+      "title": "12. Architecture, and where it bends under load",
+      "content": "Two paths that never touch each other. **Serving:** browser (debounced, cancelling) → CDN edge cache → regional prefix router → suggest node holding an immutable in-memory trie → walk the prefix, read the top-k, resolve ids, apply the blocklist, return. **Building:** query logs → 90-minute batch aggregation and trie construction → versioned snapshot in object storage → fetched and pointer-swapped by every serving node.\n\nThe complete separation is the design. The serving path has no writes, no locks, no database and no cross-service calls, which is what makes the 2 ms lookup credible. The Evolution tab shows how it got that way — the sequence is the argument.\n\n**The pressure points, in the order they appear:**\n\n- **Memory, not CPU.** A suggest node is a 34 GB resident set doing pointer chasing. Provision for RAM and page-fault avoidance; CPU is usually idle. Pin the process, avoid swap absolutely, and lay the trie out contiguously so a prefix walk touches as few cache lines as possible.\n- **GC pauses land directly on p99.** A 40 ms stop-the-world pause blows a request's entire remaining budget. This is the argument for an arena-allocated or off-heap representation, or a non-GC runtime, for the index itself.\n- **Snapshot loading is a memory spike.** Building the new index while still serving the old means ~68 GB resident for a few minutes. Size for the peak, not the steady state — the alternative is an OOM kill during every deploy.\n- **Hot prefixes.** With replication, every node has the whole index, so a hot prefix is just load and the edge cache absorbs most of it. After sharding by prefix, a hot prefix is a hot *shard*, with no way to spread it — which is a reason to delay sharding beyond the point where capacity alone would justify it."
+    },
+    {
+      "key": "failure",
+      "title": "13. Failure handling",
+      "content": "The governing principle is unusual and worth stating explicitly: **when in doubt, return nothing, fast.** Every failure mode below resolves to that. Autocomplete is an accelerator, and an accelerator that hesitates is worse than one that is absent — the search box still works.\n\n- **A suggest node fails.** Remove it from the pool on health check. Every node holds the full index (pre-sharding), so there is no data loss and no rebuild — just less capacity. This is a large part of why replication beats sharding for as long as it possibly can.\n- **The build job fails or produces a bad index.** Serving nodes keep running the snapshot they already have. Staleness is the failure mode, and staleness is survivable for hours. Validate every build against a sample of known prefixes with known expected results *before* any node swaps its pointer — a checksum proves the file transferred, not that the index is correct.\n- **A bad index reaches production anyway.** Keep the last several snapshots on every node. Rollback is a pointer swap: ~30 seconds, no rebuild, no redeploy. This is the single highest-value property of the immutable-snapshot design and the reason it is worth the staleness.\n- **The client's request times out.** Give the browser a hard local timeout well inside the budget — ~80 ms — and on expiry render nothing and move on. Never let a late response paint under a prefix the user has already moved past.\n- **A traffic spike (a news event) blows past capacity.** Shed load at the edge rather than queueing at the origin: return 204 with an empty body once the origin is saturated. A queue would convert an overload into a latency collapse, and every request that finally gets served would already be useless.\n- **The blocklist push fails.** This is the one failure that is not safe to ignore, because it means a term you have promised to suppress is still being suggested. It must alert loudly and page, unlike everything else on this list, which alerts quietly."
+    },
+    {
+      "key": "tradeoffs",
+      "title": "14. Trade-offs to state explicitly",
+      "content": "- **Top-k at every node vs traversing the subtree.** Precomputing turns O(subtree) into O(prefix length) — 1 second becomes microseconds — and costs ~3× the memory plus an update model where a single frequency change re-merges up to twenty ancestors. That last cost is what forces the offline build.\n- **Offline immutable index vs live updates.** Immutability buys lock-free reads, reproducible answers, identical replicas and thirty-second rollbacks, at the cost of up to ~7.5 hours before a new trend appears. Live updates buy freshness and pay with lock contention on exactly the hottest nodes, torn reads, and replicas that permanently disagree.\n- **Ids vs strings in the top-k arrays.** Ids cut the index from 100 GB to 34 GB and add one dictionary lookup for the five results actually returned. Strings avoid the indirection and triple your memory bill for data duplicated thousands of times.\n- **Replication vs sharding.** Full replicas keep routing trivial, make every node interchangeable and turn a node loss into a capacity event. Sharding by prefix is the only option once the index exceeds one machine, and it introduces a router, hot-shard risk and rebalancing work.\n- **Debouncing.** 100 ms of debounce removes 80% of requests and costs 100 ms of perceived responsiveness for a fast typist. Tune it; do not skip it.\n- **Edge caching short prefixes.** 60 seconds of staleness for a 30 ms latency saving and a 60% traffic cut. Trivially worth it here, and only because suggestions are global — the moment ranking becomes personalised, every one of those cache entries becomes unshareable and this entire tier evaporates."
+    },
+    {
+      "key": "final",
+      "title": "15. Final architecture",
+      "content": "Browser (debounce 100 ms, cancel in-flight, cache locally) → CDN edge cache (short prefixes, 60 s TTL) → regional prefix router → suggest node with an immutable 34 GB in-memory trie, top-10 precomputed at every node → walk the prefix, read the array, resolve 5 ids, apply the blocklist, return. In parallel and entirely disconnected: query logs → 90-minute batch build every 6 hours → versioned snapshot in object storage → atomic pointer swap on every serving node.\n\nEvery component is there because of the 100 ms deadline: the trie because a prefix walk beats a subtree scan; the top-k arrays because 10M nodes at 100 ns is a full second; the offline build because live updates put locks on the hottest nodes in the index; the ids because 100 GB does not fit and 34 GB does; the debounce and the edge cache because 40 ms of the budget is network and the only way to win it back is not to make the trip.\n\nThe sentence to be able to say at the end: *\"This is a latency problem, not a data problem. Fifty million queries is nothing — the difficulty is that the answer has to be sitting in memory before the request arrives, which is why the index is precomputed, immutable, and replicated to the edge.\"* Compare that to the `search-engine` design, where ranking millions of documents against an arbitrary query at request time is unavoidable: there the work genuinely has to happen when you ask. Here it does not, and recognising that is the whole answer."
+    }
+  ],
+  "estimation": {
+    "assumptions": [
+      "200M searches/day",
+      "~20 characters typed per query; debouncing collapses keystroke bursts to ~4 requests per query",
+      "p99 budget of 100 ms end-to-end, of which ~40 ms is network round trip — leaving ~50 ms server-side",
+      "Index built from 30 days of logs; top 50M distinct queries retained",
+      "Top 10 completions cached at each trie node; top 5 shown to the user",
+      "3× peak factor"
+    ],
+    "calculations": [
+      {
+        "label": "Requests/s without debouncing",
+        "value": "~46,000/s",
+        "working": "200,000,000 searches × 20 keystrokes = 4.0e9/day; / 86,400 = 46,296"
+      },
+      {
+        "label": "Requests/s with debouncing (avg / peak)",
+        "value": "~9,300/s, peak ~28,000/s",
+        "working": "200,000,000 × 4 = 8.0e8/day; / 86,400 = 9,259; × 3 = 27,777 — the browser removed 80% of the traffic"
+      },
+      {
+        "label": "Query events in the build window",
+        "value": "~6 billion",
+        "working": "200,000,000/day × 30 days"
+      },
+      {
+        "label": "Trie nodes",
+        "value": "~250M",
+        "working": "50,000,000 retained queries × ~5 unshared characters after prefix sharing"
+      },
+      {
+        "label": "Index memory",
+        "value": "~34 GB — fits in one machine's RAM",
+        "working": "250M nodes × 128 B (80 B top-k + 40 B pointers + 8 B char/flags) = 32 GB, + 50M × 40 B dictionary = 2 GB"
+      },
+      {
+        "label": "Index memory if top-k stored strings",
+        "value": "~100 GB (3× larger)",
+        "working": "250,000,000 nodes × 10 completions × 40 B = 1.0e11 — the argument for id indirection"
+      },
+      {
+        "label": "Subtree scan for a 1-character prefix (no top-k)",
+        "value": "~1 second — 20× the server budget",
+        "working": "250M / 26 ≈ 10,000,000 nodes × 100 ns = 1.0 s, against a ~50 ms server budget"
+      },
+      {
+        "label": "Lookup with top-k cached at each node",
+        "value": "O(prefix length) ≈ 1–20 pointer dereferences",
+        "working": "Walk len(prefix) nodes, read one 80-byte array, resolve 5 ids — ~2 ms including serialisation"
+      },
+      {
+        "label": "Prefixes of length 1–3",
+        "value": "18,278 — small enough to hold entirely at the edge",
+        "working": "26 + 26² + 26³ = 26 + 676 + 17,576"
+      },
+      {
+        "label": "Origin traffic after edge caching",
+        "value": "~3,700/s",
+        "working": "9,300/s × (1 − 0.60), since short prefixes are ~60% of requests"
+      },
+      {
+        "label": "Worst-case staleness",
+        "value": "~7.5 hours",
+        "working": "6-hour build cadence + ~90-minute build time"
+      }
+    ]
+  },
+  "api": [
+    {
+      "method": "GET",
+      "path": "/api/v1/suggest?q={prefix}&limit=5&lang=en",
+      "request": "—",
+      "response": "200 { \"prefix\": \"piz\", \"suggestions\": [ { \"text\": \"pizza near me\", \"score\": 0.94 }, … ] }",
+      "notes": "The only hot path. GET so every intermediary can cache it — a POST body would be uncacheable and destroy the edge tier. Cache-Control: public, max-age=60. Prefix is normalised (lowercased, trimmed, whitespace collapsed, accents folded) before it becomes a cache key. Unknown prefix returns 200 with an empty array, never 404."
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/suggest?q={prefix}&prefetch=true",
+      "request": "—",
+      "response": "200 { \"prefix\": \"piz\", \"suggestions\": [ … ], \"extensions\": { \"piza\": [ … ], \"pizz\": [ … ] } }",
+      "notes": "Optional: returns completions for the next-character extensions too, so the following keystroke renders from local memory in 0 ms. One round trip covers several keystrokes. Costs response size, which is why it is opt-in and capped at the most likely extensions."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/events/search",
+      "request": "{ \"query\": \"pizza near me\", \"selectedRank\": 1, \"lang\": \"en\", \"ts\": \"…\" }",
+      "response": "202 Accepted",
+      "notes": "Fire-and-forget, on a separate host and a separate budget. Never blocks or shares capacity with the suggest path. selectedRank is the key ranking signal — a suggestion shown constantly and never selected should fall in the next build."
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/admin/index/version",
+      "request": "—",
+      "response": "200 { \"version\": \"2024-W31-04\", \"builtAt\": \"…\", \"nodeCount\": 248113920, \"bytes\": 34359738368 }",
+      "notes": "Which snapshot is this node serving? The first question asked about any bad suggestion. The same value is returned on every suggest response as X-Index-Version so debugging does not require a log join."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/blocklist",
+      "request": "{ \"terms\": [ \"…\" ], \"action\": \"add\" }",
+      "response": "202 { \"propagationSeconds\": 5 }",
+      "notes": "The one mutable thing on the serving path. Pushed to every node within seconds and applied as a filter AFTER the trie lookup, because it cannot wait for the six-hourly build. Kept to a few thousand terms so the filter stays a hash-set membership test."
+    }
+  ],
+  "dataModel": [
+    {
+      "name": "trie_node (in memory, immutable)",
+      "fields": [
+        {
+          "name": "character",
+          "type": "uint8",
+          "notes": "The edge label from the parent"
+        },
+        {
+          "name": "children",
+          "type": "compact map<char, node_offset>",
+          "notes": "Offsets into a contiguous arena, not heap pointers — one page fault per level is the difference between 2 ms and 20 ms"
+        },
+        {
+          "name": "top_k",
+          "type": "array[10] of (uint32 query_id, float32 score)",
+          "notes": "The entire design. Precomputed during the build for the subtree rooted here, so a lookup is a read rather than a traversal. ~80 bytes, and most of the index's 32 GB."
+        },
+        {
+          "name": "is_terminal",
+          "type": "bool",
+          "notes": "This node completes a real query"
+        }
+      ],
+      "indexes": [
+        "No index — the prefix IS the access path. Walk len(prefix) nodes and read.",
+        "Laid out contiguously in build order so a prefix walk touches as few cache lines as possible"
+      ]
+    },
+    {
+      "name": "query_dictionary (in memory)",
+      "fields": [
+        {
+          "name": "query_id",
+          "type": "uint32 PRIMARY KEY",
+          "notes": "4 bytes; what the trie nodes actually store"
+        },
+        {
+          "name": "query_string",
+          "type": "VARCHAR",
+          "notes": "~30 bytes average"
+        },
+        {
+          "name": "frequency",
+          "type": "uint64",
+          "notes": "Recency-weighted count from the build window"
+        },
+        {
+          "name": "last_seen",
+          "type": "TIMESTAMP",
+          "notes": "Used to age out queries that were popular once and are now dead"
+        }
+      ],
+      "indexes": [
+        "Direct array index by query_id — ~2 GB for 50M entries",
+        "Resolved only for the 5 results actually returned, never during the walk"
+      ]
+    },
+    {
+      "name": "query_log (append-only, offline)",
+      "fields": [
+        {
+          "name": "query_string",
+          "type": "TEXT",
+          "notes": "Normalised at write time so the build does not have to"
+        },
+        {
+          "name": "occurred_at",
+          "type": "TIMESTAMP",
+          "notes": "Partitioned by day; the build reads the last 30 partitions"
+        },
+        {
+          "name": "language",
+          "type": "CHAR(2)",
+          "notes": "Partition key for per-language indexes"
+        },
+        {
+          "name": "selected_rank",
+          "type": "SMALLINT",
+          "notes": "Which suggestion the user picked, or null if they typed it out. The signal that lets ranking improve rather than just count."
+        }
+      ],
+      "indexes": [
+        "Partitioned by (day, language); rolled up into aggregate counts and dropped after 90 days",
+        "Never read on the serving path — this store and the suggest service share nothing"
+      ]
+    },
+    {
+      "name": "index_snapshot (object storage)",
+      "fields": [
+        {
+          "name": "version",
+          "type": "VARCHAR PRIMARY KEY",
+          "notes": "e.g. 2024-W31-04. Returned on every suggest response as X-Index-Version."
+        },
+        {
+          "name": "built_at",
+          "type": "TIMESTAMP",
+          "notes": "How stale the serving index currently is"
+        },
+        {
+          "name": "node_count",
+          "type": "BIGINT",
+          "notes": "A build that changes size by more than a few percent is a build to stop"
+        },
+        {
+          "name": "checksum",
+          "type": "CHAR(64)",
+          "notes": "Verified before the pointer swap. Proves transfer, not correctness — sample-prefix validation does that."
+        },
+        {
+          "name": "status",
+          "type": "ENUM(building, validated, live, superseded)",
+          "notes": "The last several validated snapshots are retained on every node, which makes a rollback a 30-second pointer swap"
+        }
+      ],
+      "indexes": [
+        "Retain the last 5 versions on every serving node — this is the rollback mechanism",
+        "INDEX (status, built_at DESC) for the deploy controller"
+      ]
+    }
+  ],
+  "evolution": [
+    {
+      "stage": "Stage 1 — an internal tool, 50,000 searches/day",
+      "problem": "Nothing is broken. A relational database with a btree on the query column answers a prefix match directly, and at this volume it does so in a few milliseconds.",
+      "change": "One app server, one database. SELECT query FROM queries WHERE query LIKE 'piz%' ORDER BY frequency DESC LIMIT 10.",
+      "why": "A btree index makes LIKE 'prefix%' a range scan, which is genuinely the right tool when the range is small. With a few hundred thousand distinct queries and a handful of requests per second, this is fast, correct and takes an afternoon. Reaching for a custom in-memory trie here would be building the last stage of this case study before anything has forced it.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "client",
+            "label": "Browser",
+            "type": "client",
+            "x": 120,
+            "y": 300
+          },
+          {
+            "id": "app",
+            "label": "App server",
+            "type": "server",
+            "x": 500,
+            "y": 300,
+            "note": "One request per keystroke, straight through to SQL."
+          },
+          {
+            "id": "db",
+            "label": "Database",
+            "type": "db",
+            "x": 880,
+            "y": 180,
+            "note": "queries(query TEXT, frequency BIGINT) with a btree on query."
+          },
+          {
+            "id": "rollup",
+            "label": "Nightly rollup",
+            "type": "worker",
+            "x": 880,
+            "y": 420,
+            "note": "Aggregates yesterday's searches into the frequency column. Even at this size, popularity is already computed offline rather than at request time."
+          }
+        ],
+        "edges": [
+          {
+            "from": "client",
+            "to": "app"
+          },
+          {
+            "from": "app",
+            "to": "db",
+            "label": "LIKE 'piz%'"
+          },
+          {
+            "from": "db",
+            "to": "rollup",
+            "label": "nightly frequency rollup",
+            "dashed": true
+          }
+        ]
+      }
+    },
+    {
+      "stage": "Stage 2 — 5M searches/day",
+      "problem": "The range scan stopped being a range. A one- or two-character prefix now matches hundreds of thousands of index rows, and the database reads every one of them before sorting by frequency to find ten — p99 is 400 ms, four times the entire end-to-end budget, and worst exactly on the short prefixes that are most of the traffic. The single server is also a point of failure that takes the search box's suggestions down with it.",
+      "change": "Move the data out of SQL and into an in-memory trie held in each app process, rebuilt nightly from the query table. Put a load balancer and a second instance in front.",
+      "why": "The database was doing two things that cannot fit in the budget: reading from disk, and sorting candidates at request time. A trie removes the first (34 GB in RAM) and turns prefix matching into pointer dereferences instead of a scan over matching rows. The second instance is for availability — the trie is identical on both, so any node answers any request. Note what this does NOT fix: finding the top 10 still means traversing the subtree below the prefix, so the cost is still proportional to how many queries match. We removed the disk, not the algorithm.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "client",
+            "label": "Browser",
+            "type": "client",
+            "x": 100,
+            "y": 300
+          },
+          {
+            "id": "lb",
+            "label": "Load balancer",
+            "type": "lb",
+            "x": 360,
+            "y": 300
+          },
+          {
+            "id": "app1",
+            "label": "Suggest 1\\n(in-memory trie)",
+            "type": "server",
+            "x": 620,
+            "y": 180,
+            "note": "Walks the prefix, then DFS the subtree to find the top 10."
+          },
+          {
+            "id": "app2",
+            "label": "Suggest 2\\n(in-memory trie)",
+            "type": "server",
+            "x": 620,
+            "y": 420
+          },
+          {
+            "id": "logs",
+            "label": "Query log DB",
+            "type": "db",
+            "x": 880,
+            "y": 180
+          },
+          {
+            "id": "builder",
+            "label": "Nightly build",
+            "type": "worker",
+            "x": 880,
+            "y": 420,
+            "note": "Aggregates the log and hands each process a trie at startup."
+          }
+        ],
+        "edges": [
+          {
+            "from": "client",
+            "to": "lb"
+          },
+          {
+            "from": "lb",
+            "to": "app1"
+          },
+          {
+            "from": "lb",
+            "to": "app2"
+          },
+          {
+            "from": "app1",
+            "to": "logs",
+            "label": "log query",
+            "dashed": true
+          },
+          {
+            "from": "app2",
+            "to": "logs",
+            "label": "log query",
+            "dashed": true
+          },
+          {
+            "from": "logs",
+            "to": "builder",
+            "label": "nightly aggregate"
+          },
+          {
+            "from": "builder",
+            "to": "app1",
+            "label": "trie",
+            "dashed": true
+          },
+          {
+            "from": "builder",
+            "to": "app2",
+            "label": "trie",
+            "dashed": true
+          }
+        ]
+      }
+    },
+    {
+      "stage": "Stage 3 — 30M searches/day, 50M distinct queries retained",
+      "problem": "The subtree traversal is now the bottleneck, and it fails worst on the cheapest input. The subtree under a single-character prefix holds ~10M nodes; walking it at ~100 ns per node is about 1 second — 20× the server budget — while a 12-character prefix returns in microseconds. Short prefixes are the majority of requests, so the p99 is governed entirely by the case the user does least work to produce.",
+      "change": "Precompute and store the top 10 completions at EVERY node during the build. A lookup becomes: walk the prefix, read the array, resolve the ids.",
+      "why": "This is the central idea of the whole design. Cost goes from O(size of the matching subtree) to O(length of the prefix) — and prefix length is bounded by what a human types, so lookup time is effectively constant and completely independent of how much data matches. The price is deliberate, massive redundancy: 'pizza near me' is stored in the top-10 of every node along its own path, which is most of the index's 32 GB. The second price is invisible today and fatal tomorrow — updating one query's frequency now means re-merging the top-k of up to twenty ancestor nodes, which is what the next stage runs into.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "client",
+            "label": "Browser",
+            "type": "client",
+            "x": 90,
+            "y": 300
+          },
+          {
+            "id": "lb",
+            "label": "Load balancer",
+            "type": "lb",
+            "x": 350,
+            "y": 300
+          },
+          {
+            "id": "sug1",
+            "label": "Suggest 1\\n(top-k at each node)",
+            "type": "server",
+            "x": 610,
+            "y": 180,
+            "note": "Walk the prefix, read an 80-byte array, resolve 5 ids.",
+            "why": {
+              "without": "Answering a short prefix means traversing its whole subtree — ~10M nodes for a single character, about 1 second at 100 ns per node, or 20× the entire server budget.",
+              "with": "Every node already holds its own top 10, so the answer is sitting at the end of the prefix walk: at most ~20 pointer dereferences and one array read.",
+              "conclusion": "Precomputing top-k at every node converts an O(subtree) search into an O(prefix length) lookup, at the cost of ~3× memory and an update that touches every ancestor."
+            }
+          },
+          {
+            "id": "sug2",
+            "label": "Suggest 2\\n(top-k at each node)",
+            "type": "server",
+            "x": 610,
+            "y": 420
+          },
+          {
+            "id": "counts",
+            "label": "Live count store",
+            "type": "cache",
+            "x": 870,
+            "y": 300,
+            "note": "Frequencies incremented on every search and applied into each process's trie."
+          },
+          {
+            "id": "logs",
+            "label": "Query log DB",
+            "type": "db",
+            "x": 350,
+            "y": 500
+          }
+        ],
+        "edges": [
+          {
+            "from": "client",
+            "to": "lb"
+          },
+          {
+            "from": "lb",
+            "to": "sug1"
+          },
+          {
+            "from": "lb",
+            "to": "sug2"
+          },
+          {
+            "from": "sug1",
+            "to": "counts",
+            "label": "increment + re-merge"
+          },
+          {
+            "from": "sug2",
+            "to": "counts",
+            "label": "increment + re-merge"
+          },
+          {
+            "from": "sug1",
+            "to": "logs",
+            "label": "log query",
+            "dashed": true
+          },
+          {
+            "from": "sug2",
+            "to": "logs",
+            "label": "log query",
+            "dashed": true
+          }
+        ]
+      }
+    },
+    {
+      "stage": "Stage 4 — 120M searches/day, live updates abandoned",
+      "problem": "Keeping the trie fresh in place broke it. One frequency increment re-merges the top-k of up to twenty ancestors, so ~9,000 searches/s produced ~180,000 node mutations/s against a structure being read constantly — and the contended nodes were the short prefixes, which are also the most-read nodes in the index. Read p99 went from 2 ms to 35 ms on lock waits, non-atomic re-merges served torn arrays containing duplicate and unresolvable ids, and because each replica had seen different traffic, two users typing the same prefix a second apart got different answers with no artifact to inspect.",
+      "change": "Make the serving index strictly read-only. Build it offline from 30 days of logs on a 6-hour cadence, ship it as a versioned, checksummed snapshot, and deploy by atomic pointer swap.",
+      "why": "The contention was not an implementation defect — it is inherent to a structure whose answers are precomputed up every ancestor chain. Removing writes from the serving path removes locks, torn reads and replica divergence in one move, and gives three things live updates never could: every replica is byte-identical, every answer is reproducible against a named version, and a rollback is a pointer swap taking ~30 seconds rather than a 90-minute rebuild. The cost is stated honestly: a query that trends at 09:00 does not appear until the next build — up to ~7.5 hours. The blocklist is carved out as the one live filter, applied after the lookup, because suppression genuinely cannot wait.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "client",
+            "label": "Browser",
+            "type": "client",
+            "x": 80,
+            "y": 300
+          },
+          {
+            "id": "lb",
+            "label": "Load balancer",
+            "type": "lb",
+            "x": 330,
+            "y": 300
+          },
+          {
+            "id": "sug",
+            "label": "Suggest fleet\\n(read-only trie)",
+            "type": "server",
+            "x": 580,
+            "y": 300,
+            "note": "No locks, no writes. Holds a pointer to one loaded snapshot."
+          },
+          {
+            "id": "snapshot",
+            "label": "Versioned snapshots",
+            "type": "storage",
+            "x": 830,
+            "y": 180,
+            "note": "Last 5 retained on every node — rollback is a pointer swap.",
+            "why": {
+              "without": "Updating counts in place re-merges top-k up every ancestor, putting locks on the hottest nodes in the index: p99 rises to 35 ms, partial re-merges serve torn arrays, and no two replicas agree.",
+              "with": "The serving structure is an immutable file. Reads need no synchronisation, every replica is byte-identical, and a bad index is undone by pointing back at the previous version.",
+              "conclusion": "Immutability buys lock-free reads, reproducibility and 30-second rollbacks; it costs up to ~7.5 hours before a new trend appears."
+            }
+          },
+          {
+            "id": "builder",
+            "label": "Offline build\\n(6-hourly, ~90 min)",
+            "type": "worker",
+            "x": 830,
+            "y": 420
+          },
+          {
+            "id": "logs",
+            "label": "Query logs (30d)",
+            "type": "db",
+            "x": 330,
+            "y": 480
+          }
+        ],
+        "edges": [
+          {
+            "from": "client",
+            "to": "lb"
+          },
+          {
+            "from": "lb",
+            "to": "sug"
+          },
+          {
+            "from": "sug",
+            "to": "logs",
+            "label": "log query",
+            "dashed": true
+          },
+          {
+            "from": "logs",
+            "to": "builder",
+            "label": "6B events"
+          },
+          {
+            "from": "builder",
+            "to": "snapshot",
+            "label": "build + checksum"
+          },
+          {
+            "from": "snapshot",
+            "to": "sug",
+            "label": "atomic pointer swap",
+            "dashed": true
+          }
+        ]
+      }
+    },
+    {
+      "stage": "Stage 5 — 200M searches/day, global",
+      "problem": "Two things broke that the server could do nothing about. Users outside the serving region were paying 150–250 ms of round trip, so the response missed the 100 ms budget before the request even arrived — and every one of those requests was correct, fast and useless. Meanwhile the fleet was sized against 46,000 requests/s of raw per-keystroke traffic, five times what the product actually needs, because nothing was suppressing mid-burst keystrokes.",
+      "change": "Push work off the origin entirely: debounce and cancel in the browser, cache short prefixes at the CDN, replicate the snapshot to every region — and shard by prefix only once per-language indexes push the total past one machine's RAM.",
+      "why": "40 ms of a 100 ms budget is network, and the only way to win it back is not to make the trip: a POP ~10 ms away returns 30 ms to the budget, which is more than the entire server-side pipeline consumes. The economics are unusually good — there are only 18,278 prefixes of 1–3 characters, they are ~60% of requests, they are identical for every user, and 60 seconds of staleness on them is invisible. Debouncing cuts 46,000/s to 9,300/s with four lines of JavaScript, and the edge cuts that to ~3,700/s. Sharding is deliberately last: a 34 GB index fits one machine, so full replicas keep routing trivial and make a node loss a capacity event. Only when forty language indexes take the total past 400 GB do you shard on the first two characters — and that works only because the request carries its own routing key, so every lookup stays single-shard instead of scattering and merging 64 top-k lists.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "browser",
+            "label": "Browser\\n(debounce + cancel)",
+            "type": "client",
+            "x": 80,
+            "y": 300,
+            "note": "100 ms debounce, aborts in-flight requests, caches locally on backspace."
+          },
+          {
+            "id": "cdn",
+            "label": "Edge cache\\n(prefixes ≤ 3 chars)",
+            "type": "cdn",
+            "x": 340,
+            "y": 300,
+            "note": "18,278 entries, 60 s TTL, ~60% of all requests never reach the origin.",
+            "why": {
+              "without": "Every request crosses the continent: 150–250 ms of round trip against a 100 ms budget, and the origin absorbs all 9,300 requests/s.",
+              "with": "Short prefixes — identical for every user and ~60% of traffic — are served from a POP ~10 ms away, leaving ~3,700/s at the origin.",
+              "conclusion": "Worth 30 ms of budget and a 60% traffic cut for 60 seconds of staleness — and only possible because suggestions are global rather than personalised."
+            }
+          },
+          {
+            "id": "router",
+            "label": "Prefix router",
+            "type": "proxy",
+            "x": 600,
+            "y": 300,
+            "note": "Routes on the first two characters. Single-shard by construction — no scatter, no merge."
+          },
+          {
+            "id": "shard1",
+            "label": "Suggest shard a–f",
+            "type": "server",
+            "x": 860,
+            "y": 120
+          },
+          {
+            "id": "shard2",
+            "label": "Suggest shard g–p",
+            "type": "server",
+            "x": 860,
+            "y": 300
+          },
+          {
+            "id": "shard3",
+            "label": "Suggest shard q–z",
+            "type": "server",
+            "x": 860,
+            "y": 480,
+            "note": "Balanced by traffic, not by bucket count — 'th' and 'qz' are nothing alike."
+          },
+          {
+            "id": "snapshot",
+            "label": "Versioned snapshots",
+            "type": "storage",
+            "x": 600,
+            "y": 480
+          },
+          {
+            "id": "builder",
+            "label": "Offline build\\n(6-hourly)",
+            "type": "worker",
+            "x": 340,
+            "y": 480,
+            "note": "Reads 30 days of logs; writes one immutable file per shard per language."
+          }
+        ],
+        "edges": [
+          {
+            "from": "browser",
+            "to": "cdn"
+          },
+          {
+            "from": "cdn",
+            "to": "router",
+            "label": "miss (~40%)",
+            "dashed": true
+          },
+          {
+            "from": "router",
+            "to": "shard1"
+          },
+          {
+            "from": "router",
+            "to": "shard2"
+          },
+          {
+            "from": "router",
+            "to": "shard3"
+          },
+          {
+            "from": "builder",
+            "to": "snapshot",
+            "label": "build + validate"
+          },
+          {
+            "from": "snapshot",
+            "to": "shard1",
+            "label": "pointer swap",
+            "dashed": true
+          },
+          {
+            "from": "snapshot",
+            "to": "shard2",
+            "label": "pointer swap",
+            "dashed": true
+          },
+          {
+            "from": "snapshot",
+            "to": "shard3",
+            "label": "pointer swap",
+            "dashed": true
+          }
+        ]
+      }
+    }
+  ],
+  "tradeoffs": [
+    {
+      "option": "Top-k precomputed at every trie node",
+      "pros": [
+        "Lookup is O(prefix length) — at most ~20 dereferences and one array read, regardless of how many queries match",
+        "The pathological case (a one-character prefix, ~10M nodes, ~1 second) disappears entirely",
+        "Cost is predictable, so the p99 is predictable — which is what a hard deadline actually requires"
+      ],
+      "cons": [
+        "~3× the memory: 80 bytes of redundant top-k on every one of 250M nodes",
+        "One frequency change re-merges the top-k of every ancestor on the path, so updates are not local",
+        "That update cost is what makes live modification impractical and forces the entire offline build pipeline"
+      ]
+    },
+    {
+      "option": "Subtree traversal at request time (no top-k)",
+      "pros": [
+        "Roughly a third of the memory — store each query once, at its terminal node",
+        "Frequency updates are genuinely local: touch one node, no ancestor re-merge",
+        "Simple to build and simple to reason about"
+      ],
+      "cons": [
+        "~1 second for a single-character prefix — 20× the server budget, on the most common request shape",
+        "Cost scales with how many queries match, so the least typing produces the most work",
+        "p99 is hostage to prefix length, which the user controls and you cannot"
+      ]
+    },
+    {
+      "option": "Offline-built immutable snapshot",
+      "pros": [
+        "No locks on the read path, so no contention on exactly the hottest nodes in the index",
+        "Every replica is byte-identical and every answer is reproducible against a named version",
+        "Rollback is a pointer swap — ~30 seconds, no rebuild, no redeploy"
+      ],
+      "cons": [
+        "A newly trending query is invisible for up to ~7.5 hours (6-hour cadence plus a 90-minute build)",
+        "Loading a new index while serving the old one doubles resident memory to ~68 GB for several minutes",
+        "A separate batch pipeline to own, monitor and page on, entirely distinct from the serving system"
+      ]
+    },
+    {
+      "option": "Live in-place index updates",
+      "pros": [
+        "Trends appear within seconds rather than hours",
+        "No batch pipeline, no snapshot storage, no deploy dance",
+        "The index always reflects exactly what has been searched"
+      ],
+      "cons": [
+        "~180,000 node mutations/s against a structure read 9,300 times/s, contending on the most-read nodes in the index",
+        "Non-atomic top-k re-merges serve torn arrays with duplicate or unresolvable ids",
+        "Replicas permanently diverge — the same prefix gives different answers depending on which node you hit, and nothing is reproducible"
+      ]
+    },
+    {
+      "option": "Edge-caching short prefixes at the CDN",
+      "pros": [
+        "Serves from a POP ~10 ms away instead of a region ~40 ms away — 30 ms returned to a 100 ms budget",
+        "~60% of requests never reach the origin, cutting it from 9,300/s to ~3,700/s",
+        "Only 18,278 entries for prefixes of 1–3 characters, so the working set is trivially small"
+      ],
+      "cons": [
+        "Up to 60 seconds of staleness, and a blocklist addition must bypass the edge or it stays visible",
+        "Works only because suggestions are global — introducing personalised ranking makes every entry unshareable and deletes this tier",
+        "Requires disciplined prefix normalisation, or the same logical prefix fragments into several cache entries and the hit rate collapses"
+      ]
+    }
+  ],
+  "interviewStages": [
+    {
+      "key": "requirements",
+      "prompt": "Design autocomplete for a search box. What do you need to know first?",
+      "hints": [
+        "One of these questions constrains the design far more than the others",
+        "Think about what the user is doing while they wait"
+      ],
+      "modelAnswer": [
+        "The latency target, and whether it is end-to-end or server-side — ask this first, because it eliminates most designs",
+        "Frame why: a suggestion arriving after the next keystroke is not slow, it is wrong — it renders under a prefix that no longer matches",
+        "Freshness: must trends appear within minutes, or is a few hours acceptable?",
+        "Prefix-only or fuzzy/mid-string — each multiplies the index",
+        "Global or personalised ranking, because personalisation makes the answer uncacheable and unshareable"
+      ]
+    },
+    {
+      "key": "budget",
+      "prompt": "You said ~100 ms end-to-end. Break that budget down and tell me what it rules out.",
+      "hints": [
+        "How much of it is gone before your code runs?",
+        "Work backwards from what is left rather than forwards from the data"
+      ],
+      "modelAnswer": [
+        "~40 ms network RTT, ~5 ms LB/TLS, ~10 ms browser render — leaving ~50 ms server-side and ~2 ms for the actual lookup",
+        "That rules out any disk seek, any request-time sort, any cross-service or cross-region call, and anything relational",
+        "It also means the index must be in memory, which makes index size the binding constraint on the design",
+        "And it means the network is the largest single line item, so the browser and the CDN are part of the architecture"
+      ]
+    },
+    {
+      "key": "structure",
+      "prompt": "What data structure, and why not an inverted index?",
+      "hints": [
+        "What is the input — a term, or a fragment of one?",
+        "What is each structure's cost proportional to?"
+      ],
+      "modelAnswer": [
+        "A trie: the prefix is the path, so lookup cost is proportional to what the user typed, not to how much matches",
+        "An inverted index is keyed by whole terms — prefix matching means range-scanning the term dictionary, then unioning and ranking posting lists",
+        "Different problem from full-text search: matching a prefix against past queries, not ranking documents against a query",
+        "And the ranking is a property of the corpus (how often people searched it), not of the request — so it can be computed once, offline"
+      ]
+    },
+    {
+      "key": "topk",
+      "prompt": "A user types a single character. Walk me through what your trie does.",
+      "hints": [
+        "How big is the subtree under one character?",
+        "Do the multiplication before proposing the fix"
+      ],
+      "modelAnswer": [
+        "Naively: walk one node, then traverse ~10M nodes to find the best 10 — about 1 second at 100 ns per node, or 20× the budget",
+        "Note the inversion: the least typing produces the most work, so the p99 is set by the most common request",
+        "Fix: precompute the top 10 at every node during the build, so the answer is sitting at the end of the walk",
+        "This converts O(subtree) into O(prefix length), and prefix length is bounded by what a human types",
+        "Costs ~3× memory (80 B of redundant top-k per node) and makes any update re-merge every ancestor"
+      ]
+    },
+    {
+      "key": "updates",
+      "prompt": "How do you keep it fresh? Why not just increment counts as searches come in?",
+      "hints": [
+        "Which nodes would a live update touch, and who else is reading them?",
+        "What do two replicas look like after an hour of different traffic?"
+      ],
+      "modelAnswer": [
+        "One increment re-merges up to 20 ancestors, so ~9,000 searches/s becomes ~180,000 node mutations/s",
+        "The contended nodes are the short prefixes, which are also the most-read nodes — locks land exactly where you can least afford them",
+        "Non-atomic re-merges serve torn top-k arrays; replicas diverge, so nothing is reproducible",
+        "Instead: build offline from 30 days of logs, ship an immutable versioned snapshot, deploy by atomic pointer swap",
+        "State the cost: up to ~7.5 hours before a trend appears. Mitigate with a small trending layer, or a shorter cadence, or accept it",
+        "The blocklist is the exception — a live filter applied after the lookup, because suppression cannot wait"
+      ]
+    },
+    {
+      "key": "scaling",
+      "prompt": "200M searches a day, users on every continent. How do you scale it?",
+      "hints": [
+        "What is the cheapest request to serve?",
+        "Does a 34 GB index actually need sharding?"
+      ],
+      "modelAnswer": [
+        "Start at the client: 100 ms debounce takes 46,000 req/s to 9,300 req/s — 80% removed before anything is provisioned",
+        "Cancel in-flight requests, and discard responses whose prefix no longer matches the input box",
+        "Edge-cache prefixes of 1–3 characters: 18,278 entries, ~60% of traffic, and 30 ms of budget returned",
+        "Replicate, do not shard: 34 GB fits one machine, so every node holds the whole index and routing stays trivial",
+        "Full replicas per region, because 150 ms of cross-continental RTT blows the budget on its own",
+        "Shard by prefix only once multi-language indexes exceed one machine — and note it works because the request carries its own routing key, so every lookup is single-shard"
+      ]
+    },
+    {
+      "key": "failure",
+      "prompt": "A build ships a bad index and users start seeing nonsense. What happens?",
+      "hints": [
+        "What did you keep on the node besides the current version?",
+        "What should have caught it before the swap?"
+      ],
+      "modelAnswer": [
+        "Roll back by pointing at the previous retained snapshot — ~30 seconds, no rebuild and no redeploy",
+        "This is the main payoff of the immutable-snapshot design and worth naming as such",
+        "Prevention: validate every build against a sample of known prefixes with known expected results before any node swaps. A checksum proves transfer, not correctness",
+        "Alert on node-count drift — a build that changes size by more than a few percent is a build to stop",
+        "General principle for every other failure: return an empty list, fast. The search box works without suggestions; a hesitating accelerator is worse than none"
+      ]
+    }
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "architecture",
+      "question": "Why does each trie node store its own top-k completions instead of the service searching the subtree at request time?",
+      "options": [
+        "It saves memory by avoiding duplicate strings",
+        "It converts an O(subtree) search into an O(prefix length) lookup — a single-character prefix covers ~10M nodes, about 1 second at 100 ns each, versus ~20 dereferences",
+        "It makes the index easier to update live",
+        "It is required for the trie to support prefix matching at all"
+      ],
+      "answerIndex": 1,
+      "explanation": "Without cached top-k, cost is proportional to how many queries match — so the shortest prefix, which is the most common request, is the most expensive one to serve. Caching top-k at each node makes cost proportional to how much the user typed instead, which is bounded by ~20. It costs roughly 3× the memory and makes updates non-local, which is exactly why the index ends up being built offline."
+    },
+    {
+      "id": "q2",
+      "type": "architecture",
+      "question": "Why is the serving index built offline and shipped read-only rather than updated as searches arrive?",
+      "options": [
+        "Because batch jobs are cheaper to run than online writes",
+        "Because a frequency change re-merges the top-k of every ancestor — ~180,000 mutations/s contending on the most-read nodes, with torn reads and permanently divergent replicas",
+        "Because tries cannot be modified after construction",
+        "Because query logs are only available in batch"
+      ],
+      "answerIndex": 1,
+      "explanation": "The update is not local: one increment re-merges up to twenty ancestors, and those ancestors are the short prefixes — the hottest nodes in the index. Locking them puts milliseconds onto a 2 ms budget, non-atomic re-merges serve torn arrays, and replicas that have seen different traffic permanently disagree. Immutability buys lock-free reads, byte-identical replicas and 30-second rollbacks; the honest price is up to ~7.5 hours before a new trend appears."
+    },
+    {
+      "id": "q3",
+      "type": "architecture",
+      "question": "Why is autocomplete NOT the same problem as full-text search?",
+      "options": [
+        "It is the same problem, just with a smaller corpus",
+        "Autocomplete matches a prefix against past queries with a ranking precomputed from the corpus, while search ranks documents against a complete query at request time",
+        "Search is read-heavy and autocomplete is write-heavy",
+        "Autocomplete does not need ranking"
+      ],
+      "answerIndex": 1,
+      "explanation": "The corpus is different (past queries, not documents), the input is different (a fragment, not a complete query), and crucially the ranking is different in kind. Search relevance depends on the request, so it must be computed per request. Autocomplete ranks queries by how often they were searched — a property of the corpus — so it can be baked into the structure offline. An inverted index is keyed by whole terms, so prefix matching means range-scanning the term dictionary and unioning posting lists: a lot of work, proportional to how much matches, to produce five strings."
+    },
+    {
+      "id": "q4",
+      "type": "architecture",
+      "question": "With a 100 ms end-to-end budget, why are the browser and the CDN treated as parts of the architecture?",
+      "options": [
+        "They are not — they are client-side concerns outside the system design",
+        "Because ~40 ms of the budget is network round trip: debouncing removes 80% of requests before they leave the device, and edge-caching the 18,278 short prefixes serves ~60% of traffic from ~10 ms away",
+        "Because the CDN can run the trie lookup itself",
+        "Because browsers cannot make more than one request at a time"
+      ],
+      "answerIndex": 1,
+      "explanation": "The largest single line item in the budget is a network trip you can only win back by not making it. A 100 ms debounce takes 46,000 req/s to 9,300 req/s with four lines of JavaScript; edge-caching short prefixes takes that to ~3,700/s and saves ~30 ms of latency, which is more than the entire server-side pipeline consumes. The two cheapest components here run on machines you do not own — and the CDN tier only works because suggestions are global, so personalising the ranking would delete it."
+    }
+  ],
+  "related": [
+    "search-engine",
+    "cache",
+    "cdn",
+    "sharding",
+    "indexing"
+  ]
+}

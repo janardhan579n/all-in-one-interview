@@ -187,14 +187,26 @@ def wrap(problem_id: str, which: str, code: str) -> tuple[str, str, str]:
     own_imports, code = hoist_imports(code)
 
     if kind == 'class':
-        # Keep the author's own class name; the file is named after it.
-        name = CLASS_RE.search(code).group(1)
+        # The author's class name cannot be kept. Both blocks of range-sum-query declare
+        # `class NumArray`, and emitting both into one package is a duplicate-class error — in
+        # practice one file simply overwrote the other, and the problem reported as
+        # "cannot instantiate" rather than as the name collision it was. So the OUTER class is
+        # renamed to the holder name and its constructors and self-references renamed with it.
+        # Nested classes (LRUCache's `Node`, for one) keep their names: only the first `class`
+        # declaration is touched.
+        original = CLASS_RE.search(code).group(1)
+        body = re.sub(r'^\s*public\s+class', 'class', code, count=1, flags=re.M)
+        body = re.sub(rf'\bclass\s+{re.escape(original)}\b', f'class {holder}', body, count=1)
+        # Constructors: `public NumArray(` / `NumArray(` at the start of a member declaration.
+        body = re.sub(rf'(?m)^(\s*(?:public\s+|private\s+|protected\s+)?){re.escape(original)}\s*\(',
+                      rf'\g<1>{holder}(', body)
+        body = re.sub(rf'\bnew\s+{re.escape(original)}\s*\(', f'new {holder}(', body)
         source = (
             f'package verify;\n\n{PREAMBLE}{own_imports}\n'
             f'import verify.Support.TreeNode;\nimport verify.Support.ListNode;\nimport verify.Support.Node;\n\n'
-            + re.sub(r'^\s*public\s+class', 'class', code, count=1, flags=re.M)
+            + body
         )
-        return kind, name, source
+        return kind, holder, source
 
     if kind == 'method':
         # The body is wrapped VERBATIM. The first version tried to make each method static with a

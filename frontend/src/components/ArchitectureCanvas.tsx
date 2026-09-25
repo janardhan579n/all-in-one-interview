@@ -139,8 +139,21 @@ export function ArchitectureCanvas({
         </div>
       </div>
 
-      <div className="overflow-x-auto bg-surface-sunken/40">
-        <svg viewBox="0 0 1120 600" className="h-[420px] w-full min-w-[720px]" role="img" aria-label={title ?? 'architecture diagram'}>
+      {/*
+        The canvas is hand-authored in content JSON at fixed node coordinates on a 1120×600
+        grid. Rather than forcing a min-width and letting the diagram spill into a horizontally
+        scrolling strip (unusable on a phone, where you cannot see the whole system at once),
+        the viewBox lets the SVG scale down as one image to whatever width it is given — labels
+        get small on a phone, same as the rest of a zoomed-out diagram would, but every node and
+        edge stays visible and tapping a node still opens the full-text detail panel below.
+      */}
+      <div className="bg-surface-sunken/40">
+        <svg
+          viewBox="0 0 1120 600"
+          className="aspect-[1120/600] w-full"
+          role="img"
+          aria-label={title ?? 'architecture diagram'}
+        >
           <defs>
             <marker id="arch-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
               <path d="M 0 0 L 10 5 L 0 10 z" fill="rgb(var(--ink-faint))" />

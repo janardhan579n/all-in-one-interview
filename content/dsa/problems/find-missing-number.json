@@ -36,14 +36,16 @@
   "bruteForce": {
     "idea": "For every candidate value from 0 to n, scan the array to see whether it is present; return the first one that is not.",
     "code": [
-      "for (int candidate = 0; candidate <= nums.length; candidate++) {",
-      "    boolean found = false;",
-      "    for (int value : nums) {",
-      "        if (value == candidate) { found = true; break; }",
+      "public static int missingNumber(int[] nums) {",
+      "    for (int candidate = 0; candidate <= nums.length; candidate++) {",
+      "        boolean found = false;",
+      "        for (int value : nums) {          // a full rescan of the array for every candidate",
+      "            if (value == candidate) { found = true; break; }",
+      "        }",
+      "        if (!found) return candidate;",
       "    }",
-      "    if (!found) return candidate;",
-      "}",
-      "return -1;"
+      "    return -1;",
+      "}"
     ],
     "complexity": {
       "time": "O(n^2)",

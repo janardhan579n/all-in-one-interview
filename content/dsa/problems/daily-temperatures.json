@@ -34,16 +34,18 @@
   "bruteForce": {
     "idea": "For each day, walk forward until a warmer day appears, then record the gap.",
     "code": [
-      "int[] answer = new int[temperatures.length];",
-      "for (int i = 0; i < temperatures.length; i++) {",
-      "    for (int j = i + 1; j < temperatures.length; j++) {",
-      "        if (temperatures[j] > temperatures[i]) {",
-      "            answer[i] = j - i;",
-      "            break;",
+      "public static int[] dailyTemperatures(int[] temperatures) {",
+      "    int[] answer = new int[temperatures.length];",
+      "    for (int i = 0; i < temperatures.length; i++) {",
+      "        for (int j = i + 1; j < temperatures.length; j++) {   // re-reads the days the last scan rejected",
+      "            if (temperatures[j] > temperatures[i]) {",
+      "                answer[i] = j - i;",
+      "                break;",
+      "            }",
       "        }",
       "    }",
-      "}",
-      "return answer;"
+      "    return answer;",
+      "}"
     ],
     "complexity": {
       "time": "O(n^2)",

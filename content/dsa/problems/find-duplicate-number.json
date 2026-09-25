@@ -32,10 +32,14 @@
   "bruteForce": {
     "idea": "A HashSet of seen values, or sort and check neighbours.",
     "code": [
-      "Set<Integer> seen = new HashSet<>();",
-      "for (int x : nums) if (!seen.add(x)) return x;",
-      "return -1;",
-      "// or: Arrays.sort(nums) then compare adjacent — but that MODIFIES the array"
+      "public static int findDuplicate(int[] nums) {",
+      "    Set<Integer> seen = new HashSet<>();",
+      "    for (int x : nums) {",
+      "        if (!seen.add(x)) return x;   // O(n) extra memory — exactly what the constraint forbids",
+      "    }",
+      "    return -1;",
+      "    // or: Arrays.sort(nums) then compare adjacent — but that MODIFIES the array",
+      "}"
     ],
     "complexity": {
       "time": "O(n)",

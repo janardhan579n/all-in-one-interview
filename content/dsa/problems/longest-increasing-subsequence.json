@@ -38,7 +38,7 @@
   "bruteForce": {
     "idea": "Enumerate every subsequence — each element is either kept or dropped — and take the longest one that happens to be increasing.",
     "code": [
-      "public static int lisBrute(int[] nums) {",
+      "public static int lengthOfLIS(int[] nums) {",
       "    return explore(nums, 0, Integer.MIN_VALUE);",
       "}",
       "",

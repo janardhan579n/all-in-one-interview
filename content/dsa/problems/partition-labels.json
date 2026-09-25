@@ -36,18 +36,20 @@
   "bruteForce": {
     "idea": "For each candidate cut point, verify it: collect the set of letters to its left and the set to its right and check they are disjoint. Cut at the first position where they are, then repeat on the remainder.",
     "code": [
-      "List<Integer> parts = new ArrayList<>();",
-      "int start = 0;",
-      "for (int cut = 0; cut < s.length(); cut++) {",
-      "    Set<Character> left = new HashSet<>();",
-      "    for (int i = start; i <= cut; i++) left.add(s.charAt(i));",
-      "    boolean clean = true;",
-      "    for (int i = cut + 1; i < s.length(); i++) {",
-      "        if (left.contains(s.charAt(i))) { clean = false; break; }",
+      "public static List<Integer> partitionLabels(String s) {",
+      "    List<Integer> parts = new ArrayList<>();",
+      "    int start = 0;",
+      "    for (int cut = 0; cut < s.length(); cut++) {",
+      "        Set<Character> left = new HashSet<>();",
+      "        for (int i = start; i <= cut; i++) left.add(s.charAt(i));",
+      "        boolean clean = true;",
+      "        for (int i = cut + 1; i < s.length(); i++) {",
+      "            if (left.contains(s.charAt(i))) { clean = false; break; }",
+      "        }",
+      "        if (clean) { parts.add(cut - start + 1); start = cut + 1; }",
       "    }",
-      "    if (clean) { parts.add(cut - start + 1); start = cut + 1; }",
-      "}",
-      "return parts;"
+      "    return parts;",
+      "}"
     ],
     "complexity": {
       "time": "O(n^2)",

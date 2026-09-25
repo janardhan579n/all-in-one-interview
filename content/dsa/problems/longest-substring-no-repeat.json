@@ -34,15 +34,26 @@
   "bruteForce": {
     "idea": "Check every substring and test whether it has all-distinct characters.",
     "code": [
-      "int best = 0;",
-      "for (int i = 0; i < s.length(); i++) {",
-      "    for (int j = i; j < s.length(); j++) {",
-      "        if (allDistinct(s, i, j)) {",
-      "            best = Math.max(best, j - i + 1);",
+      "public static int lengthOfLongestSubstring(String s) {",
+      "    int best = 0;",
+      "    for (int i = 0; i < s.length(); i++) {",
+      "        for (int j = i; j < s.length(); j++) {",
+      "            if (allDistinct(s, i, j)) {",
+      "                best = Math.max(best, j - i + 1);",
+      "            }",
       "        }",
       "    }",
+      "    return best;",
       "}",
-      "return best;"
+      "",
+      "/** Rescans the whole window from scratch, every time. */",
+      "private static boolean allDistinct(String s, int from, int to) {",
+      "    Set<Character> seen = new HashSet<>();",
+      "    for (int t = from; t <= to; t++) {",
+      "        if (!seen.add(s.charAt(t))) return false;",
+      "    }",
+      "    return true;",
+      "}"
     ],
     "complexity": {
       "time": "O(n^3)",

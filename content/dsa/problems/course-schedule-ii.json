@@ -37,7 +37,16 @@
   "bruteForce": {
     "idea": "Try orderings. Pick any course whose prerequisites are already placed, recurse, and backtrack if the branch dead-ends.",
     "code": [
-      "boolean build(List<Integer> placed, boolean[] used, int[][] prereqs, int n) {",
+      "public static int[] findOrder(int numCourses, int[][] prerequisites) {",
+      "    List<Integer> placed = new ArrayList<>();",
+      "    boolean ok = build(placed, new boolean[numCourses], prerequisites, numCourses);",
+      "    if (!ok) return new int[0];",
+      "    int[] order = new int[numCourses];",
+      "    for (int i = 0; i < numCourses; i++) order[i] = placed.get(i);",
+      "    return order;",
+      "}",
+      "",
+      "private static boolean build(List<Integer> placed, boolean[] used, int[][] prereqs, int n) {",
       "    if (placed.size() == n) return true;",
       "    for (int course = 0; course < n; course++) {",
       "        if (used[course] || !prerequisitesPlaced(course, placed, prereqs)) continue;",
@@ -48,6 +57,13 @@
       "        used[course] = false;",
       "    }",
       "    return false;",
+      "}",
+      "",
+      "private static boolean prerequisitesPlaced(int course, List<Integer> placed, int[][] prereqs) {",
+      "    for (int[] pair : prereqs) {",
+      "        if (pair[0] == course && !placed.contains(pair[1])) return false;",
+      "    }",
+      "    return true;",
       "}"
     ],
     "complexity": {

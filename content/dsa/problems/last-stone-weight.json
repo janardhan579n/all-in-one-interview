@@ -35,15 +35,17 @@
   "bruteForce": {
     "idea": "Keep the stones in a plain array. Each turn, sort it (or scan twice for the two largest), remove those two, push back the difference if it is non-zero, and repeat.",
     "code": [
-      "List<Integer> pile = new ArrayList<>();",
-      "for (int stone : stones) pile.add(stone);",
-      "while (pile.size() > 1) {",
-      "    Collections.sort(pile, Collections.reverseOrder());   // re-sort the whole pile every turn",
-      "    int y = pile.remove(0);",
-      "    int x = pile.remove(0);",
-      "    if (y != x) pile.add(y - x);",
-      "}",
-      "return pile.isEmpty() ? 0 : pile.get(0);"
+      "public static int lastStoneWeight(int[] stones) {",
+      "    List<Integer> pile = new ArrayList<>();",
+      "    for (int stone : stones) pile.add(stone);",
+      "    while (pile.size() > 1) {",
+      "        Collections.sort(pile, Collections.reverseOrder());   // re-sort the whole pile every turn",
+      "        int y = pile.remove(0);",
+      "        int x = pile.remove(0);",
+      "        if (y != x) pile.add(y - x);",
+      "    }",
+      "    return pile.isEmpty() ? 0 : pile.get(0);",
+      "}"
     ],
     "complexity": {
       "time": "O(n^2 log n)",

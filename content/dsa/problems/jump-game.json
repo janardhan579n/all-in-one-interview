@@ -34,7 +34,11 @@
   "bruteForce": {
     "idea": "Recursively try every jump length from every index and see whether any sequence of choices lands on the last index.",
     "code": [
-      "static boolean canReach(int[] nums, int index) {",
+      "public static boolean canJump(int[] nums) {",
+      "    return canReach(nums, 0);",
+      "}",
+      "",
+      "private static boolean canReach(int[] nums, int index) {",
       "    if (index >= nums.length - 1) return true;",
       "    int furthest = Math.min(index + nums[index], nums.length - 1);",
       "    for (int next = index + 1; next <= furthest; next++) {",

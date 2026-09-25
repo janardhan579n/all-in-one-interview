@@ -1,0 +1,1132 @@
+{
+  "id": "payment-system",
+  "title": "Design a Payment System",
+  "difficulty": "advanced",
+  "estimatedMinutes": 50,
+  "summary": "Accept a card payment, move the money, and be able to prove afterwards exactly what happened. This is the system where latency is almost irrelevant and correctness is everything: idempotency, a double-entry ledger, and reconciliation against a processor you do not control.",
+  "steps": [
+    {
+      "key": "requirements",
+      "title": "1. Clarify the problem",
+      "content": "Most system design questions are about making something fast. This one is not. A payment that takes 900 ms instead of 200 ms is a minor product complaint. A payment that charges the card twice is a refund, an angry customer, a chargeback, and — at volume — a regulatory conversation. **Being fast is worth very little here; being correct is worth everything.** Say that out loud early, because it justifies every expensive decision that follows.\n\nQuestions worth asking:\n\n- Are we the merchant charging our own customers, or a platform charging on behalf of many merchants? (The second needs a ledger per merchant and a payout pipeline.)\n- Card only, or bank transfers and wallets too? Each rail has different settlement timing and different failure semantics.\n- Do we hold funds between capture and payout, or pass them straight through?\n- Are refunds and partial refunds in scope? Disputes?\n- Multi-currency? If so, where does FX conversion happen and who bears the rate risk?\n- What are the retention and audit requirements?\n\n**For this walkthrough**: a platform that charges cards on behalf of merchants, holds funds briefly, pays out on a schedule, supports full and partial refunds, single currency, and must keep an auditable record of every movement for seven years."
+    },
+    {
+      "key": "functional",
+      "title": "2. Functional requirements",
+      "content": "- `POST /payments` authorizes a card for an amount, on behalf of a merchant.\n- Capture may be immediate or deferred (authorize now, capture on shipment).\n- `POST /payments/{id}/refunds` refunds all or part of a captured payment.\n- Every request that moves money is **safe to retry** — a retry must never move money twice.\n- Every movement produces ledger entries; a merchant's balance is *derived* from those entries, never stored as a mutable number.\n- The external processor's asynchronous notifications (webhooks) are ingested and reflected in payment state.\n- A daily reconciliation compares our ledger to the processor's settlement report and surfaces any difference.\n- Merchants can query payment status and balance, and export a statement that ties to the ledger exactly.\n\nNotice what is *not* here: there is no requirement for sub-100 ms latency, and no requirement that a payment complete synchronously. Both are things you should actively negotiate away."
+    },
+    {
+      "key": "nonfunctional",
+      "title": "3. Non-functional requirements",
+      "content": "- **Correctness over availability, and correctness over latency.** If the system cannot be sure whether a charge happened, the right behaviour is to stop and resolve it, not to guess. A payment API that returns a confident wrong answer is worse than one that returns `502` and lets the client retry safely.\n- **Exactly-once *effect*, at-least-once *delivery*.** You cannot have exactly-once delivery over a network. You can have at-least-once delivery plus idempotent handling, which produces an exactly-once effect. That distinction is the whole design.\n- **Durability is absolute.** A lost ledger entry is money that vanished. Synchronous replication to at least one replica before acknowledging, and no acknowledgement of a write that is not on stable storage.\n- **Auditability.** For any historical instant, you must be able to reconstruct the balance of every account and say which entries produced it. That rules out destructive updates.\n- **Availability target**: 99.95% on the authorization path. Note that this is *lower* than you would target for a read-heavy service, and deliberately so — some failures should stop the line.\n- **Latency**: p99 under 2 s end to end, of which most is the external processor. We control perhaps 100 ms of that.\n- **Scale target**: 10M payment attempts/day.\n\nThe tension to name: CAP forces a choice when the network partitions, and for money the answer is **CP**. Refusing a payment is recoverable. Double-charging is not."
+    },
+    {
+      "key": "estimation",
+      "title": "4. Back-of-the-envelope estimation",
+      "content": "**Throughput.** 10M payment attempts/day ÷ 86,400 s ≈ **116/s** average. At a 3x peak factor, **~350/s**. That is genuinely small — a single well-tuned Postgres primary handles 350 transactions/s without complaint. The scale problem here is not requests per second.\n\n**Ledger volume.** A completed payment does not write one row. Over its lifecycle it writes roughly six entries: two when funds are captured (debit the customer-receivable account, credit the merchant-payable account), two for the platform fee (debit merchant-payable, credit fee-revenue), and two at payout (debit merchant-payable, credit the settlement account). 10M × 6 = **60M entries/day** ≈ 700/s average, **~2,100/s** at peak. Still small per-second, but it accumulates.\n\n**Storage.** A payment row with ids, amounts, status, processor references and metadata is ~1 KB: 10M × 1 KB = **10 GB/day**. A ledger entry is narrow and fixed — account, amount, currency, transaction id, timestamp — call it 200 bytes: 60M × 200 B = **12 GB/day**. Together **~22 GB/day** ≈ **8 TB/year**, and at seven-year retention **~56 TB**.\n\nThat last number is the one that matters. It is not a throughput problem, it is a *volume and retention* problem — the ledger is append-only and nothing is ever deleted, so it grows monotonically forever. That is what eventually forces partitioning, and it is a much better reason to shard than \"we have a lot of traffic\".\n\n**Money moved.** 10M × $40 average = **$400M/day**. Worth stating because it calibrates how much engineering the correctness is worth: a 0.01% error rate on that is $40,000 a day.\n\n**Webhooks.** The processor sends roughly 2.5 notifications per payment once you count retries and duplicates: 25M/day ÷ 86,400 ≈ **290/s** inbound, which must be deduplicated.\n\n**Reconciliation exceptions.** Assume 0.1% of payments differ from the settlement file on any given day — mostly in-flight transactions that crossed the cutoff. 0.1% × 10M = **10,000 exceptions/day**. Almost all clear on the next run; you need a pipeline that classifies and auto-resolves the routine ones so that only a handful reach a human."
+    },
+    {
+      "key": "api",
+      "title": "5. API design",
+      "content": "Three properties matter more than the shape of the JSON.\n\n**Every mutating endpoint takes an `Idempotency-Key` header, and it is required, not optional.** If the header is absent, reject with `400`. Making it optional means the one client that forgets it is the one that double-charges, and you will not find out until a customer complains.\n\n**Amounts are integers in the currency's minor unit**, never floats. `4095` and `\"USD\"`, not `40.95`. Binary floating point cannot represent 0.1 exactly, and a cent of drift per transaction is a reconciliation break at scale.\n\n**Authorize and capture are separate operations.** Authorization reserves funds on the card; capture actually moves them. Collapsing them is fine for digital goods and wrong for anything that ships, because you should not take money for something you have not sent.\n\nStatus codes carry meaning here: `409` for an idempotency key reused with a *different* request body (a client bug worth surfacing loudly), `402` for a processor decline (a normal business outcome, not an error), `503` when the circuit breaker is open."
+    },
+    {
+      "key": "datamodel",
+      "title": "6. Data model",
+      "content": "Four tables do the real work, and the relationships between them are the design.\n\n**`payments`** is the state machine: one row per payment attempt, carrying its current status and the processor's reference. It is mutable, but only through legal state transitions.\n\n**`idempotency_keys`** maps a client-supplied key to the response that was produced for it. Unique constraint on `(merchant_id, key)`. This is what makes a retry a no-op.\n\n**`ledger_transactions`** and **`ledger_entries`** are the money. A transaction groups entries that must sum to zero; entries are append-only and have no `UPDATE` path at all — the table is `INSERT`-only by convention and, ideally, by permission grant.\n\n**`processor_attempts`** records that we are *about to* call the processor, written before the call is made. When a call times out, this row is the only evidence the attempt existed, and it is what reconciliation joins against.\n\n**`webhook_events`** stores every inbound notification by the processor's event id so duplicates are dropped and out-of-order arrivals can be ordered.\n\nThere is deliberately no `merchants.balance` column. See the next two steps for why."
+    },
+    {
+      "key": "idempotency",
+      "title": "7. Idempotency is a hard requirement, not a nicety",
+      "content": "Start from the network fact that makes this unavoidable.\n\nA client sends `POST /payments`. The server processes it, charges the card, and starts writing the response. The connection drops. **The client now cannot distinguish between two worlds**: one where the request never arrived, and one where it succeeded and the response was lost. There is no protocol trick that separates them — this is a genuine limit, not a gap in the client library.\n\nGiven that, the client has exactly two options, and both are bad unless you help it:\n\n- **Do not retry.** Then every dropped response is a payment the customer thinks failed and you think succeeded, or vice versa. Unacceptable.\n- **Retry.** Then without server-side protection, the card is charged twice.\n\nSo the client must retry, and **the server must make the retry harmless**. That is idempotency. It is not a robustness nicety; it is the only thing that makes a payment API usable over a real network.\n\n**The mechanism.** The client generates a unique key per logical operation — a UUID, stable across retries of *that* operation and different for a genuinely new payment. The server:\n\n1. Begins a transaction.\n2. Attempts `INSERT INTO idempotency_keys (merchant_id, key, status) VALUES (…, 'in_progress')`. A unique-constraint violation means this key has been seen: either return the stored response, or — if the first attempt is still running — return `409 Conflict` and let the client retry shortly.\n3. Performs the effect and writes the stored response **inside the same transaction**.\n4. Commits.\n\n**Why \"the same transaction\" is the entire point.** Suppose you write the idempotency record to Redis for speed and the payment to Postgres. Now there are two writes with no atomicity between them, and a crash in the gap gives you one of two bugs. If the payment commits first and the process dies before the key is stored, the retry finds no key and **charges again** — exactly the bug you built this to prevent, now harder to see because you believe you are protected. If the key is stored first and the payment write fails, the retry finds the key and returns success for a payment that never happened, which is worse: you have told the merchant money moved when it did not.\n\nThe key and the effect must commit or fail together. In practice that means the idempotency record lives in the same relational database as the payment row, in one transaction. Redis can cache the *lookup* to save a round trip, but it cannot be the source of truth.\n\n**The processor call is still outside the transaction.** You cannot make an HTTP call transactional. That residual gap — commit locally, then call the processor, and die in between — is not solvable with idempotency keys, which is why the design needs reconciliation. Cover the mechanics in depth in the [idempotency](/system-design/idempotency) concept page.\n\n**Scope and expiry.** Keys are scoped per merchant so two merchants cannot collide. They expire — 24 hours to 7 days is typical — because a client retrying a week later is not retrying, it is making a new request. Say the retention out loud; an interviewer will ask."
+    },
+    {
+      "key": "ledger",
+      "title": "8. Double-entry bookkeeping: money is recorded, not mutated",
+      "content": "The tempting data model is a balance column:\n\n```sql\nUPDATE merchants SET balance = balance + 4095 WHERE id = 42;\n```\n\nThis is the wrong model for money, for three reasons that compound.\n\n**It destroys history.** The row holds one number. When a merchant asks \"why is my balance $37.20 lower than I expected?\", you have nothing to answer with. You cannot reconstruct last Tuesday's balance, so you cannot tell whether the discrepancy appeared then or has been there for a month.\n\n**It has no witness.** An `UPDATE` that applies twice — a retried job, a replayed message — leaves a balance that is wrong with no trace of why. Nothing in the row says it was written twice. An append-only log makes the duplicate a visible extra row.\n\n**It does not force conservation.** Money moving from one place to another is two facts, and a single `UPDATE` records one of them. Nothing stops you from crediting a merchant without debiting anyone.\n\n**Double-entry fixes all three by construction.** Every movement is a *transaction* containing two or more *entries*, each naming an account and a signed amount, and **the entries in a transaction must sum to zero**. A $40.95 capture, with a $1.50 platform fee, is one transaction with four entries:\n\n| account | amount |\n|---|---|\n| `customer_receivable` | −4095 |\n| `merchant_payable:42` | +4095 |\n| `merchant_payable:42` | −150 |\n| `platform_fee_revenue` | +150 |\n\nSum: 0. Money was not created or destroyed, it changed which account it sat in.\n\n**Balance is derived, not stored.** A merchant's balance is `SELECT SUM(amount) FROM ledger_entries WHERE account = 'merchant_payable:42'`. That single change buys you an enormous amount:\n\n- **Auditability.** Every cent traces to a transaction, which traces to a payment, which traces to a processor reference. You can answer \"why\" for any number on the screen.\n- **Historical reconstruction.** Add `AND created_at <= '2025-03-14'` and you have the balance as of any past moment. You did not have to plan for that question; the model answers it for free.\n- **Self-checking.** The sum of *all* entries across *all* accounts must be zero. That invariant is a cheap continuous integrity test, and when it breaks you know immediately that something wrote an unbalanced transaction.\n- **Immutability.** A mistake is corrected with a *reversing* transaction, not by editing history. The original error stays visible, which is what an auditor requires and what a debugging engineer wants.\n\n**The obvious objection is performance**, and you should raise it before the interviewer does. Summing millions of rows per balance query is not viable. The answer is a **materialized balance snapshot**: a periodically written `(account, as_of_entry_id, balance)` checkpoint, with live balance computed as the snapshot plus the entries after it. The snapshot is a cache — derived, disposable, and rebuildable by replaying the log. It is never the source of truth, which means a bug in the snapshot logic costs you a recomputation, not money.\n\nThe cost you are paying is real: roughly six rows where one column update would have done, more storage, and more code. You are buying the ability to prove what happened. For money that trade is not close."
+    },
+    {
+      "key": "lifecycle",
+      "title": "9. The payment state machine",
+      "content": "Model the payment explicitly as states and legal transitions, and enforce the transitions in code rather than trusting callers.\n\n`created` → `authorized` → `captured` → `settled`, with `failed` reachable from `created` and `authorized`, `refunded` / `partially_refunded` from `captured`, and `disputed` from `captured` or `settled`.\n\nTwo details matter more than the diagram:\n\n**Transitions are guarded by the current state, not just written.** `UPDATE payments SET status = 'captured' WHERE id = ? AND status = 'authorized'` — checking the affected row count. If it is zero, something else already moved the row, and you must not proceed. This is optimistic concurrency, and it is what stops two concurrent workers from capturing the same authorization twice.\n\n**There is an explicit `unknown` state, and you should say so.** When a processor call times out, the payment is not `failed` — you do not know that it failed. Marking it `failed` is a lie that leads to the customer being charged while your records say otherwise. It goes to a state meaning *outcome unknown, pending resolution*, and reconciliation resolves it. Interviewers notice when a candidate refuses to collapse \"unknown\" into \"failed\", because that collapse is the single most common source of real-world payment bugs."
+    },
+    {
+      "key": "processor",
+      "title": "10. The external processor is slow, unreliable, and not yours",
+      "content": "Everything so far you control. The card processor you do not. It is a third party over the public internet with its own incidents, its own rate limits, and its own maintenance windows, and your p99 is mostly its p99. Design as if it will misbehave, because it will.\n\n**Timeouts, set deliberately.** A connect timeout of 2 s and a read timeout of 10 s, not the library default of \"forever\". An unbounded call holds a thread, a connection and a transaction; enough of them and your service stops accepting work it could have served. Set the timeout shorter than the caller's, or you will be cut off mid-call and never learn the outcome.\n\n**Retries with exponential backoff and full jitter.** Retry only what is safely retryable — a connection failure or a `503`, not a `402` decline. Backoff at 1 s, 2 s, 4 s with randomization, and a hard cap of three attempts. Without jitter, every client that failed during an outage retries in lockstep the moment the processor recovers, and the synchronized thundering herd knocks it over again. Every retry carries the *same* idempotency key, both ours and — if the processor supports one — theirs.\n\n**A circuit breaker.** After a threshold of consecutive failures the breaker opens and calls fail immediately instead of waiting for the timeout. This protects two parties: the processor, which gets a chance to recover instead of being hammered, and you, because a queue of threads blocked on a 10 s timeout is how one slow dependency becomes a total outage. A half-open state lets a single probe through periodically to test recovery. See [circuit-breaker](/system-design/circuit-breaker) for the state machine.\n\n**Multiple processors.** Once payments are material to the business, a single processor is a single point of failure you cannot fix. Route to a secondary when the primary's breaker opens. The cost is that each processor has its own API, its own reference format and its own settlement file, and reconciliation now runs per processor.\n\n**And now the part that makes all of the above insufficient.** A timeout tells you the *request* failed. It tells you nothing about whether the *charge* happened. The processor may have authorized the card and had its response lost on the way back. From your side those are identical, and no amount of retry logic distinguishes them: retrying with the same idempotency key is safe but may still time out, forever.\n\nThis is not an edge case you can engineer away. It is a permanent property of calling a system you do not share a transaction with. The only resolution is to compare records afterwards — which is the next step, and it is why that step is not optional."
+    },
+    {
+      "key": "reconciliation",
+      "title": "11. Reconciliation is what makes the system eventually correct",
+      "content": "**State this plainly: reconciliation is not a back-office extra bolted on for accountants. It is the mechanism that makes the system correct.** Everything before it — idempotency, the ledger, the state machine — narrows the window in which your records and the processor's records can disagree. None of them close it, because you cannot make a network call and a database commit atomic. Reconciliation is the process that finds the residual disagreements and repairs them, and without it the error rate does not converge to zero; it accumulates.\n\n**How it runs.** The processor publishes a settlement file once a day: every transaction it believes it processed, with amounts, fees and references. You load it and join against your own records on the processor reference and the payment id. Three classes of difference fall out:\n\n**1. We have it, they do not.** Our ledger says captured; their file has no such transaction. Usually this is a payment we optimistically recorded before the processor confirmed, or a transaction that crossed the cutoff and will appear tomorrow. If it is still missing on the next run, the local record is wrong and must be reversed — with a reversing ledger transaction, never by editing the original entries.\n\n**2. They have it, we do not.** Their file has a charge with no corresponding ledger transaction. **This is the timeout case, and it is the important one.** The charge happened; our write did not. The customer has been debited and our books do not show it. The repair is to create the missing ledger transaction, attach it to the `processor_attempts` row that recorded the intent, and — depending on whether the order was ever fulfilled — either complete the payment or refund it. Note the shape of this: reconciliation converts an unresolvable ambiguity into a concrete, repairable fact, one day later.\n\n**3. Both have it, amounts differ.** Usually a fee we computed differently, or an FX rate applied at a different timestamp. These need a rule, not a repair: agree whose number is authoritative for that field and record the difference as its own ledger transaction so the books still balance.\n\n**Design properties worth naming.** The job must be **idempotent** — running it twice must not create two repairs, so keyed on the settlement file id and row. It must be **auditable** — every automatic repair writes a ledger transaction with a reason code, so a human can see what the machine decided. It must have an **escalation path** — anything the rules cannot classify goes to a manual queue, and that queue must be small enough that a human actually works it. At 10M payments/day and 0.1% exceptions, that is 10,000 items, of which routine timing differences should be auto-cleared, leaving a few hundred for review.\n\n**And it must be monitored as a correctness signal, not a batch job.** The count of unresolved exceptions older than 48 hours is one of the most important metrics in the whole system. If it trends upward, something is silently wrong, and you will see it here before you see it anywhere else."
+    },
+    {
+      "key": "webhooks",
+      "title": "12. Webhooks: out of order, duplicated, and unverified",
+      "content": "Payments finish asynchronously. The processor calls you back — `payment.authorized`, `payment.captured`, `charge.disputed` — and everything about that channel is hostile to naive code.\n\n**They arrive out of order.** `captured` can land before `authorized`, because they were sent over different connections with different retry histories. If your handler assumes order, it will process a capture for a payment it thinks does not exist. Two defences: make each handler check the current state and ignore transitions that would move the payment backwards, and carry a sequence number or event timestamp so a stale event can be recognised as stale. Storing the highest event timestamp applied per payment is the cheapest version of this.\n\n**They are duplicated.** The processor retries until you return `2xx`, so if your response was slow or lost you will get the same event again — sometimes hours later, sometimes many times. Every event carries a provider event id; store it with a unique constraint and drop repeats. This is the same idempotency pattern as the API, applied at the other end.\n\n**They must be verified.** A webhook endpoint is a public URL that causes money-related state changes, so it must authenticate what it receives. The processor signs each payload with a shared secret, typically HMAC-SHA256 over the raw body plus a timestamp. Verify the signature against the **raw bytes** before parsing — re-serializing JSON changes whitespace and key order and invalidates the signature — use a constant-time comparison, and reject payloads whose timestamp is outside a few minutes of now so an old captured delivery cannot be presented again later. Unverified events are discarded and counted; a rising count is a signal worth alerting on. Support two active secrets so keys can be rotated without downtime.\n\n**Acknowledge fast, process later.** Verify the signature, persist the raw event, return `200`, and let a worker do the real work. Doing the processing inline means a slow database makes the processor time out and retry, which multiplies your load exactly when you are struggling. It also means a bug in your business logic causes an endless redelivery loop.\n\n**Never treat webhooks as the only path.** They get lost, and provider-side delivery outages are routine. The reconciliation job from the previous step is also the backstop for missing webhooks: a payment stuck in `authorized` for longer than expected gets its status polled directly. Push for latency, pull for correctness."
+    },
+    {
+      "key": "saga",
+      "title": "13. Distributed transactions across services",
+      "content": "A checkout touches three services: payment charges the card, order records the purchase, inventory decrements stock. All three must happen, or none.\n\n**Why two-phase commit is rarely paid for.** 2PC gives real atomicity: a coordinator asks every participant to prepare, and only if all vote yes does it tell them to commit. The properties are exactly what you want, and the costs are why almost nobody runs it across service boundaries.\n\n- **It blocks.** Between prepare and commit, every participant holds locks on the rows involved. If the coordinator dies in that window, participants are stuck — they may not commit and may not abort, and they hold their locks while waiting. In a database that means the affected rows are unavailable until an operator intervenes. At checkout volume, minutes of that is an outage.\n- **Availability multiplies downward.** The transaction succeeds only if every participant is up. Three services at 99.9% give 99.7% combined, and you have made the whole worse than any part.\n- **It requires participants that support it.** Your database might. The external card processor certainly does not, and it is the participant that matters most. You cannot enlist a third party's HTTP API in your transaction, which means even a perfect 2PC implementation would not cover the step you most wanted covered.\n\n**The saga model instead.** Break the operation into a sequence of local transactions, each of which commits independently, and give each one a **compensating transaction** that undoes its business effect. Authorize the card; create the order; reserve the stock. If reserving stock fails, run the compensations backwards: cancel the order, then void or refund the authorization. Each step is a normal local transaction, so nothing holds a lock across a network call and no coordinator can freeze the system. See [saga](/system-design/saga) for the orchestration-versus-choreography choice.\n\n**Be honest that a compensation is not a rollback.** This is the sentence that separates a candidate who has read about sagas from one who has operated them.\n\nA rollback erases the attempt; the world never saw it. A compensation is a **new, visible, forward action that attempts to negate an earlier one**, and the difference shows up in ways that matter:\n\n- **The intermediate state was real and observable.** Between the charge and the refund, the customer's statement showed a charge. They may have seen it, been confused by it, and called support. A rollback would have left no trace; a compensation leaves two.\n- **It is not always a clean inverse.** Refunding an authorization may still leave a pending hold on the card for days. The money returns; the customer's available balance does not, immediately. If a currency conversion happened, the reverse conversion happens at a different rate and the amounts do not match to the cent — that difference must itself become a ledger entry.\n- **Compensations can fail.** The refund call can time out just like the charge did, so compensations need the same treatment: durable saga state, retries, idempotency keys, and a manual queue when they exhaust. A saga that assumes compensation always succeeds has just moved the problem.\n- **Some steps cannot be compensated at all.** A confirmation email is sent. A physical item has shipped. The design response is ordering: put the irreversible steps last, after everything reversible has succeeded.\n\n**And the events must actually be published.** Writing to the database and publishing the next saga step to the queue are two systems again, with the same gap as before. The **transactional outbox** closes it: the event is written to an `outbox` table in the same transaction as the state change, and a relay reads the table and publishes. If the relay crashes after publishing but before marking the row sent, the event is published twice — which is fine, because every consumer is already idempotent. Every problem in this case study reduces to that same pair: write the fact and the intent atomically, then make the delivery at-least-once and the handling idempotent."
+    },
+    {
+      "key": "failure",
+      "title": "14. Scaling and failure handling",
+      "content": "**Scaling.** At 350 payments/s, throughput is not the pressure. The pressures are ledger volume and blast radius.\n\n- **Stateless API tier**: add instances behind the load balancer. Trivial, and not the interesting part.\n- **Ledger growth**: 8 TB/year append-only is what forces partitioning. Shard by merchant (or account) so that every balance query and every reconciliation run is single-shard, and partition each shard by time so old months can be moved to cheaper storage while staying queryable. Note that transactions crossing merchants — a platform fee — now span shards; keep those few and handle them with a saga rather than a distributed transaction.\n- **Reconciliation**: parallelise per shard. A single-threaded nightly job over one table is the component that quietly stops finishing before the next day's file arrives.\n- **Do not shard for write throughput.** 2,100 ledger inserts/s at peak does not need it, and saying so shows judgement.\n\n**Failure handling**, component by component:\n\n- **Processor slow or down**: the circuit breaker opens, traffic fails over to the secondary. If both are down, queue authorization requests and return a pending status rather than a failure — but only if the product can tolerate deferred confirmation. Never silently retry into a void.\n- **Our database primary fails mid-transaction**: the transaction did not commit, so the payment and its idempotency key are both absent, and the client's retry starts cleanly. This is precisely the benefit of putting them in one transaction — the failure mode is clean instead of ambiguous.\n- **We crash after committing but before calling the processor**: the `processor_attempts` row exists with no outcome. A sweeper job finds attempts with no resolution after a threshold and either queries the processor by our idempotency key or leaves them for reconciliation.\n- **We crash after the processor call and before recording the outcome**: the worst case, and the one reconciliation exists for. The charge may have happened; the settlement file will say.\n- **Queue backs up**: captures are delayed, not lost. Alert on queue age, not queue depth — depth tells you how much work there is, age tells you how stale the oldest item is, and staleness is what customers feel.\n- **A poison message**: a malformed event that crashes the worker on every retry will block the partition behind it. Bounded retries then a dead-letter queue, with an alert, because a silent DLQ is a place money goes to be forgotten.\n- **The ledger fails its zero-sum invariant**: this should page a human immediately and, arguably, stop new writes to the affected accounts. It means something wrote an unbalanced transaction, and every number derived from that account is now suspect."
+    },
+    {
+      "key": "final",
+      "title": "15. Final architecture and the argument for it",
+      "content": "Client → API gateway → payment service (idempotency key and payment row committed in one transaction) → durable charge queue → charge workers (timeout, bounded jittered retry, circuit breaker) → processor, with every movement written as balanced double-entry ledger transactions, webhooks verified and deduplicated on the way back in, a saga orchestrator coordinating payment, order and inventory through an outbox, and a nightly per-shard reconciliation comparing the ledger to the processor's settlement file.\n\nThe defensible summary, in the order you would say it:\n\n1. **The network will drop a response**, so the client must retry, so the server must be idempotent, so the key and the effect commit together.\n2. **Money must be provable**, so it is recorded as balanced entries rather than mutated, and balance is derived.\n3. **The processor is not ours**, so it gets timeouts, bounded retries, a breaker and a fallback.\n4. **A timeout is genuinely ambiguous**, so reconciliation is the mechanism of eventual correctness rather than a nice-to-have.\n5. **Cross-service atomicity is unaffordable**, so a saga with compensations, with the honest caveat that a compensation is a visible forward action and not a rollback.\n\nEvery one of those is a consequence of a constraint, not a preference. That is the shape of the argument an interviewer is listening for."
+    }
+  ],
+  "estimation": {
+    "assumptions": [
+      "10M payment attempts per day",
+      "Average transaction value $40",
+      "6 ledger entries per completed payment across its lifecycle (capture, fee, payout)",
+      "~1 KB per payment row, ~200 bytes per ledger entry",
+      "7-year retention for financial records — nothing is ever deleted",
+      "3x peak factor; 0.1% of payments differ from the processor's settlement file"
+    ],
+    "calculations": [
+      {
+        "label": "Payment attempts/s (average)",
+        "value": "~116/s",
+        "working": "10,000,000 / 86,400 = 115.7 — small; one primary handles this"
+      },
+      {
+        "label": "Payment attempts/s (peak)",
+        "value": "~350/s",
+        "working": "116 × 3"
+      },
+      {
+        "label": "Ledger entries/s (peak)",
+        "value": "~2,100/s",
+        "working": "10M × 6 = 60M/day; 60,000,000 / 86,400 = 694/s; × 3"
+      },
+      {
+        "label": "Value moved per day",
+        "value": "~$400M",
+        "working": "10,000,000 × $40 — a 0.01% error rate is $40,000/day"
+      },
+      {
+        "label": "Storage per day",
+        "value": "~22 GB",
+        "working": "(10M × 1 KB = 10 GB payments) + (60M × 200 B = 12 GB ledger)"
+      },
+      {
+        "label": "Storage per year",
+        "value": "~8 TB",
+        "working": "22 GB × 365 = 8,030 GB"
+      },
+      {
+        "label": "Storage at 7-year retention",
+        "value": "~56 TB",
+        "working": "8 TB × 7 — append-only, so this only grows; the real reason to partition"
+      },
+      {
+        "label": "Inbound webhooks/s",
+        "value": "~290/s",
+        "working": "2.5 per payment × 10M = 25M/day; 25,000,000 / 86,400 = 289"
+      },
+      {
+        "label": "Reconciliation exceptions/day",
+        "value": "~10,000",
+        "working": "0.1% × 10,000,000 — auto-classify the routine timing ones or no human can work the queue"
+      }
+    ]
+  },
+  "api": [
+    {
+      "method": "POST",
+      "path": "/api/v1/payments",
+      "request": "Idempotency-Key: <uuid> (required)\n{ \"merchantId\": \"m_42\", \"amount\": 4095, \"currency\": \"USD\", \"paymentMethodToken\": \"tok_…\", \"capture\": false }",
+      "response": "201 { \"id\": \"pay_9f2\", \"status\": \"authorized\", \"amount\": 4095, \"currency\": \"USD\" }",
+      "notes": "Amount is an integer in minor units — never a float. A repeat of the same key returns the original response with the same status code. Same key with a different body is 409. A processor decline is 402, which is a business outcome, not an error."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/payments/{id}/capture",
+      "request": "Idempotency-Key: <uuid>\n{ \"amount\": 4095 }",
+      "response": "200 { \"id\": \"pay_9f2\", \"status\": \"captured\", \"capturedAmount\": 4095 }",
+      "notes": "Only legal from 'authorized', enforced by a guarded state transition. Partial capture allowed up to the authorized amount; the remainder is released."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/payments/{id}/refunds",
+      "request": "Idempotency-Key: <uuid>\n{ \"amount\": 1500, \"reason\": \"partial_return\" }",
+      "response": "201 { \"id\": \"ref_31c\", \"status\": \"pending\", \"amount\": 1500 }",
+      "notes": "Writes a reversing ledger transaction; the original entries are never edited. Cumulative refunds cannot exceed the captured amount — enforced against the ledger, not a cached field."
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/payments/{id}",
+      "request": "—",
+      "response": "200 { \"id\": \"pay_9f2\", \"status\": \"captured\", \"processorRef\": \"ch_…\", \"ledgerTransactionIds\": [ … ] }",
+      "notes": "Read path, safe to cache for seconds. Exposes the ledger transaction ids so a merchant can tie a payment to their statement exactly."
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/merchants/{id}/balance",
+      "request": "?asOf=2025-03-14T00:00:00Z (optional)",
+      "response": "200 { \"available\": 184320, \"pending\": 40950, \"asOf\": \"…\" }",
+      "notes": "Derived from ledger entries, served from a materialized snapshot plus entries written after it. 'asOf' works for any past instant — a property you get free from an append-only ledger and cannot get from a balance column."
+    },
+    {
+      "method": "POST",
+      "path": "/webhooks/processors/{processor}",
+      "request": "X-Signature: t=<unix>,v1=<hmac-sha256 of raw body>\n{ \"id\": \"evt_…\", \"type\": \"payment.captured\", … }",
+      "response": "200 (empty)",
+      "notes": "Verify the HMAC against the raw bytes with a constant-time compare before parsing, reject timestamps outside a few minutes, persist by provider event id (unique constraint drops duplicates), acknowledge, then process asynchronously."
+    }
+  ],
+  "dataModel": [
+    {
+      "name": "payments",
+      "fields": [
+        {
+          "name": "id",
+          "type": "UUID PRIMARY KEY",
+          "notes": ""
+        },
+        {
+          "name": "merchant_id",
+          "type": "BIGINT NOT NULL",
+          "notes": "the shard key"
+        },
+        {
+          "name": "amount_minor",
+          "type": "BIGINT NOT NULL",
+          "notes": "integer minor units; never a float"
+        },
+        {
+          "name": "currency",
+          "type": "CHAR(3) NOT NULL",
+          "notes": "ISO 4217"
+        },
+        {
+          "name": "status",
+          "type": "TEXT NOT NULL",
+          "notes": "created | authorized | captured | settled | failed | unknown | refunded | disputed"
+        },
+        {
+          "name": "processor",
+          "type": "TEXT",
+          "notes": "which processor handled it; required once there are two"
+        },
+        {
+          "name": "processor_ref",
+          "type": "TEXT",
+          "notes": "their id for this charge — the join key for reconciliation"
+        },
+        {
+          "name": "version",
+          "type": "INT NOT NULL",
+          "notes": "optimistic concurrency on state transitions"
+        }
+      ],
+      "indexes": [
+        "PRIMARY KEY (id)",
+        "UNIQUE (processor, processor_ref) — one local payment per processor charge",
+        "INDEX (merchant_id, created_at) for merchant listings",
+        "INDEX (status, updated_at) WHERE status IN ('unknown','authorized') — drives the sweeper"
+      ]
+    },
+    {
+      "name": "idempotency_keys",
+      "fields": [
+        {
+          "name": "merchant_id",
+          "type": "BIGINT NOT NULL",
+          "notes": "scoped per merchant so two merchants cannot collide"
+        },
+        {
+          "name": "key",
+          "type": "TEXT NOT NULL",
+          "notes": "client-supplied, stable across retries of one logical operation"
+        },
+        {
+          "name": "request_fingerprint",
+          "type": "TEXT NOT NULL",
+          "notes": "hash of the body; a mismatch on the same key is a 409, not a replay"
+        },
+        {
+          "name": "status",
+          "type": "TEXT NOT NULL",
+          "notes": "in_progress | completed"
+        },
+        {
+          "name": "response_body",
+          "type": "JSONB",
+          "notes": "the exact response to replay"
+        },
+        {
+          "name": "expires_at",
+          "type": "TIMESTAMP NOT NULL",
+          "notes": "24h–7d; after that a repeat is a new request, not a retry"
+        }
+      ],
+      "indexes": [
+        "UNIQUE (merchant_id, key) — the unique constraint IS the concurrency control",
+        "INDEX (expires_at) for the cleanup job",
+        "Same database as payments: the key and the effect must commit in one transaction"
+      ]
+    },
+    {
+      "name": "ledger_transactions",
+      "fields": [
+        {
+          "name": "id",
+          "type": "UUID PRIMARY KEY",
+          "notes": ""
+        },
+        {
+          "name": "kind",
+          "type": "TEXT NOT NULL",
+          "notes": "capture | fee | refund | payout | reversal | recon_repair"
+        },
+        {
+          "name": "payment_id",
+          "type": "UUID",
+          "notes": "nullable — payouts and repairs are not tied to one payment"
+        },
+        {
+          "name": "reverses_id",
+          "type": "UUID",
+          "notes": "set on a reversing transaction; history is corrected forward, never edited"
+        },
+        {
+          "name": "created_at",
+          "type": "TIMESTAMP NOT NULL",
+          "notes": "partition key alongside merchant"
+        }
+      ],
+      "indexes": [
+        "PRIMARY KEY (id)",
+        "INDEX (payment_id)",
+        "Application invariant: the entries of one transaction SUM(amount_minor) = 0"
+      ]
+    },
+    {
+      "name": "ledger_entries (append-only)",
+      "fields": [
+        {
+          "name": "id",
+          "type": "BIGSERIAL PRIMARY KEY",
+          "notes": "monotonic — snapshots checkpoint on this"
+        },
+        {
+          "name": "transaction_id",
+          "type": "UUID NOT NULL",
+          "notes": ""
+        },
+        {
+          "name": "account",
+          "type": "TEXT NOT NULL",
+          "notes": "e.g. merchant_payable:42, platform_fee_revenue, customer_receivable"
+        },
+        {
+          "name": "amount_minor",
+          "type": "BIGINT NOT NULL",
+          "notes": "signed; debits negative, credits positive"
+        },
+        {
+          "name": "currency",
+          "type": "CHAR(3) NOT NULL",
+          "notes": "entries of one transaction never mix currencies"
+        }
+      ],
+      "indexes": [
+        "INDEX (account, id) — balance is SUM(amount_minor) over this, from the last snapshot",
+        "INDEX (transaction_id) to verify the zero-sum invariant",
+        "No UPDATE or DELETE path — enforce with grants, not just convention"
+      ]
+    },
+    {
+      "name": "processor_attempts",
+      "fields": [
+        {
+          "name": "id",
+          "type": "UUID PRIMARY KEY",
+          "notes": "written BEFORE the outbound call"
+        },
+        {
+          "name": "payment_id",
+          "type": "UUID NOT NULL",
+          "notes": ""
+        },
+        {
+          "name": "idempotency_key",
+          "type": "TEXT NOT NULL",
+          "notes": "the key sent to the processor; reused on every retry"
+        },
+        {
+          "name": "outcome",
+          "type": "TEXT",
+          "notes": "NULL means unresolved — the sweeper and reconciliation both look here"
+        },
+        {
+          "name": "started_at",
+          "type": "TIMESTAMP NOT NULL",
+          "notes": ""
+        }
+      ],
+      "indexes": [
+        "INDEX (outcome, started_at) WHERE outcome IS NULL — the unresolved-attempt sweep",
+        "UNIQUE (idempotency_key)"
+      ]
+    },
+    {
+      "name": "webhook_events",
+      "fields": [
+        {
+          "name": "provider_event_id",
+          "type": "TEXT PRIMARY KEY",
+          "notes": "the dedupe key; a duplicate delivery is a constraint violation, which is the point"
+        },
+        {
+          "name": "raw_body",
+          "type": "BYTEA NOT NULL",
+          "notes": "stored as received — the signature is over these exact bytes"
+        },
+        {
+          "name": "event_ts",
+          "type": "TIMESTAMP NOT NULL",
+          "notes": "the provider's timestamp; used to discard out-of-order stale events"
+        },
+        {
+          "name": "processed_at",
+          "type": "TIMESTAMP",
+          "notes": "NULL until a worker has applied it"
+        }
+      ],
+      "indexes": [
+        "PRIMARY KEY (provider_event_id)",
+        "INDEX (processed_at) WHERE processed_at IS NULL — the work queue"
+      ]
+    }
+  ],
+  "evolution": [
+    {
+      "stage": "Stage 1 — launch, a few payments an hour",
+      "problem": "Nothing has broken yet. One service, one database, one synchronous call to one processor, and a balance column that is updated in place.",
+      "change": "A single payment service, a single Postgres instance, and a blocking HTTPS call to the card processor inside the request.",
+      "why": "At this volume the whole system fits in one person's head, which is worth more than any architectural property. It is the right place to start — and the next two stages exist because two specific things about it are wrong in ways that only show up once real customers are on real networks.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "client",
+            "label": "Checkout client",
+            "type": "client",
+            "x": 100,
+            "y": 300
+          },
+          {
+            "id": "api",
+            "label": "Payment service",
+            "type": "server",
+            "x": 360,
+            "y": 300,
+            "note": "Charges the card and updates merchants.balance in the same request."
+          },
+          {
+            "id": "db",
+            "label": "Postgres",
+            "type": "db",
+            "x": 620,
+            "y": 300,
+            "note": "payments table plus a mutable balance column per merchant."
+          },
+          {
+            "id": "processor",
+            "label": "Card processor",
+            "type": "server",
+            "x": 880,
+            "y": 300,
+            "note": "Third party. Called synchronously, with the client library's default timeout."
+          }
+        ],
+        "edges": [
+          {
+            "from": "client",
+            "to": "api"
+          },
+          {
+            "from": "api",
+            "to": "processor",
+            "label": "blocking charge"
+          },
+          {
+            "from": "api",
+            "to": "db",
+            "label": "UPDATE balance"
+          }
+        ]
+      }
+    },
+    {
+      "stage": "Stage 2 — ~1,000 payments/day",
+      "problem": "Two real failures. Mobile clients on flaky networks timed out waiting for the charge and retried, and because nothing deduplicated the retry, 34 customers were charged twice in one week. Separately, a merchant asked why their balance was $61.40 lower than their own records, and the balance column could not answer — there was one number and no history behind it.",
+      "change": "Add an idempotency_keys table with a unique constraint, written in the same transaction as the payment row. Replace the balance column with an append-only double-entry ledger; derive balance by summing entries.",
+      "why": "Both of these are correctness debt, and correctness debt on money is the kind you cannot repay later — retrofitting a ledger means reconstructing history you did not record. The idempotency key must share a transaction with the payment: put it in Redis for speed and a crash between the two writes recreates the double-charge you were preventing, or worse, reports success for a payment that never happened.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "client",
+            "label": "Checkout client",
+            "type": "client",
+            "x": 80,
+            "y": 300
+          },
+          {
+            "id": "api",
+            "label": "Payment service",
+            "type": "server",
+            "x": 340,
+            "y": 300
+          },
+          {
+            "id": "db",
+            "label": "Postgres\\npayments + idempotency_keys",
+            "type": "db",
+            "x": 620,
+            "y": 170
+          },
+          {
+            "id": "ledger",
+            "label": "ledger_entries\\n(append-only)",
+            "type": "db",
+            "x": 620,
+            "y": 440,
+            "note": "Same database, same transaction. Balance is SUM over this table, not a column.",
+            "why": {
+              "without": "A balance column holds one number with no history: you cannot say why it is what it is, a duplicated update is invisible, and nothing forces money to be conserved.",
+              "with": "Every movement is a set of entries summing to zero. Balance is derived, any past balance is reconstructable, and a mistake is corrected by a reversing transaction rather than by editing history.",
+              "conclusion": "You pay six rows where one UPDATE would do, and you buy the ability to prove what happened. For money that trade is not close."
+            }
+          },
+          {
+            "id": "processor",
+            "label": "Card processor",
+            "type": "server",
+            "x": 890,
+            "y": 300
+          }
+        ],
+        "edges": [
+          {
+            "from": "client",
+            "to": "api",
+            "label": "Idempotency-Key"
+          },
+          {
+            "from": "api",
+            "to": "db",
+            "label": "payment + key, one txn"
+          },
+          {
+            "from": "api",
+            "to": "ledger",
+            "label": "balanced entries, same txn"
+          },
+          {
+            "from": "api",
+            "to": "processor",
+            "label": "still blocking"
+          }
+        ]
+      }
+    },
+    {
+      "stage": "Stage 3 — ~100,000 payments/day",
+      "problem": "The processor degraded for 40 minutes. Every in-flight request sat on a default 60-second read timeout holding a thread and a connection; the pool saturated in under two minutes and the API stopped accepting all payments, including ones the secondary processor would have taken. Worse, when the timeouts finally fired our transactions rolled back — but the settlement file next morning showed 812 charges the processor had accepted and our ledger knew nothing about.",
+      "change": "Move the processor call out of the request path onto a durable queue with dedicated workers. Add explicit timeouts, three bounded retries with jittered exponential backoff, and a circuit breaker with failover to a second processor. Add a nightly reconciliation job that loads the settlement file, joins it against the ledger, and repairs the difference.",
+      "why": "The thread exhaustion is the classic failure of a slow dependency in a synchronous path — a breaker converts a 60-second hang into an instant failure and keeps the rest of the system alive. But the 812 lost charges are the deeper lesson: a timeout tells you the request failed and nothing about whether the charge happened. No retry policy can distinguish those cases. Reconciliation is the only mechanism that turns that permanent ambiguity into a resolvable fact, which is why it is a required component and not a back-office convenience.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "client",
+            "label": "Checkout client",
+            "type": "client",
+            "x": 80,
+            "y": 300
+          },
+          {
+            "id": "api",
+            "label": "Payment API",
+            "type": "server",
+            "x": 340,
+            "y": 300,
+            "note": "Commits the payment, the idempotency key and the intent, then returns. Does not wait for the processor."
+          },
+          {
+            "id": "db",
+            "label": "Payments + ledger",
+            "type": "db",
+            "x": 600,
+            "y": 300
+          },
+          {
+            "id": "queue",
+            "label": "Charge queue",
+            "type": "queue",
+            "x": 340,
+            "y": 480,
+            "note": "Durable. A worker crash redelivers; the idempotency key makes redelivery harmless."
+          },
+          {
+            "id": "worker",
+            "label": "Charge workers",
+            "type": "worker",
+            "x": 600,
+            "y": 480,
+            "why": {
+              "without": "A blocking call to a degraded third party holds a thread for the full timeout. Enough of them and the pool is gone and you reject payments the healthy processor would have taken.",
+              "with": "Bounded timeouts, three jittered retries and a circuit breaker that fails fast and fails over. One slow dependency stays one slow dependency instead of becoming a total outage.",
+              "conclusion": "The breaker protects you and the processor: without jitter, every client retries in lockstep the moment it recovers and knocks it over again."
+            }
+          },
+          {
+            "id": "processor",
+            "label": "Processors\\n(primary + backup)",
+            "type": "server",
+            "x": 860,
+            "y": 480
+          },
+          {
+            "id": "recon",
+            "label": "Reconciliation job",
+            "type": "worker",
+            "x": 860,
+            "y": 140,
+            "note": "Nightly. Loads the settlement file, joins on processor_ref, writes a repair transaction for every difference."
+          }
+        ],
+        "edges": [
+          {
+            "from": "client",
+            "to": "api"
+          },
+          {
+            "from": "api",
+            "to": "db",
+            "label": "payment + key, one txn"
+          },
+          {
+            "from": "api",
+            "to": "queue",
+            "label": "enqueue charge"
+          },
+          {
+            "from": "queue",
+            "to": "worker"
+          },
+          {
+            "from": "worker",
+            "to": "processor",
+            "label": "timeout · retry · breaker"
+          },
+          {
+            "from": "worker",
+            "to": "db",
+            "label": "record outcome"
+          },
+          {
+            "from": "recon",
+            "to": "processor",
+            "label": "settlement file",
+            "dashed": true
+          },
+          {
+            "from": "recon",
+            "to": "db",
+            "label": "compare + repair",
+            "dashed": true
+          }
+        ]
+      }
+    },
+    {
+      "stage": "Stage 4 — ~10M payments/day, split into services",
+      "problem": "Checkout was split into payment, order and inventory services and the three writes were wrapped in an XA transaction. During a coordinator restart, participants sat in the prepared state holding row locks on the inventory table; every subsequent checkout for those SKUs blocked, and the outage lasted 19 minutes until an operator resolved the in-doubt transactions by hand. The external processor could never be enlisted in that transaction anyway, so the step that mattered most was outside the atomicity the 2PC was costing us.",
+      "change": "Replace the distributed transaction with an orchestrated saga: authorize, create order, reserve stock, each a local transaction with a compensating action. Publish every step through a transactional outbox written in the same transaction as the state change.",
+      "why": "2PC blocks by design — between prepare and commit, participants hold locks and cannot decide alone, so a coordinator failure freezes the rows. It also multiplies availability downward: three services at 99.9% give 99.7%. A saga never holds a lock across a network call. The honest cost is that a compensation is not a rollback: the intermediate state was real, the customer may have seen the charge before the refund, and the compensation itself can fail — so compensations need durable state, retries and their own manual queue.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "client",
+            "label": "Checkout client",
+            "type": "client",
+            "x": 70,
+            "y": 300
+          },
+          {
+            "id": "gateway",
+            "label": "API gateway",
+            "type": "proxy",
+            "x": 330,
+            "y": 300
+          },
+          {
+            "id": "orch",
+            "label": "Saga orchestrator",
+            "type": "worker",
+            "x": 590,
+            "y": 300,
+            "why": {
+              "without": "Two-phase commit holds locks across services between prepare and commit. A coordinator crash leaves rows in doubt and locked, and the external processor cannot join the transaction at all.",
+              "with": "Each step is a local transaction that commits alone, with a named compensating action if a later step fails. No lock is ever held across a network call.",
+              "conclusion": "You trade atomicity for availability and accept visible intermediate states — which is a real cost, not a free win, and must be designed for rather than hidden."
+            }
+          },
+          {
+            "id": "payment",
+            "label": "Payment service",
+            "type": "server",
+            "x": 850,
+            "y": 110
+          },
+          {
+            "id": "order",
+            "label": "Order service",
+            "type": "server",
+            "x": 850,
+            "y": 300
+          },
+          {
+            "id": "inventory",
+            "label": "Inventory service",
+            "type": "server",
+            "x": 850,
+            "y": 490
+          },
+          {
+            "id": "outbox",
+            "label": "Outbox relay",
+            "type": "queue",
+            "x": 330,
+            "y": 490,
+            "note": "Events are written to an outbox table in the same transaction as the state change, then relayed. At-least-once delivery, idempotent consumers."
+          },
+          {
+            "id": "ledger",
+            "label": "Ledger (sharded)",
+            "type": "db",
+            "x": 590,
+            "y": 490
+          }
+        ],
+        "edges": [
+          {
+            "from": "client",
+            "to": "gateway"
+          },
+          {
+            "from": "gateway",
+            "to": "orch"
+          },
+          {
+            "from": "orch",
+            "to": "payment",
+            "label": "1 authorize"
+          },
+          {
+            "from": "orch",
+            "to": "order",
+            "label": "2 create order"
+          },
+          {
+            "from": "orch",
+            "to": "inventory",
+            "label": "3 reserve stock"
+          },
+          {
+            "from": "inventory",
+            "to": "orch",
+            "label": "out of stock",
+            "dashed": true
+          },
+          {
+            "from": "orch",
+            "to": "outbox",
+            "label": "compensations",
+            "dashed": true
+          },
+          {
+            "from": "outbox",
+            "to": "payment",
+            "label": "refund (compensating)",
+            "dashed": true
+          },
+          {
+            "from": "payment",
+            "to": "ledger",
+            "label": "balanced entries"
+          }
+        ]
+      }
+    },
+    {
+      "stage": "Stage 5 — multi-region, ~56 TB of ledger",
+      "problem": "The ledger reached 8 TB for the year and the nightly reconciliation, a single-threaded pass over one table, grew from 40 minutes to 9 hours — it began overrunning the arrival of the next day's settlement file, so exceptions started aging past 48 hours before anyone looked at them. At the same time European merchants required their settlement records to be stored and processed in-region.",
+      "change": "Shard the ledger by merchant with time-partitioned storage per shard, run reconciliation per shard in parallel, and deploy regional write regions behind a global routing layer that pins a merchant to one region.",
+      "why": "Sharding here is driven by volume and by the reconciliation window, not by write throughput — 2,100 entries/s never needed it. Merchant is the right shard key because every balance query, statement and reconciliation run is then single-shard; the few cross-merchant transactions, like platform fees, become sagas. Pinning each merchant to one write region keeps a single authoritative copy of their ledger, which preserves the zero-sum invariant; multi-leader writes on money would mean conflict resolution on balances, and there is no acceptable way to merge two versions of an account.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "eu",
+            "label": "Merchants (EU)",
+            "type": "client",
+            "x": 70,
+            "y": 160
+          },
+          {
+            "id": "us",
+            "label": "Merchants (US)",
+            "type": "client",
+            "x": 70,
+            "y": 440
+          },
+          {
+            "id": "router",
+            "label": "Global routing",
+            "type": "proxy",
+            "x": 330,
+            "y": 300,
+            "note": "Pins each merchant to one write region. Residency is a routing decision, not a replication decision."
+          },
+          {
+            "id": "reu",
+            "label": "EU region\\npayment + ledger",
+            "type": "server",
+            "x": 590,
+            "y": 160
+          },
+          {
+            "id": "rus",
+            "label": "US region\\npayment + ledger",
+            "type": "server",
+            "x": 590,
+            "y": 440
+          },
+          {
+            "id": "shards",
+            "label": "Ledger shards\\nby merchant",
+            "type": "db",
+            "x": 850,
+            "y": 160,
+            "why": {
+              "without": "One append-only ledger table growing 8 TB a year turns reconciliation into a 9-hour single-threaded pass that overruns the next day's file. Exceptions age past the point where anyone can act on them.",
+              "with": "Merchant-sharded, time-partitioned storage. Every balance query and every reconciliation run is single-shard, and the runs go in parallel.",
+              "conclusion": "The driver is retention volume and the reconciliation window, not writes per second. Naming the right reason for sharding matters as much as sharding."
+            }
+          },
+          {
+            "id": "recon",
+            "label": "Per-shard reconciliation",
+            "type": "worker",
+            "x": 850,
+            "y": 440,
+            "note": "One run per shard, in parallel. Unresolved exceptions older than 48 hours page a human."
+          }
+        ],
+        "edges": [
+          {
+            "from": "eu",
+            "to": "router"
+          },
+          {
+            "from": "us",
+            "to": "router"
+          },
+          {
+            "from": "router",
+            "to": "reu"
+          },
+          {
+            "from": "router",
+            "to": "rus"
+          },
+          {
+            "from": "reu",
+            "to": "shards"
+          },
+          {
+            "from": "rus",
+            "to": "shards"
+          },
+          {
+            "from": "shards",
+            "to": "recon",
+            "label": "nightly, parallel",
+            "dashed": true
+          }
+        ]
+      }
+    }
+  ],
+  "tradeoffs": [
+    {
+      "option": "Append-only double-entry ledger, balance derived",
+      "pros": [
+        "Every number on a screen traces to entries that produced it — the system can answer 'why'",
+        "Any historical balance is reconstructable by filtering on time, without having planned for the question",
+        "The zero-sum invariant over all entries is a continuous, cheap integrity check",
+        "A duplicated write shows up as a visible extra row rather than a silently wrong number"
+      ],
+      "cons": [
+        "Roughly six rows where one column update would have done, so storage grows monotonically — 8 TB/year at this scale and nothing is ever deleted",
+        "Balance is a SUM, so it needs materialized snapshots plus a tail scan, which is real machinery to build and keep correct",
+        "Corrections are reversing transactions, so a merchant's statement shows the mistake and the fix rather than a clean number, and support has to explain both"
+      ]
+    },
+    {
+      "option": "Mutable balance column",
+      "pros": [
+        "Balance is a single indexed read — no snapshots, no tail scan, no extra machinery",
+        "Dramatically less storage and far simpler code",
+        "Obvious and immediately understandable to anyone reading the schema"
+      ],
+      "cons": [
+        "No history: when the number is wrong you cannot tell when it became wrong or what made it wrong",
+        "A retried or replayed update silently doubles the effect and leaves no evidence it happened twice",
+        "Nothing enforces conservation — crediting without a matching debit is a normal-looking statement",
+        "Retrofitting a ledger later means reconstructing history you never recorded, which is usually impossible"
+      ]
+    },
+    {
+      "option": "Idempotency key in the same transaction as the effect",
+      "pros": [
+        "The key and the effect commit or fail together, so there is no window where one exists without the other",
+        "A crash always leaves a clean state: the retry either replays a stored response or starts fresh",
+        "The unique constraint is the concurrency control — no separate locking scheme to get wrong"
+      ],
+      "cons": [
+        "Forces the key into the transactional store, so it cannot live in a faster dedicated cache as the source of truth",
+        "Adds a write and a uniqueness check to the hot path of every mutating request",
+        "Key retention becomes a storage and cleanup concern in the primary database"
+      ]
+    },
+    {
+      "option": "Idempotency key in a separate fast store (Redis)",
+      "pros": [
+        "Sub-millisecond lookup, no load added to the primary database",
+        "Native TTL handles expiry with no cleanup job",
+        "Scales independently of the transactional store"
+      ],
+      "cons": [
+        "Two writes with no atomicity: a crash between them either loses the key and permits a double charge, or records the key for an effect that never happened and reports false success",
+        "Redis durability is not the durability money needs — a failover can lose recent keys",
+        "The failure is rare and non-deterministic, so it survives testing and appears in production as unexplained duplicates"
+      ]
+    },
+    {
+      "option": "Two-phase commit across payment, order and inventory",
+      "pros": [
+        "Genuine atomicity: all three commit or none do, with no intermediate state anyone can observe",
+        "No compensation logic to write, test or operate",
+        "Isolation is preserved, so concurrent checkouts cannot interleave into an inconsistent view"
+      ],
+      "cons": [
+        "Blocks: participants hold locks between prepare and commit, and a coordinator crash leaves rows in doubt and locked until a human resolves them",
+        "Availability multiplies downward — three services at 99.9% give 99.7% combined",
+        "The external card processor cannot be a participant, so the step that matters most is outside the atomicity you are paying for",
+        "Latency is the slowest participant plus two coordination round trips, on every checkout"
+      ]
+    },
+    {
+      "option": "Saga with compensating transactions",
+      "pros": [
+        "No lock is held across a network call, so no single failure can freeze the system",
+        "Each service commits independently and stays available when a peer is down",
+        "Works with third parties that will never support a distributed transaction"
+      ],
+      "cons": [
+        "A compensation is not a rollback: the intermediate state was real and observable, so a customer can see a charge and then a refund on their statement",
+        "The inverse is often inexact — a voided authorization can leave a hold on the card for days, and a reversed FX conversion lands at a different rate",
+        "Compensations can themselves fail and need durable state, retries and a manual queue behind them",
+        "Irreversible steps (email sent, item shipped) cannot be compensated at all and must be ordered last"
+      ]
+    }
+  ],
+  "interviewStages": [
+    {
+      "key": "requirements",
+      "prompt": "Design a payment system for a platform that charges cards on behalf of merchants. What do you clarify first?",
+      "hints": [
+        "What property of this system is different from every read-heavy service you have designed?",
+        "Think about what happens between capture and payout, and who holds the money"
+      ],
+      "modelAnswer": [
+        "State the governing constraint up front: latency barely matters, correctness matters absolutely, and that justifies the expensive choices later",
+        "Platform or direct merchant? A platform needs a ledger per merchant and a payout pipeline",
+        "Authorize and capture separately, or together? Anything that ships needs them separate",
+        "Refunds, partial refunds, disputes in scope? Multi-currency and where FX happens?",
+        "Retention and audit requirements — they decide whether history is optional",
+        "Name CAP explicitly and choose CP: refusing a payment is recoverable, double-charging is not"
+      ]
+    },
+    {
+      "key": "idempotency",
+      "prompt": "A client sends POST /payments, we charge the card, and the connection drops before the response arrives. What does the client do, and what must we have built?",
+      "hints": [
+        "Can the client distinguish 'never arrived' from 'succeeded, response lost'?",
+        "If the answer is no, what is the client forced to do — and what does that force on you?",
+        "Where exactly does the idempotency record get written, and in what transaction?"
+      ],
+      "modelAnswer": [
+        "The client cannot distinguish the two worlds — that is a genuine property of networks, not a client bug",
+        "So it must retry, and therefore the server must make the retry harmless. Idempotency is a hard requirement, not a robustness nicety",
+        "Client sends a unique key per logical operation; server inserts it under a unique constraint, performs the effect, stores the response, all in one transaction",
+        "The same transaction is the whole point: commit the payment first and crash before storing the key and the retry charges again; store the key first and fail the payment and the retry reports success for money that never moved",
+        "Keys are scoped per merchant and expire after 24h–7d; a repeat a week later is a new request",
+        "The processor call is still outside the transaction, and idempotency cannot close that gap — which is why reconciliation exists"
+      ]
+    },
+    {
+      "key": "ledger",
+      "prompt": "Show me how you store a merchant's balance.",
+      "hints": [
+        "What can you answer with a balance column when a merchant disputes the number?",
+        "What does 'balance as of last Tuesday' cost in each model?"
+      ],
+      "modelAnswer": [
+        "Not a column. Money is recorded as paired entries, and every transaction's entries sum to zero",
+        "A $40.95 capture with a $1.50 fee is one transaction with four entries across customer_receivable, merchant_payable and fee_revenue",
+        "Balance is SUM over the account's entries, so any historical balance is a filter on time — free, without having anticipated the question",
+        "The sum of all entries across all accounts is zero; that invariant is a continuous integrity test that fires when something writes an unbalanced transaction",
+        "Mistakes are corrected with reversing transactions; the original stays visible, which is what an auditor requires",
+        "Raise the performance objection yourself: materialized balance snapshots plus the entries after them. The snapshot is a cache, rebuildable by replay, never the source of truth"
+      ]
+    },
+    {
+      "key": "processor",
+      "prompt": "Your call to the card processor times out after 10 seconds. What is the state of the payment, and what do you do?",
+      "hints": [
+        "Does a timeout tell you whether the charge happened?",
+        "Be careful about what status you write to the payments row",
+        "What protects the rest of your service while the processor is degraded?"
+      ],
+      "modelAnswer": [
+        "The state is unknown, and it must be recorded as unknown — writing 'failed' is a lie that leads to a charged customer and books that say otherwise",
+        "A timeout tells you the request failed and nothing about whether the charge happened. No retry policy distinguishes those",
+        "Retry with the same idempotency key, bounded to about three attempts, exponential backoff with full jitter so recovering processors are not hit by a synchronized herd",
+        "Circuit breaker so a degraded processor fails fast instead of holding threads until the pool is exhausted; half-open probes to detect recovery; fail over to a secondary",
+        "Write the processor_attempts row before the call, so a crash leaves evidence the attempt existed",
+        "Resolution is reconciliation against the settlement file — that is the only mechanism that converts the ambiguity into a fact"
+      ]
+    },
+    {
+      "key": "reconciliation",
+      "prompt": "Walk me through reconciliation. Why can you not skip it?",
+      "hints": [
+        "What is the residual gap that idempotency and the ledger do not close?",
+        "There are three classes of mismatch — what does each mean and what is the repair?"
+      ],
+      "modelAnswer": [
+        "You cannot make an HTTP call and a database commit atomic, so a window always remains where your records and theirs disagree. Reconciliation is what makes the system eventually correct, not an accounting extra",
+        "Load the daily settlement file, join on the processor reference and payment id",
+        "We have it, they do not: usually a cutoff crossing; if still missing next run, reverse locally with a reversing transaction",
+        "They have it, we do not: the timeout case. The charge happened and our write did not — create the missing ledger transaction against the processor_attempts row, then complete or refund depending on fulfilment",
+        "Amounts differ: usually fees or FX timing. Agree an authoritative source per field and book the difference as its own balanced transaction",
+        "The job must be idempotent, keyed on the file and row; every repair writes a reason code; anything unclassifiable escalates to a small manual queue",
+        "Monitor unresolved exceptions older than 48 hours — it is the earliest signal that something is silently wrong"
+      ]
+    },
+    {
+      "key": "webhooks",
+      "prompt": "The processor sends you webhooks for payment events. What can go wrong with that channel?",
+      "hints": [
+        "Three separate problems, all of which happen routinely",
+        "What exactly is the signature computed over?"
+      ],
+      "modelAnswer": [
+        "Out of order: captured can arrive before authorized. Guard state transitions and track the highest event timestamp applied per payment so stale events are dropped",
+        "Duplicated: the provider retries until it gets a 2xx. Store the provider event id with a unique constraint and drop repeats — the same idempotency pattern at the other end",
+        "Unauthenticated: it is a public URL that changes money-related state. Verify the HMAC over the raw bytes before parsing, constant-time compare, reject stale timestamps, support two secrets for rotation",
+        "Acknowledge fast and process asynchronously, or a slow database makes the provider time out and retry and multiplies your load exactly when you are struggling",
+        "Never rely on webhooks alone — they get lost. Reconciliation and a status-poll sweeper are the backstop: push for latency, pull for correctness"
+      ]
+    },
+    {
+      "key": "saga",
+      "prompt": "Checkout spans payment, order and inventory. How do you keep them consistent, and what does your approach cost you?",
+      "hints": [
+        "Why would you not reach for a distributed transaction?",
+        "Is a compensation the same thing as a rollback?"
+      ],
+      "modelAnswer": [
+        "2PC blocks: participants hold locks between prepare and commit, and a coordinator crash leaves rows in doubt and locked until a human intervenes",
+        "It also multiplies availability downward, and the external processor cannot be a participant — so the step that matters most is outside the atomicity you are paying for",
+        "Use a saga: authorize, create order, reserve stock, each a local transaction with a named compensating action, coordinated by an orchestrator",
+        "Publish steps through a transactional outbox written in the same transaction as the state change, then relay — at-least-once delivery, idempotent consumers",
+        "Be explicit that a compensation is not a rollback: the intermediate state was real and the customer may have seen the charge before the refund",
+        "The inverse is often inexact (holds linger on the card, reversed FX lands at a different rate), compensations can themselves fail and need retries and a manual queue, and irreversible steps must be ordered last"
+      ]
+    }
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "architecture",
+      "question": "You write the idempotency key to Redis and the payment row to Postgres. The process crashes after the Postgres commit but before the Redis write. What happens on the client's retry?",
+      "options": [
+        "Nothing — Redis will recover the key from its append-only file",
+        "The retry finds no key, is treated as a new request, and the card is charged a second time",
+        "The retry is rejected with a 409 because the payment already exists",
+        "Postgres rolls back the payment automatically when the Redis write fails"
+      ],
+      "answerIndex": 1,
+      "explanation": "Two stores with no atomicity between them means a crash in the gap produces exactly the bug idempotency was built to prevent — and it is worse than having no protection, because you believe you are covered. The mirror case is just as bad: key first, payment write fails, and the retry returns success for money that never moved. The key and the effect must commit in one transaction."
+    },
+    {
+      "id": "q2",
+      "type": "architecture",
+      "question": "Your call to the processor times out. What status should the payment row carry?",
+      "options": [
+        "failed — the request did not complete",
+        "captured — assume it worked and let a refund fix it if not",
+        "unknown — the outcome is genuinely undetermined and reconciliation resolves it",
+        "created — reset it and let the client start over"
+      ],
+      "answerIndex": 2,
+      "explanation": "A timeout tells you the request failed; it says nothing about whether the charge happened at the processor. Recording 'failed' is a lie that leaves a customer debited while your books show nothing, and 'captured' is the same lie in the other direction. An explicit unknown state, resolved by comparing against the settlement file, is the only honest model — and refusing to collapse unknown into failed is one of the clearest signals of experience in a payments interview."
+    },
+    {
+      "id": "q3",
+      "type": "architecture",
+      "question": "Why is an append-only double-entry ledger preferred over UPDATE merchants SET balance = balance + amount?",
+      "options": [
+        "It is faster to read",
+        "It uses less storage",
+        "It preserves history so any past balance is reconstructable, makes duplicate writes visible as extra rows, and enforces conservation through the zero-sum invariant",
+        "It avoids the need for database transactions"
+      ],
+      "answerIndex": 2,
+      "explanation": "It is slower to read and uses far more storage — those are the costs you accept. What you buy is that every number traces to the entries that produced it, 'balance as of last Tuesday' is a filter on time rather than an impossible question, a replayed write leaves a visible extra row instead of a silently wrong number, and the sum of all entries being zero is a continuous integrity check. Balance is derived, and snapshots are a rebuildable cache, never the source of truth."
+    },
+    {
+      "id": "q4",
+      "type": "architecture",
+      "question": "A saga compensates a failed checkout by refunding the authorization. Why is that not equivalent to a database rollback?",
+      "options": [
+        "It is equivalent — both undo the transaction",
+        "The intermediate state was real and observable, the inverse is often inexact (holds can linger, reversed FX lands at a different rate), and the compensation can itself fail",
+        "Because refunds are slower than rollbacks",
+        "Because sagas do not support partial failure"
+      ],
+      "answerIndex": 1,
+      "explanation": "A rollback erases the attempt; nobody outside the transaction ever saw it. A compensation is a new forward action that tries to negate an earlier one, so the customer's statement can show a charge followed by a refund, the card hold may persist for days after the money returns, and a reversed currency conversion will not match to the cent. Compensations also need their own durable state, retries and manual queue — and steps that cannot be compensated at all, like a shipped item, must be ordered last."
+    }
+  ],
+  "related": [
+    "idempotency",
+    "saga",
+    "circuit-breaker",
+    "message-queue",
+    "database",
+    "observability"
+  ]
+}

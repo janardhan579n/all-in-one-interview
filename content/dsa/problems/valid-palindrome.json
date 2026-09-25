@@ -35,13 +35,15 @@
   "bruteForce": {
     "idea": "Build a filtered, lower-cased copy of the string, reverse that copy, and compare the two.",
     "code": [
-      "StringBuilder cleaned = new StringBuilder();",
-      "for (char c : s.toCharArray()) {",
-      "    if (Character.isLetterOrDigit(c)) cleaned.append(Character.toLowerCase(c));",
-      "}",
-      "String forward = cleaned.toString();",
-      "String backward = cleaned.reverse().toString();",
-      "return forward.equals(backward);"
+      "public static boolean isPalindrome(String s) {",
+      "    StringBuilder cleaned = new StringBuilder();",
+      "    for (char c : s.toCharArray()) {",
+      "        if (Character.isLetterOrDigit(c)) cleaned.append(Character.toLowerCase(c));",
+      "    }",
+      "    String forward = cleaned.toString();",
+      "    String backward = cleaned.reverse().toString();",
+      "    return forward.equals(backward);",
+      "}"
     ],
     "complexity": {
       "time": "O(n)",

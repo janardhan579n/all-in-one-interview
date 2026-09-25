@@ -29,11 +29,13 @@
   "bruteForce": {
     "idea": "Store every visited node in a HashSet; a repeat means a cycle.",
     "code": [
-      "Set<Node> seen = new HashSet<>();",
-      "for (Node cur = head; cur != null; cur = cur.next) {",
-      "    if (!seen.add(cur)) return true;",
-      "}",
-      "return false;"
+      "public static boolean hasCycle(Node head) {",
+      "    Set<Node> seen = new HashSet<>();   // O(n) extra space — the thing the problem forbids",
+      "    for (Node cur = head; cur != null; cur = cur.next) {",
+      "        if (!seen.add(cur)) return true;",
+      "    }",
+      "    return false;",
+      "}"
     ],
     "complexity": {
       "time": "O(n)",

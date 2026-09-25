@@ -27,20 +27,39 @@
     "All elements are distinct"
   ],
   "bruteForce": {
-    "idea": "Generate random orderings and collect the distinct ones until you have n! of them.",
+    "idea": "Every ordering of n items has a unique rank in [0, n!) once you fix an encoding: read rank in the factorial number system to get one digit per position, and let that digit choose (and remove) an element from the list of what is still unplaced. Looping rank from 0 to n!-1 and decoding each one enumerates every permutation without ever choosing and un-choosing recursively.",
     "code": [
-      "Set<List<Integer>> found = new HashSet<>();",
-      "while (found.size() < factorial(nums.length)) {",
-      "    List<Integer> shuffled = new ArrayList<>(asList(nums));",
-      "    Collections.shuffle(shuffled);",
-      "    found.add(shuffled);",
+      "public static List<List<Integer>> permute(int[] nums) {",
+      "    int n = nums.length;",
+      "    long total = factorial(n);",
+      "    List<List<Integer>> result = new ArrayList<>();",
+      "    for (long rank = 0; rank < total; rank++) {",
+      "        List<Integer> remaining = new ArrayList<>();",
+      "        for (int value : nums) remaining.add(value);",
+      "        List<Integer> candidate = new ArrayList<>();",
+      "        long r = rank;",
+      "        for (int position = n; position >= 1; position--) {",
+      "            long f = factorial(position - 1);",
+      "            int index = (int) (r / f);      // this digit of the factorial-base encoding of rank",
+      "            r %= f;",
+      "            candidate.add(remaining.remove(index));",
+      "        }",
+      "        result.add(candidate);",
+      "    }",
+      "    return result;",
+      "}",
+      "",
+      "private static long factorial(int k) {",
+      "    long f = 1;",
+      "    for (int i = 2; i <= k; i++) f *= i;",
+      "    return f;",
       "}"
     ],
     "complexity": {
-      "time": "Unbounded in the worst case (coupon-collector behaviour)",
-      "space": "O(n * n!)"
+      "time": "O(n^2 * n!)",
+      "space": "O(n) per candidate, plus the n! results"
     },
-    "whySlow": "Correctness is only probabilistic and the last few permutations take a very long time to appear. Systematic construction is both faster and guaranteed."
+    "whySlow": "The decode is done from scratch for every one of the n! ranks: a fresh remaining-list is rebuilt and walked position by position, and a factorial is recomputed at each step, none of which is reused between one rank and the next. It also does strictly more bookkeeping per permutation than backtracking's choose/un-choose — an ArrayList.remove(index) is O(n) on its own, so building all n! permutations this way costs O(n^2 * n!) against backtracking's O(n * n!). The insight backtracking uses instead is that consecutive permutations it visits share almost their entire prefix, so the placed elements never need to be rebuilt, only the one at the frontier — information this rank-by-rank decoding throws away and recomputes every time."
   },
   "patternIdentification": "'All orderings' means order matters and every unused element is a candidate at every position — backtracking with a used[] marker rather than a start index.",
   "optimized": {

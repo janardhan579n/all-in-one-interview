@@ -36,17 +36,19 @@
   "bruteForce": {
     "idea": "Four nested loops over the four arrays, incrementing a counter whenever the four values sum to zero.",
     "code": [
-      "int count = 0;",
-      "for (int x : a) {",
-      "    for (int y : b) {",
-      "        for (int z : c) {",
-      "            for (int w : d) {",
-      "                if (x + y + z + w == 0) count++;",
+      "public static int fourSumCount(int[] a, int[] b, int[] c, int[] d) {",
+      "    int count = 0;",
+      "    for (int x : a) {",
+      "        for (int y : b) {",
+      "            for (int z : c) {",
+      "                for (int w : d) {   // the whole c+d table, rebuilt for every (x, y) pair",
+      "                    if (x + y + z + w == 0) count++;",
+      "                }",
       "            }",
       "        }",
       "    }",
-      "}",
-      "return count;"
+      "    return count;",
+      "}"
     ],
     "complexity": {
       "time": "O(n^4)",

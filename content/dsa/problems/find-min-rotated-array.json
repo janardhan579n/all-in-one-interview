@@ -36,11 +36,13 @@
   "bruteForce": {
     "idea": "Scan every element and keep the smallest, or scan for the single position where the value drops.",
     "code": [
-      "int best = nums[0];",
-      "for (int i = 1; i < nums.length; i++) {",
-      "    if (nums[i] < best) best = nums[i];",
-      "}",
-      "return best;"
+      "public static int findMin(int[] nums) {",
+      "    int best = nums[0];",
+      "    for (int i = 1; i < nums.length; i++) {   // every element, as if the order told us nothing",
+      "        if (nums[i] < best) best = nums[i];",
+      "    }",
+      "    return best;",
+      "}"
     ],
     "complexity": {
       "time": "O(n)",

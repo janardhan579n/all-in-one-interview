@@ -13,8 +13,8 @@ perfectly. What follows is what an external tool can say about the same code.
 |---|---|
 | Solutions that **compile** | **165/165** |
 | Solutions that **produce the answers printed on their own page** | **124/165** (0 mismatch) |
-| Solutions that **agree with an independent brute force** on random legal inputs | **32/165** (0 disagree) |
-| Random inputs tried in the differential stage | 12,800 |
+| Solutions that **agree with an independent brute force** on random legal inputs | **158/165** (0 disagree) |
+| Random inputs tried in the differential stage | 65,478 |
 
 **What none of this proves:** that a solution would pass LeetCode. The problem statements in
 this library are a reconstruction, not a copy, so the *specification itself* is unverified —
@@ -39,13 +39,13 @@ force, the two implementations are independent programs for the same specificati
 hundreds of random inputs drawn from the problem's own stated constraints and required to
 agree exactly. For that to pass while the solution is wrong, the same mistake has to appear
 twice, in two algorithms that share no structure. Its weakness is coverage:
-117 problems carry a brute force written as an
+2 problems carry a brute force written as an
 excerpt rather than a program, so there is nothing to test against.
 
 ## What it found
 
-Two genuine defects, both in **brute-force** code — which matters more than it sounds, because
-the brute force is the part the reader is shown first and invited to reason about.
+Three genuine defects, all in **brute-force** code — which matters more than it sounds,
+because the brute force is the part the reader is shown first and invited to reason about.
 
 **`house-robber-ii`** — the enumeration treats house `i` as adjacent to `(i + 1) % n`. With a
 single house that is the house itself, so it appeared to be its own neighbour and every plan
@@ -61,8 +61,42 @@ collapses it. On 6 computers and 3 cables it reported 3 moves where the answer i
 6 computers cannot be connected with fewer than 5 cables at all. Fixed by testing each cable
 against what is left rather than against the original.
 
-Both were found by the differential stage, and neither would have been found by the example
-replay — the examples on both pages passed throughout.
+**`move-zeroes`** — the page's "obvious" approach shifted elements down and then stepped the
+index back to re-examine the vacated slot. Once a zero reaches the final position, which is
+inevitable for any input containing one, that step-back lands on the same slot forever: an
+infinite loop on the most ordinary input the problem has. It had never been executed, only
+read, which is exactly the class of defect a reader cannot catch by reading either.
+
+Each was found by the differential stage, and none would have been found by the example
+replay — the examples on all three pages passed throughout.
+
+## Two ways this report could have lied
+
+A green tick is only worth what the test behind it can fail on, and two kinds of tick here
+turned out to be worth nothing until the harness was taught to notice.
+
+**Agreement on inputs that prove nothing.** Seven problems agreed on all 400 trials while
+producing a single distinct answer the whole way through, or throwing on every one. A cycle
+detector was only ever handed acyclic lists, because the list generator could not build a
+cycle; `same-tree` compared two independently random trees, which are never equal; a problem
+about digit strings was fed random letters and returned zero every time. Each was a green
+tick over a test that could not have come out any other way. The runner now counts distinct
+answers and reports **AGREE_BUT_VACUOUS** instead, and the generators for those seven were
+widened until both outcomes actually occur.
+
+**Brute forces that are wrong on purpose.** On four problems the naive approach is not merely
+slow but incorrect, and saying so is the most useful thing the page does: the reader meets the
+implementation they would have written, then meets the input that breaks it. `validate-bst`
+checks each node only against its immediate children; `same-tree` compares traversals with no
+null markers; `coin-change` takes the largest coin that fits; `add-two-numbers` packs the
+digits into a machine integer that overflows. For these the harness **inverts**: disagreement
+is the pass, and unbroken agreement is the failure, reported as **FAULT_NOT_REPRODUCED**.
+
+That inversion guards something nothing else does. If one of these brute forces were later
+tidied into a correct one, every other check in the project would stay green — the content
+validator, the unit tests, the example replay, and a differential test reporting a cheerful
+AGREE — while the page went on asserting a fault that no longer existed, with a
+counterexample that no longer broke anything.
 
 ## Where the harness had to be told the rules
 
@@ -86,170 +120,170 @@ order, and that flag is read from their statements rather than assumed.
 
 | Problem | Compiles | Own examples | Against brute force |
 |---|---|---|---|
-| `accounts-merge` | ✅ | ✅ 2/2 | — brute force is an excerpt, not a program |
-| `add-two-numbers` | ✅ | — examples not machine-readable | — brute force is an excerpt, not a program |
-| `alien-dictionary` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `asteroid-collision` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `balanced-binary-tree` | ✅ | — examples not machine-readable | — takes a shape the generator cannot build |
+| `accounts-merge` | ✅ | ✅ 2/2 | ✅ 400 random inputs |
+| `add-two-numbers` | ✅ | — examples not machine-readable | — disagrees on purpose — the page says this brute force is wrong |
+| `alien-dictionary` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `asteroid-collision` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `balanced-binary-tree` | ✅ | — examples not machine-readable | ✅ 400 random inputs |
 | `best-time-buy-sell-cooldown` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
-| `best-time-to-buy-sell-stock` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `binary-search-basic` | ✅ | ✅ 2/2 | — brute force is an excerpt, not a program |
-| `binary-tree-inorder-traversal` | ✅ | — examples not machine-readable | — takes a shape the generator cannot build |
-| `binary-tree-level-order` | ✅ | — examples not machine-readable | — brute force is an excerpt, not a program |
-| `cheapest-flights-k-stops` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
+| `best-time-to-buy-sell-stock` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `binary-search-basic` | ✅ | ✅ 2/2 | ✅ 400 random inputs |
+| `binary-tree-inorder-traversal` | ✅ | — examples not machine-readable | ✅ 400 random inputs |
+| `binary-tree-level-order` | ✅ | — examples not machine-readable | ✅ 400 random inputs |
+| `cheapest-flights-k-stops` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
 | `climbing-stairs` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
-| `clone-graph` | ✅ | — examples not machine-readable | — brute force is an excerpt, not a program |
-| `coin-change` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
+| `clone-graph` | ✅ | — examples not machine-readable | ✅ 400 random inputs |
+| `coin-change` | ✅ | ✅ 3/3 | — disagrees on purpose — the page says this brute force is wrong |
 | `combination-sum` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
-| `container-with-most-water` | ✅ | ✅ 2/2 | — brute force is an excerpt, not a program |
-| `contains-duplicate` | ✅ | ✅ 2/2 | — brute force is an excerpt, not a program |
-| `contiguous-array` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
+| `container-with-most-water` | ✅ | ✅ 2/2 | ✅ 400 random inputs |
+| `contains-duplicate` | ✅ | ✅ 2/2 | ✅ 400 random inputs |
+| `contiguous-array` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
 | `counting-bits` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
-| `course-schedule-ii` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `course-schedule` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `daily-temperatures` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `decode-string` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
+| `course-schedule-ii` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `course-schedule` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `daily-temperatures` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `decode-string` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
 | `decode-ways` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
 | `design-add-search-words` | ✅ | — examples not machine-readable | ✅ 400 random inputs |
-| `design-circular-queue` | ✅ | — examples not machine-readable | — brute force is an excerpt, not a program |
-| `diagonal-traverse` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `diameter-of-binary-tree` | ✅ | — examples not machine-readable | — brute force is an excerpt, not a program |
+| `design-circular-queue` | ✅ | — examples not machine-readable | ✅ 960 random inputs |
+| `diagonal-traverse` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `diameter-of-binary-tree` | ✅ | — examples not machine-readable | ✅ 400 random inputs |
 | `edit-distance` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
-| `evaluate-rpn` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
+| `evaluate-rpn` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
 | `fibonacci-memo` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
-| `find-duplicate-number` | ✅ | ✅ 2/2 | — brute force is an excerpt, not a program |
+| `find-duplicate-number` | ✅ | ✅ 2/2 | ✅ 400 random inputs |
 | `find-median-from-stream` | ✅ | — examples not machine-readable | ✅ 400 random inputs |
-| `find-min-rotated-array` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `find-missing-number` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `first-bad-version` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `first-unique-character` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `four-sum-count` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `game-of-life` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `gas-station` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `graph-valid-tree` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `group-anagrams` | ✅ | — examples not machine-readable | — brute force is an excerpt, not a program |
-| `h-index` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `happy-number` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
+| `find-min-rotated-array` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `find-missing-number` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `first-bad-version` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `first-unique-character` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `four-sum-count` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `game-of-life` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `gas-station` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `graph-valid-tree` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `group-anagrams` | ✅ | — examples not machine-readable | ✅ 400 random inputs |
+| `h-index` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `happy-number` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
 | `house-robber-ii` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
-| `house-robber` | ✅ | ✅ 2/2 | — the two blocks share no comparable method |
+| `house-robber` | ✅ | ✅ 2/2 | ✅ 400 random inputs |
 | `implement-queue-using-stacks` | ✅ | — examples not machine-readable | ✅ 400 random inputs |
 | `implement-trie` | ✅ | — examples not machine-readable | ✅ 400 random inputs |
-| `insert-interval` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `invert-binary-tree` | ✅ | — examples not machine-readable | — brute force is an excerpt, not a program |
-| `is-graph-bipartite` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `jump-game-ii` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `jump-game` | ✅ | ✅ 3/3 | — the two blocks share no comparable method |
-| `k-closest-points` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `koko-eating-bananas` | ✅ | ✅ 2/2 | — brute force is an excerpt, not a program |
+| `insert-interval` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `invert-binary-tree` | ✅ | — examples not machine-readable | ✅ 400 random inputs |
+| `is-graph-bipartite` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `jump-game-ii` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `jump-game` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `k-closest-points` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `koko-eating-bananas` | ✅ | ✅ 2/2 | ✅ 400 random inputs |
 | `kth-largest-element` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
-| `kth-smallest-in-bst` | ✅ | — examples not machine-readable | — takes a shape the generator cannot build |
-| `largest-number` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `largest-rectangle-histogram` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `last-stone-weight` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `letter-combinations-phone` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `linked-list-cycle` | ✅ | — examples not machine-readable | — brute force is an excerpt, not a program |
+| `kth-smallest-in-bst` | ✅ | — examples not machine-readable | ✅ 400 random inputs |
+| `largest-number` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `largest-rectangle-histogram` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `last-stone-weight` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `letter-combinations-phone` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `linked-list-cycle` | ✅ | — examples not machine-readable | ✅ 400 random inputs |
 | `longest-common-prefix` | ✅ | ✅ 4/4 | ✅ 400 random inputs |
 | `longest-common-subsequence` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
-| `longest-consecutive-sequence` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `longest-increasing-subsequence` | ✅ | ✅ 3/3 | — the two blocks share no comparable method |
-| `longest-repeating-char-replacement` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `longest-substring-no-repeat` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
+| `longest-consecutive-sequence` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `longest-increasing-subsequence` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `longest-repeating-char-replacement` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `longest-substring-no-repeat` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
 | `longest-word-in-dictionary` | ✅ | — examples not machine-readable | ✅ 400 random inputs |
-| `lowest-common-ancestor-bst` | ✅ | — examples not machine-readable | — takes a shape the generator cannot build |
-| `lru-cache` | ✅ | — examples not machine-readable | — brute force is an excerpt, not a program |
-| `max-area-of-island` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `max-consecutive-ones-iii` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `max-depth-binary-tree` | ✅ | — examples not machine-readable | — brute force is an excerpt, not a program |
-| `max-sum-subarray-k` | ✅ | ✅ 2/2 | — brute force is an excerpt, not a program |
-| `median-two-sorted-arrays` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `meeting-rooms-ii` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `meeting-rooms` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `merge-intervals` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `merge-k-sorted-lists` | ✅ | — examples not machine-readable | — takes a shape the generator cannot build |
+| `lowest-common-ancestor-bst` | ✅ | — examples not machine-readable | ✅ 400 random inputs |
+| `lru-cache` | ✅ | — examples not machine-readable | ✅ 960 random inputs |
+| `max-area-of-island` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `max-consecutive-ones-iii` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `max-depth-binary-tree` | ✅ | — examples not machine-readable | ✅ 400 random inputs |
+| `max-sum-subarray-k` | ✅ | ✅ 2/2 | ✅ 400 random inputs |
+| `median-two-sorted-arrays` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `meeting-rooms-ii` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `meeting-rooms` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `merge-intervals` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `merge-k-sorted-lists` | ✅ | — examples not machine-readable | ✅ 400 random inputs |
 | `merge-sorted-array` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
-| `merge-two-sorted-lists` | ✅ | — examples not machine-readable | — brute force is an excerpt, not a program |
-| `middle-of-linked-list` | ✅ | — examples not machine-readable | — brute force is an excerpt, not a program |
+| `merge-two-sorted-lists` | ✅ | — examples not machine-readable | ✅ 400 random inputs |
+| `middle-of-linked-list` | ✅ | — examples not machine-readable | ✅ 400 random inputs |
 | `min-cost-climbing-stairs` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
-| `min-height-trees` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
+| `min-height-trees` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
 | `min-stack` | ✅ | — examples not machine-readable | ✅ 400 random inputs |
-| `min-window-substring` | ✅ | ✅ 2/2 | — brute force is an excerpt, not a program |
-| `minimum-arrows-burst-balloons` | ✅ | ✅ 3/3 | — the two blocks share no comparable method |
-| `move-zeroes` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `moving-average-stream` | ✅ | — examples not machine-readable | — brute force is an excerpt, not a program |
-| `n-queens` | ✅ | — examples not machine-readable | — brute force is an excerpt, not a program |
-| `network-delay-time` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `next-greater-element` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `non-overlapping-intervals` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `number-of-1-bits` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `number-of-islands` | ✅ | — examples not machine-readable | — brute force is an excerpt, not a program |
+| `min-window-substring` | ✅ | ✅ 2/2 | ✅ 400 random inputs |
+| `minimum-arrows-burst-balloons` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `move-zeroes` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `moving-average-stream` | ✅ | — examples not machine-readable | ✅ 960 random inputs |
+| `n-queens` | ✅ | — examples not machine-readable | ✅ 400 random inputs |
+| `network-delay-time` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `next-greater-element` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `non-overlapping-intervals` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `number-of-1-bits` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `number-of-islands` | ✅ | — examples not machine-readable | ✅ 400 random inputs |
 | `number-of-operations-to-connect` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
-| `number-of-provinces` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `open-the-lock` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `pacific-atlantic-water-flow` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `palindrome-linked-list` | ✅ | — examples not machine-readable | — brute force is an excerpt, not a program |
-| `palindrome-partitioning` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
+| `number-of-provinces` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `open-the-lock` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `pacific-atlantic-water-flow` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `palindrome-linked-list` | ✅ | — examples not machine-readable | ✅ 400 random inputs |
+| `palindrome-partitioning` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
 | `parallel-courses` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
 | `partition-equal-subset-sum` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
-| `partition-labels` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `path-sum` | ✅ | — examples not machine-readable | — brute force is an excerpt, not a program |
-| `path-with-maximum-probability` | ✅ | — examples not machine-readable | — takes a shape the generator cannot build |
-| `path-with-minimum-effort` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `permutation-in-string` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `permutations` | ✅ | ✅ 2/2 | — brute force is an excerpt, not a program |
+| `partition-labels` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `path-sum` | ✅ | — examples not machine-readable | ✅ 400 random inputs |
+| `path-with-maximum-probability` | ✅ | — examples not machine-readable | ✅ 400 random inputs |
+| `path-with-minimum-effort` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `permutation-in-string` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `permutations` | ✅ | ✅ 2/2 | ✅ 400 random inputs |
 | `pivot-index` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
 | `power-function` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
-| `product-of-array-except-self` | ✅ | ✅ 2/2 | — brute force is an excerpt, not a program |
-| `range-sum-query` | ✅ | — examples not machine-readable | — takes a shape the generator cannot build |
-| `redundant-connection` | ✅ | ✅ 2/2 | — brute force is an excerpt, not a program |
-| `remove-duplicates-sorted` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `remove-k-digits` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `remove-nth-from-end` | ✅ | — examples not machine-readable | — brute force is an excerpt, not a program |
-| `reorder-list` | ✅ | — examples not machine-readable | — brute force is an excerpt, not a program |
-| `reorganize-string` | ✅ | ✅ 3/3 | — the two blocks share no comparable method |
-| `reverse-bits` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `reverse-linked-list` | ✅ | — examples not machine-readable | — brute force is an excerpt, not a program |
-| `rotate-array` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `rotate-image` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `rotting-oranges` | ✅ | — examples not machine-readable | — brute force is an excerpt, not a program |
+| `product-of-array-except-self` | ✅ | ✅ 2/2 | ✅ 400 random inputs |
+| `range-sum-query` | ✅ | — examples not machine-readable | ✅ 960 random inputs |
+| `redundant-connection` | ✅ | ✅ 2/2 | ✅ 400 random inputs |
+| `remove-duplicates-sorted` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `remove-k-digits` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `remove-nth-from-end` | ✅ | — examples not machine-readable | ✅ 400 random inputs |
+| `reorder-list` | ✅ | — examples not machine-readable | ✅ 400 random inputs |
+| `reorganize-string` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `reverse-bits` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `reverse-linked-list` | ✅ | — examples not machine-readable | ✅ 400 random inputs |
+| `rotate-array` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `rotate-image` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `rotting-oranges` | ✅ | — examples not machine-readable | ✅ 400 random inputs |
 | `running-sum` | ✅ | ✅ 2/2 | — brute force is an excerpt, not a program |
-| `same-tree` | ✅ | — examples not machine-readable | — takes a shape the generator cannot build |
+| `same-tree` | ✅ | — examples not machine-readable | — disagrees on purpose — the page says this brute force is wrong |
 | `satisfiability-equality-equations` | ✅ | — examples not machine-readable | ✅ 400 random inputs |
-| `search-2d-matrix` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `search-rotated-array` | ✅ | ✅ 2/2 | — brute force is an excerpt, not a program |
+| `search-2d-matrix` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `search-rotated-array` | ✅ | ✅ 2/2 | ✅ 400 random inputs |
 | `sequence-reconstruction` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
-| `serialize-deserialize-tree` | ✅ | — examples not machine-readable | — takes a shape the generator cannot build |
-| `set-matrix-zeroes` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `shortest-path-binary-matrix` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `single-number-ii` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
+| `serialize-deserialize-tree` | ✅ | — examples not machine-readable | — not comparable — the two answer different questions |
+| `set-matrix-zeroes` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `shortest-path-binary-matrix` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `single-number-ii` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
 | `single-number` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
-| `sliding-window-maximum` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
+| `sliding-window-maximum` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
 | `sort-colors` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
-| `sort-list` | ✅ | — examples not machine-readable | — brute force is an excerpt, not a program |
-| `spiral-matrix` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `squares-of-sorted-array` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `subarray-sum-equals-k` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
+| `sort-list` | ✅ | — examples not machine-readable | ✅ 400 random inputs |
+| `spiral-matrix` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `squares-of-sorted-array` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `subarray-sum-equals-k` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
 | `subsets-bitmask` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
-| `subsets` | ✅ | ✅ 2/2 | — brute force is an excerpt, not a program |
-| `sum-of-subarray-minimums` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `surrounded-regions` | ✅ | ✅ 1/1 | — brute force is an excerpt, not a program |
+| `subsets` | ✅ | ✅ 2/2 | ✅ 400 random inputs |
+| `sum-of-subarray-minimums` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `surrounded-regions` | ✅ | ✅ 1/1 | ✅ 400 random inputs |
 | `swim-in-rising-water` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
 | `target-sum` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
-| `task-scheduler` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `three-sum` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `top-k-frequent` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `tower-of-hanoi` | ✅ | — examples not machine-readable | — brute force is an excerpt, not a program |
-| `trapping-rain-water` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `two-sum-sorted` | ✅ | ✅ 2/2 | — brute force is an excerpt, not a program |
-| `two-sum` | ✅ | ✅ 2/2 | — brute force is an excerpt, not a program |
-| `unique-paths` | ✅ | ✅ 2/2 | — the two blocks share no comparable method |
-| `valid-anagram` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `valid-palindrome` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `valid-parentheses` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `validate-bst` | ✅ | — examples not machine-readable | — takes a shape the generator cannot build |
-| `walls-and-gates` | ✅ | — examples not machine-readable | — brute force is an excerpt, not a program |
+| `task-scheduler` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `three-sum` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `top-k-frequent` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `tower-of-hanoi` | ✅ | — examples not machine-readable | ✅ 400 random inputs |
+| `trapping-rain-water` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `two-sum-sorted` | ✅ | ✅ 2/2 | ✅ 400 random inputs |
+| `two-sum` | ✅ | ✅ 2/2 | ✅ 400 random inputs |
+| `unique-paths` | ✅ | ✅ 2/2 | ✅ 400 random inputs |
+| `valid-anagram` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `valid-palindrome` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `valid-parentheses` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `validate-bst` | ✅ | — examples not machine-readable | — disagrees on purpose — the page says this brute force is wrong |
+| `walls-and-gates` | ✅ | — examples not machine-readable | ✅ 400 random inputs |
 | `word-break` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
-| `word-ladder` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
-| `word-search-ii` | ✅ | ✅ 3/3 | — brute force is an excerpt, not a program |
+| `word-ladder` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
+| `word-search-ii` | ✅ | ✅ 3/3 | ✅ 400 random inputs |
 | `word-search` | ✅ | ✅ 1/1 | ✅ 400 random inputs |
 
 ## Running it yourself
@@ -271,8 +305,8 @@ with its brute force, so it belongs in CI if this ever gets one.
 
 | Differential | Count |
 |---|---|
-| brute force is an excerpt, not a program | 117 |
-| agrees with its brute force | 32 |
-| takes a shape the generator cannot build | 10 |
-| the two blocks share no comparable method | 6 |
+| agrees with its brute force | 158 |
+| disagrees on purpose — the page says this brute force is wrong | 4 |
+| brute force is an excerpt, not a program | 2 |
+| not comparable — the two answer different questions | 1 |
 

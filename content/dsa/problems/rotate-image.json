@@ -37,17 +37,19 @@
   "bruteForce": {
     "idea": "Allocate a fresh n × n matrix and copy each element to where it belongs: the element at (r, c) lands at (c, n-1-r) after a clockwise turn. Then copy the result back over the input.",
     "code": [
-      "int n = matrix.length;",
-      "int[][] rotated = new int[n][n];",
+      "public static void rotate(int[][] matrix) {",
+      "    int n = matrix.length;",
+      "    int[][] rotated = new int[n][n];",
       "",
-      "for (int r = 0; r < n; r++) {",
-      "    for (int c = 0; c < n; c++) {",
-      "        rotated[c][n - 1 - r] = matrix[r][c];   // clockwise: (r,c) -> (c, n-1-r)",
+      "    for (int r = 0; r < n; r++) {",
+      "        for (int c = 0; c < n; c++) {",
+      "            rotated[c][n - 1 - r] = matrix[r][c];   // clockwise: (r,c) -> (c, n-1-r)",
+      "        }",
       "    }",
-      "}",
       "",
-      "for (int r = 0; r < n; r++) {",
-      "    matrix[r] = Arrays.copyOf(rotated[r], n);   // copy back, since we must mutate the input",
+      "    for (int r = 0; r < n; r++) {",
+      "        matrix[r] = Arrays.copyOf(rotated[r], n);   // copy back, since we must mutate the input",
+      "    }",
       "}"
     ],
     "complexity": {

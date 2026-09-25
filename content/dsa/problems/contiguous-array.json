@@ -36,15 +36,17 @@
   "bruteForce": {
     "idea": "Try every start index, extend the end one element at a time, keep running counts of 0s and 1s and record the length whenever they are equal.",
     "code": [
-      "int best = 0;",
-      "for (int start = 0; start < nums.length; start++) {",
-      "    int zeros = 0, ones = 0;",
-      "    for (int end = start; end < nums.length; end++) {",
-      "        if (nums[end] == 0) zeros++; else ones++;",
-      "        if (zeros == ones) best = Math.max(best, end - start + 1);",
+      "public static int findMaxLength(int[] nums) {",
+      "    int best = 0;",
+      "    for (int start = 0; start < nums.length; start++) {",
+      "        int zeros = 0, ones = 0;",
+      "        for (int end = start; end < nums.length; end++) {   // recount the same suffix, one start later",
+      "            if (nums[end] == 1) ones++; else zeros++;",
+      "            if (zeros == ones) best = Math.max(best, end - start + 1);",
+      "        }",
       "    }",
-      "}",
-      "return best;"
+      "    return best;",
+      "}"
     ],
     "complexity": {
       "time": "O(n^2)",

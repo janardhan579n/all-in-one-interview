@@ -34,12 +34,15 @@
   "bruteForce": {
     "idea": "Greedily take the largest coin that fits, repeatedly.",
     "code": [
-      "Arrays.sort(coins);",
-      "int count = 0;",
-      "for (int i = coins.length - 1; i >= 0; i--) {",
-      "    while (amount >= coins[i]) { amount -= coins[i]; count++; }",
-      "}",
-      "return amount == 0 ? count : -1;"
+      "public static int coinChange(int[] coins, int amount) {",
+      "    int[] sorted = coins.clone();",
+      "    Arrays.sort(sorted);",
+      "    int count = 0;",
+      "    for (int i = sorted.length - 1; i >= 0; i--) {",
+      "        while (sorted[i] > 0 && amount >= sorted[i]) { amount -= sorted[i]; count++; }",
+      "    }",
+      "    return amount == 0 ? count : -1;",
+      "}"
     ],
     "complexity": {
       "time": "O(amount)",

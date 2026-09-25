@@ -36,17 +36,19 @@
   "bruteForce": {
     "idea": "For every index, scan to the right until a strictly larger value appears.",
     "code": [
-      "int[] result = new int[nums.length];",
-      "Arrays.fill(result, -1);",
-      "for (int i = 0; i < nums.length; i++) {",
-      "    for (int j = i + 1; j < nums.length; j++) {",
-      "        if (nums[j] > nums[i]) {",
-      "            result[i] = nums[j];",
-      "            break;",
+      "public static int[] nextGreater(int[] nums) {",
+      "    int[] result = new int[nums.length];",
+      "    Arrays.fill(result, -1);",
+      "    for (int i = 0; i < nums.length; i++) {",
+      "        for (int j = i + 1; j < nums.length; j++) {",
+      "            if (nums[j] > nums[i]) {",
+      "                result[i] = nums[j];",
+      "                break;",
+      "            }",
       "        }",
       "    }",
-      "}",
-      "return result;"
+      "    return result;",
+      "}"
     ],
     "complexity": {
       "time": "O(n^2)",

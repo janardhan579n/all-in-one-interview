@@ -35,17 +35,19 @@
   "bruteForce": {
     "idea": "Collect every value from both lists into one array, sort it, and build a new list from the sorted values.",
     "code": [
-      "List<Integer> all = new ArrayList<>();",
-      "for (Node p = a; p != null; p = p.next) all.add(p.val);",
-      "for (Node q = b; q != null; q = q.next) all.add(q.val);",
-      "Collections.sort(all);",
-      "Node dummy = new Node(0);",
-      "Node tail = dummy;",
-      "for (int value : all) {",
-      "    tail.next = new Node(value);",
-      "    tail = tail.next;",
-      "}",
-      "return dummy.next;"
+      "public static Node mergeTwoLists(Node a, Node b) {",
+      "    List<Integer> all = new ArrayList<>();",
+      "    for (Node p = a; p != null; p = p.next) all.add(p.val);",
+      "    for (Node q = b; q != null; q = q.next) all.add(q.val);",
+      "    Collections.sort(all);              // re-derives an order we were already handed",
+      "    Node dummy = new Node(0);",
+      "    Node tail = dummy;",
+      "    for (int value : all) {",
+      "        tail.next = new Node(value);    // a fresh node per value, rather than reusing the given ones",
+      "        tail = tail.next;",
+      "    }",
+      "    return dummy.next;",
+      "}"
     ],
     "complexity": {
       "time": "O((n + m) log(n + m))",

@@ -35,27 +35,29 @@
   "bruteForce": {
     "idea": "Reassemble each list into a numeric value, add the two values with ordinary arithmetic, then emit the digits of the sum back into a list.",
     "code": [
-      "long a = 0;",
-      "long place = 1;",
-      "for (Node n = l1; n != null; n = n.next) { a += n.val * place; place *= 10; }",
-      "long b = 0;",
-      "place = 1;",
-      "for (Node n = l2; n != null; n = n.next) { b += n.val * place; place *= 10; }",
-      "long sum = a + b;",
-      "Node dummy = new Node(0);",
-      "Node tail = dummy;",
-      "do {",
-      "    tail.next = new Node((int) (sum % 10));",
-      "    tail = tail.next;",
-      "    sum /= 10;",
-      "} while (sum > 0);",
-      "return dummy.next;"
+      "public static Node addTwoNumbers(Node l1, Node l2) {",
+      "    short a = 0;",
+      "    short place = 1;",
+      "    for (Node n = l1; n != null; n = n.next) { a += n.val * place; place *= 10; }",
+      "    short b = 0;",
+      "    place = 1;",
+      "    for (Node n = l2; n != null; n = n.next) { b += n.val * place; place *= 10; }",
+      "    long sum = a + b;",
+      "    Node dummy = new Node(0);",
+      "    Node tail = dummy;",
+      "    do {",
+      "        tail.next = new Node((int) (sum % 10));",
+      "        tail = tail.next;",
+      "        sum /= 10;",
+      "    } while (sum > 0);",
+      "    return dummy.next;",
+      "}"
     ],
     "complexity": {
       "time": "O(n + m)",
       "space": "O(1) beyond the output"
     },
-    "whySlow": "This one is not slow, it is wrong — and silently so. The wasted work is packing both lists into a single fixed-width integer whose only contribution is letting the CPU perform the carry for us, then immediately unpacking it again: every digit is written into a register and read straight back out. Worse, the constraints allow 100 digits and a long holds 19, so `place` overflows, the accumulator wraps, and the function returns a plausible-looking number instead of throwing. The carry the register was borrowed for is a single bit of state we can carry ourselves."
+    "whySlow": "This one is not slow, it is wrong — and silently so. The wasted work is packing both lists into a single fixed-width integer whose only contribution is letting the CPU perform the carry for us, then immediately unpacking it again: every digit is written into a register and read straight back out. Worse, a fixed-width integer is always too narrow for *some* input the constraints allow — pack into a 16-bit `short` and the running total silently wraps once a number reaches about five digits, long before the 100 digits the constraints permit; pack into a wider type and the same failure just waits for more digits. The accumulator wraps, and the function returns a plausible-looking number instead of throwing. The carry the register was borrowed for is a single bit of state we can carry ourselves."
   },
   "patternIdentification": "Two sequences whose positions are already aligned, combined position by position, where the only coupling between positions is one bounded piece of state flowing in one direction. That is the signal for a single synchronised walk carrying that state — no reversal, no conversion to a wider type, no second data structure. Generalise it beyond addition: running totals, difference streams, a parity or borrow bit, and base-b arithmetic all have this shape. The tell is that position i's output depends on position i's inputs plus a constant-size summary of everything before it.",
   "optimized": {

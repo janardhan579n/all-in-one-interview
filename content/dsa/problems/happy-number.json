@@ -34,12 +34,24 @@
   "bruteForce": {
     "idea": "Keep a HashSet of every value produced. Stop when you reach 1 (happy) or when a value repeats (a cycle, so not happy).",
     "code": [
-      "Set<Integer> seen = new HashSet<>();",
-      "while (n != 1) {",
-      "    if (!seen.add(n)) return false;   // n has come round again",
-      "    n = next(n);",
+      "public static boolean isHappy(int n) {",
+      "    Set<Integer> seen = new HashSet<>();",
+      "    while (n != 1) {",
+      "        if (!seen.add(n)) return false;   // n has come round again, so the path is a cycle",
+      "        n = next(n);",
+      "    }",
+      "    return true;",
       "}",
-      "return true;"
+      "",
+      "private static int next(int n) {",
+      "    int sum = 0;",
+      "    while (n > 0) {",
+      "        int digit = n % 10;",
+      "        sum += digit * digit;",
+      "        n /= 10;",
+      "    }",
+      "    return sum;",
+      "}"
     ],
     "complexity": {
       "time": "O(log n) per step, a bounded number of steps",

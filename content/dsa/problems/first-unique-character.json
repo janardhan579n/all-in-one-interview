@@ -35,14 +35,16 @@
   "bruteForce": {
     "idea": "For each index, scan the rest of the string looking for another occurrence of that character; return the first index where the scan finds none.",
     "code": [
-      "for (int i = 0; i < s.length(); i++) {",
-      "    boolean unique = true;",
-      "    for (int j = 0; j < s.length(); j++) {",
-      "        if (i != j && s.charAt(i) == s.charAt(j)) { unique = false; break; }",
+      "public static int firstUniqChar(String s) {",
+      "    for (int i = 0; i < s.length(); i++) {",
+      "        boolean unique = true;",
+      "        for (int j = 0; j < s.length(); j++) {   // rescans the whole string for every index",
+      "            if (i != j && s.charAt(i) == s.charAt(j)) { unique = false; break; }",
+      "        }",
+      "        if (unique) return i;",
       "    }",
-      "    if (unique) return i;",
-      "}",
-      "return -1;"
+      "    return -1;",
+      "}"
     ],
     "complexity": {
       "time": "O(n^2)",

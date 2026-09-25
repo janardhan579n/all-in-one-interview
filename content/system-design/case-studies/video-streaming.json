@@ -1,0 +1,1057 @@
+{
+  "id": "video-streaming",
+  "title": "Design a Video Streaming Platform",
+  "difficulty": "advanced",
+  "estimatedMinutes": 45,
+  "summary": "Upload, transcode and deliver video at a scale where the bytes never touch your application servers. The hard part is that almost nothing here is a web-request problem: it is an asynchronous job pipeline feeding a CDN, with the playback intelligence pushed out to the client.",
+  "steps": [
+    {
+      "key": "requirements",
+      "title": "1. Clarify the problem",
+      "content": "Questions that change the design, asked before anything is drawn:\n\n- **Is this on-demand or live?** Live introduces a latency budget measured in seconds and removes the luxury of transcoding ahead of time. Completely different system.\n- **Who uploads?** A few thousand studios shipping finished masters, or a hundred million users uploading phone footage? The second means transcoding is the dominant cost centre and the source files are wildly heterogeneous.\n- **Is content public or access-controlled?** Paywalled content means signed URLs, token validation at the edge, and a much harder caching story.\n- **What does the catalogue look like?** A few thousand premium titles caches almost perfectly. Tens of millions of long-tail videos does not, and the difference is most of your delivery bill.\n- **Which devices?** Browsers, phones on cellular, smart TVs. This decides your codec and container matrix, which decides how many renditions you store.\n\nFor this walkthrough: **user-generated, on-demand, public video**. Many uploads, an enormous long tail, playback on everything from a phone on 1.5 Mbps to a TV on fibre.\n\nOne framing worth stating at the top, because it reorganises everything that follows: **the video bytes never pass through your application servers.** Uploads go straight to object storage, playback comes straight from a CDN. Your servers move metadata, manifests and job state — kilobytes — while petabytes move around them."
+    },
+    {
+      "key": "functional",
+      "title": "2. Functional requirements",
+      "content": "- A creator uploads a source video file and gets a progress indicator, not a hung request.\n- The system transcodes each source into a **ladder** of renditions (240p through 1080p) plus a manifest describing them.\n- A viewer plays a video; quality adapts to their connection without them touching anything.\n- Seeking is instant and does not re-download what has already been watched.\n- Each video shows a view count.\n- Basic catalogue: a video page with title, description and thumbnails.\n\nOut of scope here: recommendations, comments, live streaming, DRM and monetisation. Each is a large system in its own right and pretending otherwise burns the interview on breadth instead of depth."
+    },
+    {
+      "key": "nonfunctional",
+      "title": "3. Non-functional requirements",
+      "content": "- **Startup latency**: first frame within about 2 seconds. Abandonment climbs steeply past that, and it is the single metric most worth optimising.\n- **Rebuffering**: as close to zero as possible. Viewers tolerate a lower resolution far better than a spinner — which is exactly the trade adaptive bitrate exists to make.\n- **Availability of playback ≫ availability of upload.** If uploads are down for twenty minutes, a few thousand creators retry. If playback is down for twenty minutes, everyone notices. These get different SLOs and, as we will see, largely different infrastructure.\n- **Durability of the source file**: the master is irreplaceable; renditions are not, because they can always be regenerated from it. That asymmetry is worth real money in storage tiering.\n- **Cost is a first-class requirement here**, which is unusual. At petabyte-scale storage and terabit-scale egress, an architecture that works but costs four times as much is a failed design. Cache hit ratio and rendition policy are engineering decisions with the finance team's fingerprints on them.\n- **Eventual consistency is fine for almost everything user-visible**: view counts, search indexing, recommendation signals. The only thing that needs to be strictly correct is whether a video is `ready` to play."
+    },
+    {
+      "key": "estimation",
+      "title": "4. Back-of-the-envelope estimation",
+      "content": "This is the step where the shape of the system becomes undeniable, so do it carefully and show the working.\n\n**Uploads.** 100,000 hours of source video per day. At an average upload length of 10 minutes that is 600,000 uploads/day ÷ 86,400 s ≈ **7 uploads/s**, peak ≈ 21/s. As a *request rate* that is nothing. It is the bytes behind each request that are the problem.\n\n**The rendition ladder.** Five renditions at roughly: 240p 0.4 Mbps, 360p 0.8, 480p 1.4, 720p 2.8, 1080p 5.0 — **10.4 Mbps total**. One source hour therefore produces 10.4 Mbps × 3,600 s ÷ 8 = **~4.7 GB** of encoded output.\n\n**Storage.** 100,000 hours/day × 4.7 GB = **~470 TB added per day**. Over a year: 470 TB × 365 ≈ **~171 PB/year**, and that is only the renditions. Keeping the source masters too (say ~8 Mbps average ≈ 3.6 GB/hour) adds another ~360 TB/day, ~131 PB/year. Storage is cumulative and never goes down, which makes it the number that quietly dominates the bill.\n\n**Object count.** With 4-second segments, one hour of one rendition is 900 segments; five renditions is 4,500 objects per source hour. At 100,000 hours/day that is **~450 million new objects per day**. Object count matters independently of bytes — it drives listing costs, per-request pricing and how badly a naive directory layout will hurt.\n\n**Watch time and egress.** 100M views/day at ~10 minutes watched is 1 billion minutes ≈ **16.7M hours of watch time per day**. At an average delivered bitrate of 3 Mbps across the device mix, one watched hour is 3 Mbps × 3,600 ÷ 8 = **1.35 GB**. So egress is 16.7M × 1.35 GB ≈ **~22.5 PB/day**.\n\n**Bandwidth.** 22.5 PB/day ÷ 86,400 s ≈ 260 GB/s ≈ **2.1 Tbps average**, peak at 3x ≈ **6.3 Tbps**. Sanity check from the other direction: 16.7M watch-hours ÷ 24 h ≈ 695,000 concurrent viewers × 3 Mbps ≈ 2.1 Tbps. The two agree, which is what you want before you quote a number.\n\n**Origin egress, and why the hit ratio is the whole game.** At a 95% CDN hit ratio the origin serves 5% of 22.5 PB = **~1.1 PB/day ≈ 104 Gbps** — survivable. Every single percentage point of hit ratio is worth **225 TB/day** of origin traffic. Drop to 90% and origin egress doubles. That one sentence is why the CDN is not an optimisation in this design.\n\n**Transcode compute.** If the whole ladder costs roughly 2 CPU-hours per source hour (segment-parallel, with hardware acceleration), that is 100,000 × 2 = 200,000 CPU-hours/day ÷ 24 h ≈ **~8,300 cores running continuously**. This is a fleet with a capacity plan, not a background thread.\n\n**View counter writes.** 100M views/day ÷ 86,400 ≈ **1,160 writes/s**, peak ~3,500/s — and concentrated on whichever handful of videos is trending."
+    },
+    {
+      "key": "api",
+      "title": "5. API design",
+      "content": "Notice which endpoints carry bytes and which do not. Only one does, and it is not served by us.\n\nThe upload flow is three calls: **create** (we mint a pre-signed URL and a row in `videos` with state `created`), **PUT** (the client sends the file straight to object storage — this request never reaches our servers), and **complete** (we verify the object exists and enqueue the transcode job). The client then polls or subscribes for the video to reach `ready`.\n\nThe playback flow is two kinds of GET, both served by the CDN: the **manifest**, which is a few kilobytes of text listing the available renditions and their segments, and the **segments** themselves. These are plain static files. There is no application logic on the playback path at all, which is precisely what makes it cacheable and what makes it survive an outage of everything else.\n\nOne deliberate omission: there is no endpoint that streams video through an application server. If one appears in your design, you have put your app tier on the critical path for 22.5 PB/day and it will be the first thing to fall over."
+    },
+    {
+      "key": "datamodel",
+      "title": "6. Data model",
+      "content": "Four things to model, and they have very different characteristics.\n\n**`videos`** is the catalogue row: title, owner, visibility, duration, and — importantly — a `state` that is the authoritative answer to \"can this be played\". Small, read constantly, cached aggressively.\n\n**`renditions`** records what the transcode pipeline actually produced: one row per (video, rendition) with its bitrate, resolution, codec and storage prefix. It exists so the manifest can be regenerated from the database rather than being the only copy of the truth, and so a partially-failed ladder is visible as data rather than as a mystery.\n\n**`transcode_jobs`** is the pipeline's state, including an idempotency key derived from (video_id, source_etag, ladder_version) and an `attempt` counter. This table is what makes a retry safe and a stuck job findable.\n\n**`view_counts`** is an aggregate, not a transactional counter, and step 12 explains why that distinction is load-bearing rather than pedantic.\n\nThe segments and manifests themselves are **not** in a database. They are objects in a bucket, addressed by a deterministic key: `v/{video_id}/{rendition}/seg-{n}.m4s`. Deterministic keys are not a cosmetic choice — they are what allows a retried transcode to overwrite exactly what the failed attempt wrote, instead of leaving a second copy behind."
+    },
+    {
+      "key": "upload",
+      "title": "7. Upload: get the bytes out of the request path",
+      "content": "The obvious implementation is a `POST /videos` with `multipart/form-data`, the app server reading the file and writing it to storage. It works at a hundred uploads a day and fails at every scale above that, for reasons worth listing because each one is a separate outage:\n\n- A 2 GB upload occupies an application worker for its entire duration. At 7 concurrent uploads/s with multi-minute transfers you need thousands of workers doing nothing but copying bytes.\n- The file must be buffered somewhere — memory (OOM) or local disk (a stateful app server, which you have spent years avoiding).\n- Load balancers and reverse proxies have body-size limits and idle timeouts. Both will be hit.\n- Bandwidth is paid twice: client → your server, then your server → storage.\n- A connection that drops at 95% starts again from zero, and mobile connections drop.\n\n**Pre-signed URLs remove all of it at once.** The client asks for permission; the API returns a time-limited, scope-limited URL signed with credentials the client never sees; the client uploads directly to object storage. Your server handled two small JSON requests and zero video bytes.\n\nFor large files use the **multipart upload** variant: the client requests a signed URL per part, uploads parts in parallel, retries only the parts that fail, and calls `complete` with the list of part ETags. Resumability comes for free, which matters when the median mobile upload is competing with a lift shaft.\n\nThe piece people forget: **object storage must tell you the upload finished.** The client calling `complete` is a hint, not a fact — the browser tab may close, the phone may die, the client may lie. Trust the storage-layer event (an object-created notification delivered to a queue) as the trigger, and treat the client's `complete` call as an optimisation that makes the common case faster. Then validate: does the object exist, is its size plausible, does it actually decode as video? A surprising share of uploads are truncated, zero-byte or not video at all, and finding that out in a worker is much better than finding it out in a player."
+    },
+    {
+      "key": "transcode",
+      "title": "8. Transcoding: an asynchronous job, idempotent and resumable",
+      "content": "**Why this cannot be synchronous.** Transcoding one hour of 1080p source into five renditions takes minutes to tens of minutes even on a well-provisioned worker. An HTTP request cannot wait: browsers give up, load balancers close idle connections after 60–120 seconds, and the client's mobile network will drop long before the encoder finishes. And even if you could hold the connection, you would have coupled an unbounded, CPU-bound job to a request that a user is staring at. The moment transcoding falls behind, uploads start failing — one queue's backlog becomes another component's outage.\n\nSo the request ends at \"accepted\", and the work happens behind a queue:\n\n```\nobject-created event → queue → worker pool → renditions + manifest → mark ready\n```\n\nThe API returns in milliseconds. The video sits in `processing`. The creator sees a progress bar, and can close the tab.\n\n**Why it must be idempotent.** Every one of these will happen: the queue delivers a message twice (at-least-once delivery is the norm and exactly-once is mostly a marketing term), a worker finishes the encode and dies before acknowledging, an operator replays a batch after a bad deploy. Without idempotency the second run produces a second set of outputs — duplicated segments with different names, a manifest listing both, doubled storage, and a player that stalls where the two sets disagree.\n\nThe mechanisms:\n\n- **Deterministic output keys.** `v/{video_id}/{rendition}/seg-{n}.m4s`, derived from the input, never from a timestamp or a random id. A re-run overwrites exactly what the previous attempt wrote.\n- **An idempotency key on the job**, `hash(video_id, source_etag, ladder_version)`, with a unique constraint. A duplicate message finds the job already complete and returns.\n- **Write the manifest last, atomically.** The manifest is the commit point: until it exists, no player can discover the segments, so a half-finished ladder is invisible rather than broken. This is the single most important ordering rule in the pipeline.\n- **Flip `state` to `ready` only after the manifest lands.** State is a guarded transition, so a late duplicate cannot move a video backwards.\n\n**Why it must be resumable.** A worker dying 80% of the way through a 40-minute encode should not cost 32 minutes of compute. Split the source into chunks — typically at keyframe boundaries, a few minutes each — and treat each chunk × rendition as an independent task. Then:\n\n- The unit of retry is a chunk, not a video. A dead worker costs one chunk.\n- Chunks encode **in parallel across many workers**, so wall-clock time for a long video collapses from hours to minutes. This is what makes the ~8,300-core fleet estimate reasonable rather than absurd.\n- Progress is real: completed chunks are durable in the bucket, and a resumed job skips them by checking which output keys already exist.\n- A final, cheap **stitch** step concatenates chunk outputs per rendition and writes the manifest.\n\nThe subtlety with chunked encoding is that encoders carry state across frames, so you must cut at keyframes and force a keyframe at each chunk boundary, or the seams are visible. This slightly hurts compression efficiency, which is a real cost you pay for parallelism and resumability — worth naming, because it shows you know chunking is not free.\n\nFinally, **the source master is the recovery path.** Keep it (in cold storage — it is read roughly never) and any rendition can be regenerated. That is what lets you delete renditions of unpopular videos in step 11 without losing anything permanently."
+    },
+    {
+      "key": "abr",
+      "title": "9. Adaptive bitrate: the server is dumb, the player is smart",
+      "content": "**This is the most important idea in the file.** If you take one thing from this case study, take this one.\n\nThe instinct from every other system is that the server decides. Here it does the opposite. The video is cut into segments of a few seconds. Every segment of every rendition is written out as an independent file. A **manifest** (HLS `.m3u8` or DASH `.mpd`) lists all of them: for each rendition, its bitrate, resolution, codec and the URLs of its segments.\n\nThen the server stops thinking. It serves static files over HTTP. It does not know who is watching, what their connection is doing, or which quality they are on. **The client decides.**\n\nA player's loop, each time it needs another segment:\n\n1. Measure how long the last segment took to download, giving a throughput estimate.\n2. Look at how many seconds of video are already buffered.\n3. Pick the highest rendition whose bitrate it believes it can sustain, with headroom — falling fast when the buffer drains, rising slowly and conservatively when it fills.\n4. Request that segment. Segment `00042` at 720p and segment `00043` at 480p are just two different URLs; the player switches by changing which URL it asks for next.\n\nSwitching mid-stream works because segments are independently decodable — each begins with a keyframe — and because the renditions are encoded with aligned segment boundaries and the same timeline. That alignment is a pipeline requirement, not an accident: if boundaries drift between renditions, switching produces a visible glitch or a gap.\n\n**Why the inversion is right**, and this is the argument to make out loud:\n\n- **Only the client can observe the client.** It knows the actual throughput of the last few seconds, the buffer depth, the screen size, whether the device is on battery, whether the user just backgrounded the app. The server knows an IP address. Any server-side decision is a worse guess about a thing the client can measure directly.\n- **Statelessness is what makes the CDN possible.** Because the server holds no session and makes no per-viewer decision, every byte is an ordinary cacheable static file. A million people watching the same video request the same URLs and one cached copy at the edge serves all of them. A server-driven adaptive stream would be per-viewer and therefore uncacheable — which would put the full 22.5 PB/day on your origin. **The CDN economics in step 10 exist only because of this inversion.**\n- **Failure degrades instead of breaking.** If the network halves, the player steps down a rung and keeps playing. If the player's estimate is wrong it recovers on the next segment, three seconds later.\n\n**The segment-length trade-off** is the classic follow-up. Short segments (2 s) mean faster adaptation, quicker startup and finer-grained caching — but more files (more requests, more per-object overhead, worse compression because each segment needs its own keyframe). Long segments (10 s) compress better and mean fewer requests, but the player reacts slowly and startup is slower. Four to six seconds is the usual compromise, and being able to say *why* it is a compromise is the answer.\n\nThe corollary worth stating: **startup latency is a rendition-ladder decision.** A player that begins at 1080p on a phone spends four seconds buffering before the first frame. Starting at a low rendition and stepping up within a few seconds gets the first frame in well under two — which is why the bottom rung of the ladder exists even though nobody wants to watch 240p."
+    },
+    {
+      "key": "cdn",
+      "title": "10. The CDN is the product",
+      "content": "At 22.5 PB/day and ~2.1 Tbps average, there is no version of this system where your origin serves viewers. **Origin serves the CDN; the CDN serves the world.** That is not a performance optimisation bolted on at the end — it is the delivery architecture, and everything upstream is arranged to make it possible.\n\n**What makes it work.** Segments are immutable static files with deterministic URLs. A segment, once written, never changes, so it can be cached with a very long TTL and never revalidated. Manifests are small and change only when the ladder changes, so they get a short TTL. There is no per-viewer variation — the inversion in step 9 is what buys this — so one cached copy at an edge serves every viewer in that city.\n\n**Cache hit ratio is the entire economic story.** From step 4: at 95% hit ratio the origin serves ~1.1 PB/day ≈ 104 Gbps. Each percentage point is worth **225 TB/day**. At 90% the origin's load doubles. At 80% it is four times over, which is the difference between an origin tier you can staff and one you cannot build.\n\n**But the hit ratio is not uniform, and that is the interesting part.**\n\n**Popular content is trivially cacheable.** A video with a million views a day is requested constantly at every edge. The first viewer in a city pulls it through; the next million are hits. Hit ratio approaches 100%, the working set is tiny — a few thousand videos — and it stays hot with no effort.\n\n**The long tail is not cacheable, almost by definition.** Most of a user-generated catalogue is videos with a handful of views ever, arriving from scattered places at scattered times. A video watched twice a day, from two different cities, evicted between requests, has a hit ratio near zero: both requests go to origin. And the tail is not a rounding error — it is the majority of the catalogue by count and a large share of total watch time in aggregate. It is entirely possible to have 95% of *requests* hit cache while the long tail still generates most of your origin traffic.\n\n**The structural fix is a tiered cache.** Put a **regional shield** between the edges and the origin. Fifty edge PoPs in a region each miss on the same unpopular video; without a shield that is fifty origin fetches. With one, it is fifty shield requests and one origin fetch. The shield does not improve the edge hit ratio at all — the viewer's experience is unchanged — but it collapses origin traffic for exactly the tail where the edges are useless. It is the highest-leverage change available and it is invisible from the outside.\n\nOther levers worth naming: pre-warming edges for content you know will be popular (a large creator's scheduled release) rather than letting the first thousand viewers each pay a miss; and being careful that URLs do not vary — a query parameter that differs per viewer silently fragments the cache and can take the hit ratio from 95% to single digits without anything appearing to be broken.\n\n**And the storage cost of the ladder.** Five renditions is ~4.7 GB per source hour, ~470 TB/day, ~171 PB/year, growing forever. For a video watched a million times that is obviously worth it. For a video watched twice, you have stored five renditions of something nobody will request again — and the long tail is where most of the catalogue lives. The honest answer is that the ladder should not be uniform: transcode the full ladder on demand or on a popularity trigger, keep only a couple of rungs for cold content, and lean on the fact that the source master is retained so any rendition can be regenerated. It trades a slow first play on an obscure video — which almost nobody will ever experience — for a large fraction of the storage bill. That is a good trade, and being willing to make an explicitly uneven one is what the step is teaching."
+    },
+    {
+      "key": "storage",
+      "title": "11. Storage tiering and the long tail",
+      "content": "Storage is the cost that only ever goes up, so it deserves a policy rather than a default.\n\n**Tier by access temperature, and let the data decide.**\n\n- **Hot** — recent uploads and anything currently popular. Standard object storage, full ladder, backed by an aggressively warmed CDN.\n- **Warm** — the ordinary catalogue: viewed occasionally, retrieval must still be fast. Infrequent-access storage, which is cheaper per byte but charges per retrieval. That pricing model fits precisely: rarely read, so retrieval charges stay small.\n- **Cold** — source masters. Read essentially never, but irreplaceable. Archival storage, where retrieval may take minutes. Perfectly acceptable for a file whose only job is to exist so renditions can be rebuilt.\n\n**Tier the ladder itself, not just the bytes.** The uniform five-rendition ladder is the wrong default for a long-tail catalogue. Options, all of which have a cost you should state:\n\n- **Transcode the full ladder lazily.** On upload, produce only 360p and 720p — enough to play on anything. Produce 1080p and the rest on first demand or when views cross a threshold. Saves a large share of both compute and storage; costs a slower first play on a rendition nobody has asked for yet, and a more complex pipeline with a second trigger path.\n- **Prune cold renditions.** After a year with no views, delete everything but the middle rung and keep the master. If someone finds the video, regenerate. The cost is a minutes-long delay on that one request, and a deletion path that must not race a viewer.\n- **Codec by tier.** Modern codecs cut bitrate substantially for the same quality but cost much more CPU to encode. That trade is clearly worth it for a video watched a million times and clearly not worth it for one watched twice — so choose the codec by expected popularity, not globally.\n\nThe unifying idea: **the master is the source of truth; everything else is a cache with a very long TTL.** Once you see renditions as a derived, regenerable cache rather than as data, deleting them stops feeling dangerous and starts being an obvious cost lever."
+    },
+    {
+      "key": "views",
+      "title": "12. View counts are an aggregate, not a transactional counter",
+      "content": "The naive implementation is one statement: `UPDATE videos SET views = views + 1 WHERE id = ?`. At 1,160 writes/s it is fine in aggregate and catastrophic in distribution.\n\n**Why it breaks.** Views are not spread evenly over the catalogue; they concentrate violently on whatever is trending. A video pulling 2,000 views/s means 2,000 transactions per second contending for a **single row**. Every one of them must acquire the same row lock, so they serialise: the row becomes a queue, latency climbs, connections pile up waiting, the pool exhausts, and requests that have nothing to do with views start failing. In an MVCC database it is worse still, because each increment writes a new row version and the hottest rows bloat fastest. One popular video degrades the whole database.\n\n**And it is the wrong requirement anyway.** Nobody needs a view count to be transactionally exact. It is a display number with no financial or safety consequence — \"1.2M views\" is the same information as \"1,203,847 views\". Paying strict consistency's price for a figure that is rounded before it reaches the screen is the clearest example in this system of matching the guarantee to the requirement.\n\n**What to do instead:** treat a view as an **event**, not an update.\n\n1. The player emits a view beacon (after a meaningful watch threshold, or you are counting impressions, not views).\n2. It goes onto a stream — an append-only log, partitioned by video id. Appends do not contend: hot and cold videos append at the same cost.\n3. Stream processors aggregate per partition over a short window (say ten seconds) and emit deltas.\n4. A writer applies deltas to a counts store — one write per video per window instead of one per view. A video taking 2,000 views/s becomes **one** write every ten seconds carrying `+20,000`, which is a four-orders-of-magnitude reduction in write contention on the hottest row in the system.\n5. The video page reads the aggregate, cached for a few seconds.\n\nThe count is now seconds stale. That is invisible to users and it is what makes the hot-key problem disappear.\n\n**What this also buys you.** The same stream feeds watch-time metrics, trending detection, recommendation signals and the popularity triggers that drive the tiering decisions in step 11 — all without adding a single write to the transactional database. And deduplication becomes possible: a view id lets you drop replays from a retrying client, which a naive `views + 1` cannot do at all.\n\n**The caveat to state honestly:** if the view count ever becomes money — creator payouts, advertiser billing — then \"approximately right and eventually consistent\" is no longer acceptable for *that* pipeline. The usual resolution is two paths off the same stream: a fast approximate one for display, and a slow, audited, exactly-once batch reconciliation for billing. Saying that unprompted is the difference between knowing the pattern and understanding it."
+    },
+    {
+      "key": "architecture",
+      "title": "13. Architecture and how it scales",
+      "content": "Three planes that barely touch each other, which is the design:\n\n**Control plane** (tiny, request/response). Upload API, catalogue API, metadata database. Handles ~7 uploads/s and the catalogue reads. Ordinary stateless web tier behind a load balancer, cached in front. Nothing here is hard.\n\n**Processing plane** (asynchronous, compute-bound). Object-created events → queue → chunked transcode workers → segments and manifests in object storage → mark `ready`. Scales on queue depth: watch the backlog, add workers. The ~8,300-core estimate is an average, and average is not the interesting case — a Monday-morning upload spike or a re-encode of the back catalogue for a new codec needs burst capacity, which is why this fleet belongs on preemptible/spot instances. A worker being killed mid-chunk is *already* handled by the resumability in step 8, so the cheapest compute available is also the safest choice here. That is a rare alignment and worth pointing out.\n\n**Delivery plane** (enormous, and almost entirely not yours). Viewers → edge PoPs → regional shield → origin → object storage. 22.5 PB/day flows through this and none of it passes an application server. Scaling means CDN capacity and hit ratio, not instances.\n\n**How each axis moves:**\n\n- **More viewers** — CDN capacity. Your origin only feels the miss rate, so the lever is hit ratio (tiered caching, stable URLs, pre-warming), not more origin servers.\n- **More uploads** — more transcode workers. The queue absorbs the mismatch, which is its entire purpose: a spike becomes a longer backlog, not a failure.\n- **More catalogue** — more storage, which is why the tiering policy in step 11 is a scaling decision and not housekeeping.\n- **More views** — the counting pipeline scales by stream partitions; the write path was already decoupled in step 12 and no longer touches the transactional store.\n\nThe structural property to state: **playback depends on object storage and the CDN, and on nothing else.** The metadata database, the upload API and the entire transcode fleet can be down and every already-published video still plays, because playback is static files served from an edge. That is a deliberate and very deep availability property, and it falls directly out of having pushed the intelligence into the player."
+    },
+    {
+      "key": "failure",
+      "title": "14. Failure handling",
+      "content": "- **A worker dies mid-transcode.** Its chunks' messages become visible again after the queue's visibility timeout and are retried. Deterministic output keys mean a retry overwrites rather than duplicates; completed chunks are skipped by checking which keys already exist. Cost is one chunk of compute, not the video.\n- **A message is delivered twice.** The idempotency key on the job finds the work already done and returns. This is the common case, not the exotic one — at-least-once delivery means plan for duplicates rather than hoping.\n- **A transcode fails permanently** (corrupt upload, unsupported codec, a source that is not video). Retry with backoff a bounded number of times, then move it to a dead-letter queue and set the video's state to `failed` with a reason the creator can act on. A job that retries forever is how you turn one bad upload into a saturated fleet.\n- **The manifest is written but some segments are missing.** This is the ordering rule earning its keep: write the manifest last, and it cannot happen. If it does happen — a partial delete, a bucket lifecycle rule firing early — the player stalls at a specific timestamp, which is a distinctive enough signature to alert on directly.\n- **The origin is unreachable.** Cached content keeps serving. Configure the CDN to serve stale on error rather than returning 5xx; for immutable segments, stale content is simply correct content. Only videos not already at an edge are affected, which is the long tail — bad, but bounded, and it does not touch the popular content most viewers are watching.\n- **The metadata database is down.** Uploads stop and the catalogue degrades to cached pages. **Playback is unaffected**, because manifests and segments are static objects behind the CDN with no database dependency on the read path. This is the payoff for keeping the delivery plane separate and is worth stating explicitly as a design outcome.\n- **A view spike on one video.** Absorbed by the stream, because appends to a partitioned log do not contend the way a single hot row does. The pathological case — one video so hot it saturates its partition — is handled by salting the partition key for that video and summing the shards at read time.\n- **Object storage loses an object.** Renditions are regenerable from the master, so this is an inconvenience with an automated repair path. Losing a master is the only unrecoverable failure in the system, which is why masters get cross-region replication and renditions do not."
+    },
+    {
+      "key": "final",
+      "title": "15. Trade-offs and the final architecture",
+      "content": "**The trade-offs to state explicitly:**\n\n- **Segment length.** Short segments adapt and start faster and cache more finely; long segments compress better and cost fewer requests and fewer objects. 4–6 seconds is a compromise, not a fact.\n- **Ladder depth.** More renditions means better matching to every device and connection; it also means linear growth in storage and transcode cost for a catalogue whose majority is barely watched. Uniform ladders are the wrong default at long-tail scale.\n- **Eager vs lazy transcoding.** Eager gives instant playback at every quality and pays for renditions nobody requests. Lazy saves most of the bill and costs a slow first play plus a second, more complex trigger path.\n- **Cache TTLs.** Long TTLs maximise hit ratio; they also mean a takedown or a re-encode takes time to propagate, or needs an explicit purge across every PoP.\n- **View-count freshness.** Seconds-stale aggregates make the hot-key problem vanish; exact counts reintroduce single-row contention on precisely the rows under most load. If counts become money, run a second audited pipeline rather than making the display path strict.\n- **Client-side ABR.** Pushing the decision to the player is what makes every byte cacheable — and it means you cannot centrally control quality, you inherit whatever heuristics each player implementation ships with, and debugging a viewer's bad experience means instrumenting the client rather than reading your own logs.\n\n**Final shape:** client → pre-signed direct upload to object storage → object-created event → queue → chunked, idempotent, resumable transcode workers → renditions and manifest written back to object storage (manifest last) → state flipped to `ready`. Playback: player → edge PoP → regional shield → origin → object storage, with the player choosing its own rendition from the manifest. View beacons → partitioned stream → windowed aggregation → counts store.\n\nEvery number from step 4 has a component attached to it: 22.5 PB/day of egress forced the CDN and made the hit ratio an architectural concern, 171 PB/year of storage forced the tiering policy, minutes-long encodes forced the queue and the resumability, and 1,160 concentrated writes/s forced view counts out of the transactional database. And the thread running through all of it — the reason the delivery plane can be this cheap and this available — is that the server was made dumb on purpose and the intelligence moved to the player."
+    }
+  ],
+  "estimation": {
+    "assumptions": [
+      "100,000 hours of source video uploaded per day (~600,000 uploads averaging 10 minutes)",
+      "100M views per day, ~10 minutes watched per view",
+      "Five renditions — 240p 0.4, 360p 0.8, 480p 1.4, 720p 2.8, 1080p 5.0 Mbps — totalling 10.4 Mbps",
+      "~3 Mbps average delivered bitrate across the device mix",
+      "4-second segments; 95% CDN cache hit ratio",
+      "~2 CPU-hours to encode the full ladder per source hour; 3x peak factor"
+    ],
+    "calculations": [
+      {
+        "label": "Uploads/s",
+        "value": "~7/s average, ~21/s peak",
+        "working": "600,000 / 86,400 = 6.9 — a trivial request rate; the bytes are the problem"
+      },
+      {
+        "label": "Encoded output per source hour",
+        "value": "~4.7 GB",
+        "working": "10.4 Mbps × 3,600 s / 8 = 4,680 MB"
+      },
+      {
+        "label": "Storage added per day",
+        "value": "~470 TB",
+        "working": "100,000 h × 4.7 GB = 468,000 GB (plus ~360 TB/day if source masters are retained)"
+      },
+      {
+        "label": "Storage per year",
+        "value": "~171 PB",
+        "working": "470 TB × 365 = 171,550 TB — cumulative, and it never goes down"
+      },
+      {
+        "label": "New objects per day",
+        "value": "~450 million",
+        "working": "3,600 / 4 = 900 segments per rendition-hour × 5 renditions × 100,000 h"
+      },
+      {
+        "label": "Egress per day",
+        "value": "~22.5 PB",
+        "working": "100M × 10 min = 16.7M watch-hours; × (3 Mbps × 3,600 / 8 = 1.35 GB/h) = 22,500 TB"
+      },
+      {
+        "label": "Delivery bandwidth",
+        "value": "~2.1 Tbps average, ~6.3 Tbps peak",
+        "working": "22.5 PB / 86,400 s ≈ 260 GB/s ≈ 2.1 Tbps; cross-check: 16.7M h / 24 ≈ 695,000 concurrent × 3 Mbps"
+      },
+      {
+        "label": "Origin egress at 95% hit ratio",
+        "value": "~1.1 PB/day (~104 Gbps)",
+        "working": "5% × 22.5 PB — and each 1% of hit ratio is worth 225 TB/day"
+      },
+      {
+        "label": "Transcode fleet",
+        "value": "~8,300 cores continuously",
+        "working": "100,000 h × 2 CPU-h = 200,000 CPU-h/day / 24 h"
+      },
+      {
+        "label": "View-count writes",
+        "value": "~1,160/s average, ~3,500/s peak",
+        "working": "100,000,000 / 86,400 — concentrated on a handful of trending videos"
+      }
+    ]
+  },
+  "api": [
+    {
+      "method": "POST",
+      "path": "/api/v1/videos",
+      "request": "{ \"title\": \"…\", \"sizeBytes\": 2147483648, \"contentType\": \"video/mp4\" }",
+      "response": "201 { \"videoId\": \"v_7ka92\", \"uploadId\": \"u_31f\", \"partUrls\": [\"https://uploads…?X-Amz-Signature=…\", …], \"expiresIn\": 3600 }",
+      "notes": "Creates the row in state `created` and mints time-limited, scope-limited pre-signed URLs. No video bytes touch this endpoint — it returns in milliseconds."
+    },
+    {
+      "method": "PUT",
+      "path": "https://uploads.example-cdn.net/v/{videoId}/source?partNumber=3&X-Amz-Signature=…",
+      "request": "<raw bytes of one part>",
+      "response": "200, ETag: \"9f2c…\"",
+      "notes": "Goes directly to object storage and never reaches our servers. Parts upload in parallel and a failed part retries alone, which is what makes a 2 GB mobile upload survivable."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/videos/{videoId}/complete",
+      "request": "{ \"uploadId\": \"u_31f\", \"parts\": [ { \"n\": 1, \"etag\": \"…\" }, … ] }",
+      "response": "202 { \"state\": \"processing\" }",
+      "notes": "Finalises the multipart object and enqueues transcoding. Treated as a hint only: the storage-layer object-created event is the authoritative trigger, because clients close tabs and lie."
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/videos/{videoId}",
+      "request": "—",
+      "response": "200 { \"state\": \"ready\", \"durationS\": 612, \"manifestUrl\": \"https://cdn…/v/v_7ka92/master.m3u8\", \"renditions\": [\"240p\",…,\"1080p\"] }",
+      "notes": "`state` is the one field that must be strictly correct — it is the authoritative answer to 'can this be played'. Everything else on this response tolerates staleness."
+    },
+    {
+      "method": "GET",
+      "path": "/v/{videoId}/master.m3u8",
+      "request": "—",
+      "response": "200, a few KB of text listing every rendition, its bitrate and resolution",
+      "notes": "Served by the CDN with a short TTL. This is the only thing the player needs in order to make every subsequent decision itself."
+    },
+    {
+      "method": "GET",
+      "path": "/v/{videoId}/{rendition}/seg-00042.m4s",
+      "request": "—",
+      "response": "200, ~1.5 MB of immutable segment data",
+      "notes": "A static file. Immutable, so cache with a very long TTL and never revalidate. The player switches quality purely by choosing a different {rendition} in the next URL — the server never knows a switch happened."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/videos/{videoId}/views",
+      "request": "{ \"viewId\": \"…\", \"watchedS\": 34, \"sessionId\": \"…\" }",
+      "response": "202",
+      "notes": "A beacon onto a stream, not a database increment. `viewId` lets the pipeline deduplicate replays from a retrying client — something `views = views + 1` cannot do at all."
+    }
+  ],
+  "dataModel": [
+    {
+      "name": "videos",
+      "fields": [
+        {
+          "name": "video_id",
+          "type": "UUID PRIMARY KEY",
+          "notes": "also the object-storage key prefix, so keys are derivable rather than stored"
+        },
+        {
+          "name": "owner_id",
+          "type": "BIGINT NOT NULL",
+          "notes": ""
+        },
+        {
+          "name": "state",
+          "type": "ENUM NOT NULL",
+          "notes": "created | uploaded | processing | ready | failed — the only field that must be strictly correct"
+        },
+        {
+          "name": "title, description",
+          "type": "TEXT",
+          "notes": "feeds the search index asynchronously"
+        },
+        {
+          "name": "duration_s",
+          "type": "INT",
+          "notes": "null until probed by a worker; a truncated upload is often found here"
+        },
+        {
+          "name": "source_key, source_etag",
+          "type": "TEXT",
+          "notes": "the master. etag feeds the transcode idempotency key"
+        },
+        {
+          "name": "visibility",
+          "type": "ENUM",
+          "notes": "public | unlisted | private — private content needs signed segment URLs, which changes the caching story"
+        }
+      ],
+      "indexes": [
+        "PRIMARY KEY (video_id)",
+        "INDEX (owner_id, created_at DESC) for the creator's library",
+        "PARTIAL INDEX (state, updated_at) WHERE state IN ('uploaded','processing') — finds stuck jobs"
+      ]
+    },
+    {
+      "name": "renditions",
+      "fields": [
+        {
+          "name": "video_id, rendition",
+          "type": "UUID, VARCHAR(8)",
+          "notes": "composite key; rendition is '240p' … '1080p'"
+        },
+        {
+          "name": "bitrate_bps, width, height, codec",
+          "type": "INT / VARCHAR",
+          "notes": "written verbatim into the manifest"
+        },
+        {
+          "name": "segment_count, segment_duration_ms",
+          "type": "INT",
+          "notes": "boundaries must align across renditions or mid-stream switching glitches"
+        },
+        {
+          "name": "storage_prefix, size_bytes",
+          "type": "TEXT, BIGINT",
+          "notes": "size drives the tiering and pruning decisions"
+        },
+        {
+          "name": "tier",
+          "type": "ENUM",
+          "notes": "hot | warm | pruned — a pruned rendition is regenerable from the master"
+        }
+      ],
+      "indexes": [
+        "PRIMARY KEY (video_id, rendition)",
+        "INDEX (tier, last_served_at) for the pruning sweep"
+      ]
+    },
+    {
+      "name": "transcode_jobs",
+      "fields": [
+        {
+          "name": "job_id",
+          "type": "UUID PRIMARY KEY",
+          "notes": ""
+        },
+        {
+          "name": "idempotency_key",
+          "type": "TEXT UNIQUE NOT NULL",
+          "notes": "hash(video_id, source_etag, ladder_version) — a duplicate queue message finds the job already done"
+        },
+        {
+          "name": "video_id, chunk_index, rendition",
+          "type": "UUID, INT, VARCHAR",
+          "notes": "the unit of retry is one chunk × rendition, not one video"
+        },
+        {
+          "name": "state",
+          "type": "ENUM",
+          "notes": "queued | running | done | failed"
+        },
+        {
+          "name": "attempt, last_error",
+          "type": "INT, TEXT",
+          "notes": "bounded retries, then the dead-letter queue and a reason the creator can act on"
+        },
+        {
+          "name": "output_key",
+          "type": "TEXT",
+          "notes": "deterministic, so a retry overwrites its predecessor instead of duplicating it"
+        }
+      ],
+      "indexes": [
+        "UNIQUE (idempotency_key)",
+        "INDEX (video_id, chunk_index)",
+        "INDEX (state, updated_at) WHERE state = 'running' — finds work orphaned by a dead worker"
+      ]
+    },
+    {
+      "name": "view_counts (aggregate, eventually consistent)",
+      "fields": [
+        {
+          "name": "video_id",
+          "type": "UUID PRIMARY KEY",
+          "notes": ""
+        },
+        {
+          "name": "total_views",
+          "type": "BIGINT",
+          "notes": "updated once per aggregation window with a delta, not once per view"
+        },
+        {
+          "name": "views_24h, watch_seconds_24h",
+          "type": "BIGINT",
+          "notes": "rolling windows that drive trending and the popularity-based tiering"
+        },
+        {
+          "name": "updated_at",
+          "type": "TIMESTAMP",
+          "notes": "a few seconds stale by construction, which is what removes the hot-row problem"
+        }
+      ],
+      "indexes": [
+        "PRIMARY KEY (video_id)",
+        "INDEX (views_24h DESC) for trending",
+        "Fed by a partitioned append-only view-event stream; never incremented by the request path"
+      ]
+    }
+  ],
+  "evolution": [
+    {
+      "stage": "Stage 1 — an internal tool, ~100 videos/day",
+      "problem": "Nothing is wrong yet. A few hundred videos on one disk, played by a few dozen colleagues, does not need a pipeline — and building one now would be guessing at a ladder, a codec matrix and a caching policy with no evidence.",
+      "change": "One server. Uploads are written to local disk; playback is a plain HTTP range request against the original MP4.",
+      "why": "Browsers handle range requests on a progressive MP4 natively, so seeking works with zero effort. No transcoding, no manifests, no CDN. Write down the two numbers that will end this: total disk size, and the first complaint about buffering on a phone.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "client",
+            "label": "Browser",
+            "type": "client",
+            "x": 140,
+            "y": 300
+          },
+          {
+            "id": "app",
+            "label": "App server",
+            "type": "server",
+            "x": 470,
+            "y": 300,
+            "note": "Accepts multipart uploads and serves byte ranges from local disk."
+          },
+          {
+            "id": "disk",
+            "label": "Local disk",
+            "type": "storage",
+            "x": 800,
+            "y": 180
+          },
+          {
+            "id": "db",
+            "label": "Metadata DB",
+            "type": "db",
+            "x": 800,
+            "y": 430
+          }
+        ],
+        "edges": [
+          {
+            "from": "client",
+            "to": "app",
+            "label": "upload / playback"
+          },
+          {
+            "from": "app",
+            "to": "disk"
+          },
+          {
+            "from": "app",
+            "to": "db"
+          }
+        ]
+      }
+    },
+    {
+      "stage": "Stage 2 — ~5,000 uploads/day",
+      "problem": "The 2 TB disk filled and uploads started returning 500s. Adding a second server made it worse, not better: each box only has the files it personally received, so playback returned 404 roughly half the time depending on which instance the balancer picked. Then a disk controller failed and took 400 videos with it — there was no copy anywhere.",
+      "change": "Move all video bytes to object storage, put a load balancer in front of a stateless app tier, and keep only metadata in the database.",
+      "why": "Three separate failures with one root cause: the app servers were stateful. Object storage gives effectively unbounded capacity, durability that a single disk cannot approach, and — critically — a single namespace every instance can see, which is what makes the app tier stateless and therefore horizontally scalable at all. The database keeps only the row that says where the bytes are.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "client",
+            "label": "Browser",
+            "type": "client",
+            "x": 90,
+            "y": 300
+          },
+          {
+            "id": "lb",
+            "label": "Load balancer",
+            "type": "lb",
+            "x": 340,
+            "y": 300
+          },
+          {
+            "id": "app1",
+            "label": "App 1",
+            "type": "server",
+            "x": 590,
+            "y": 170
+          },
+          {
+            "id": "app2",
+            "label": "App 2",
+            "type": "server",
+            "x": 590,
+            "y": 430
+          },
+          {
+            "id": "store",
+            "label": "Object storage",
+            "type": "storage",
+            "x": 860,
+            "y": 160,
+            "why": {
+              "without": "Each app server can only serve the files it happens to hold, so playback 404s depending on which instance answers, and a single disk failure loses videos permanently.",
+              "with": "One namespace every instance can read, with replication underneath. The app tier becomes stateless and can be scaled or replaced freely.",
+              "conclusion": "You cannot have a stateless app tier while the app tier is holding the only copy of the data."
+            }
+          },
+          {
+            "id": "db",
+            "label": "Metadata DB",
+            "type": "db",
+            "x": 860,
+            "y": 430
+          }
+        ],
+        "edges": [
+          {
+            "from": "client",
+            "to": "lb"
+          },
+          {
+            "from": "lb",
+            "to": "app1"
+          },
+          {
+            "from": "lb",
+            "to": "app2"
+          },
+          {
+            "from": "app1",
+            "to": "store"
+          },
+          {
+            "from": "app2",
+            "to": "store"
+          },
+          {
+            "from": "app1",
+            "to": "db"
+          },
+          {
+            "from": "app2",
+            "to": "db"
+          }
+        ]
+      }
+    },
+    {
+      "stage": "Stage 3 — ~50,000 uploads/day, transcoding added",
+      "problem": "Transcoding was added inside the upload request and it does not fit there. A 10-minute 1080p source takes about 7 minutes to encode; the browser gives up at 60 seconds and the load balancer kills the connection at 120, so every non-trivial upload appears to fail. Users then retry, which starts a second encode writing to the same output keys as the first — last week that produced files that were half one encode and half another, and the player stalled mid-video. A deploy during an encode left a rendition folder with 300 of its 900 segments and no way to tell that from a complete one.",
+      "change": "Pre-signed direct-to-storage upload, an object-created event onto a queue, and a pool of transcode workers. Jobs are chunked, keyed deterministically, guarded by an idempotency key, and the manifest is written last.",
+      "why": "A transcode takes minutes and an HTTP request cannot wait minutes, so the work has to leave the request entirely — the API returns 202 and the video sits in `processing`. Once it is asynchronous, at-least-once delivery makes duplicates inevitable, so idempotency stops being a nicety: deterministic output keys mean a retry overwrites rather than duplicates, and the idempotency key means a replayed message finds the work already done. Chunking makes it resumable, so a worker dying at 80% of a 40-minute encode costs one chunk instead of 32 minutes, and it lets one video encode across many workers at once. Writing the manifest last makes it the commit point: until it exists no player can discover the segments, so a half-finished ladder is invisible rather than broken.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "uploader",
+            "label": "Uploader",
+            "type": "client",
+            "x": 70,
+            "y": 300
+          },
+          {
+            "id": "api",
+            "label": "Upload API",
+            "type": "server",
+            "x": 330,
+            "y": 140,
+            "note": "Mints pre-signed URLs and returns 202. Never sees a video byte."
+          },
+          {
+            "id": "queue",
+            "label": "Transcode queue",
+            "type": "queue",
+            "x": 330,
+            "y": 460,
+            "why": {
+              "without": "The encode runs inside the HTTP request: the browser times out at 60 s, the balancer at 120 s, and the user's retry starts a competing encode over the same output keys.",
+              "with": "The request ends in milliseconds with 202. Work is buffered, retried on failure and absorbed during spikes as backlog rather than as errors.",
+              "conclusion": "A minutes-long, CPU-bound job cannot live inside a request a user is waiting on."
+            }
+          },
+          {
+            "id": "store",
+            "label": "Object storage",
+            "type": "storage",
+            "x": 600,
+            "y": 300
+          },
+          {
+            "id": "worker",
+            "label": "Transcode workers",
+            "type": "worker",
+            "x": 860,
+            "y": 140,
+            "note": "One chunk x rendition per task. Deterministic keys, so a retry overwrites instead of duplicating."
+          },
+          {
+            "id": "db",
+            "label": "Metadata DB",
+            "type": "db",
+            "x": 860,
+            "y": 460
+          },
+          {
+            "id": "viewer",
+            "label": "Viewer",
+            "type": "client",
+            "x": 70,
+            "y": 540
+          }
+        ],
+        "edges": [
+          {
+            "from": "uploader",
+            "to": "api",
+            "label": "request signed URL"
+          },
+          {
+            "from": "uploader",
+            "to": "store",
+            "label": "PUT bytes directly"
+          },
+          {
+            "from": "store",
+            "to": "queue",
+            "label": "object-created event"
+          },
+          {
+            "from": "queue",
+            "to": "worker"
+          },
+          {
+            "from": "worker",
+            "to": "store",
+            "label": "renditions, manifest last"
+          },
+          {
+            "from": "worker",
+            "to": "db",
+            "label": "state → ready"
+          },
+          {
+            "from": "api",
+            "to": "db"
+          },
+          {
+            "from": "viewer",
+            "to": "store",
+            "label": "playback",
+            "dashed": true
+          }
+        ]
+      }
+    },
+    {
+      "stage": "Stage 4 — ~2M views/day",
+      "problem": "One file, one bitrate, one origin. Viewers on cellular are handed the same 5 Mbps file as viewers on fibre, so they buffer every few seconds and abandon; support tickets are almost entirely 'the video keeps stopping'. Meanwhile the origin's uplink is saturated at 40 Gbps out of a single region, viewers on other continents wait seconds for the first frame, and seeking re-downloads from the start because a progressive file has no other way to do it.",
+      "change": "Cut every video into 4-second segments, produce a five-rung ladder from 240p to 1080p plus an HLS/DASH manifest, and put a CDN in front. The player chooses the rendition.",
+      "why": "Rebuffering is a mismatch between one fixed bitrate and a connection that varies, and only the client can see that connection — it knows its measured throughput, buffer depth and screen size, while the server knows an IP address. So the server stops deciding: it serves numbered static files and the player picks the next URL. That inversion is what makes every byte identical for every viewer and therefore cacheable, which is what lets a CDN carry the traffic instead of the origin. It also fixes startup and seeking for free: begin on a low rung and step up, and jump straight to the segment containing the target timestamp.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "uploader",
+            "label": "Uploader",
+            "type": "client",
+            "x": 70,
+            "y": 80
+          },
+          {
+            "id": "api",
+            "label": "Upload API",
+            "type": "server",
+            "x": 330,
+            "y": 80
+          },
+          {
+            "id": "queue",
+            "label": "Transcode queue",
+            "type": "queue",
+            "x": 590,
+            "y": 80
+          },
+          {
+            "id": "workers",
+            "label": "Ladder transcode 240p-1080p",
+            "type": "worker",
+            "x": 860,
+            "y": 80
+          },
+          {
+            "id": "viewer",
+            "label": "Players",
+            "type": "client",
+            "x": 70,
+            "y": 300
+          },
+          {
+            "id": "cdn",
+            "label": "CDN edge",
+            "type": "cdn",
+            "x": 330,
+            "y": 300,
+            "why": {
+              "without": "Every viewer pulls segments from one origin in one region: a saturated 40 Gbps uplink and seconds of latency for anyone on another continent.",
+              "with": "Segments are immutable static files with no per-viewer variation, so one cached copy at an edge serves an entire city.",
+              "conclusion": "The CDN is affordable only because the player, not the server, decides the quality — that is what keeps every byte identical and cacheable."
+            }
+          },
+          {
+            "id": "origin",
+            "label": "Origin",
+            "type": "server",
+            "x": 590,
+            "y": 300
+          },
+          {
+            "id": "store",
+            "label": "Segments + manifests",
+            "type": "storage",
+            "x": 860,
+            "y": 300
+          }
+        ],
+        "edges": [
+          {
+            "from": "uploader",
+            "to": "api"
+          },
+          {
+            "from": "api",
+            "to": "queue"
+          },
+          {
+            "from": "queue",
+            "to": "workers"
+          },
+          {
+            "from": "workers",
+            "to": "store"
+          },
+          {
+            "from": "viewer",
+            "to": "cdn",
+            "label": "manifest, then segments"
+          },
+          {
+            "from": "cdn",
+            "to": "origin",
+            "label": "miss",
+            "dashed": true
+          },
+          {
+            "from": "origin",
+            "to": "store"
+          }
+        ]
+      }
+    },
+    {
+      "stage": "Stage 5 — 100M views/day, ~22.5 PB/day",
+      "problem": "Three things broke at once. The edge hit ratio reads a healthy 94%, but origin egress is four times the model, because fifty edge PoPs each independently miss on the same long-tail video and each pulls it from origin separately. Storage crossed 170 PB/year while an audit showed most of it is renditions of videos nobody has requested in a year. And `UPDATE videos SET views = views + 1` on a video trending at 2,000 views/s serialised every one of those transactions on a single row, exhausted the connection pool and took down catalogue pages for videos that had nothing to do with it.",
+      "change": "Insert a regional shield tier between the edges and the origin, tier storage and the ladder by popularity with the master retained as the regeneration path, and move view counting onto a partitioned stream with windowed aggregation.",
+      "why": "A shield does not improve the edge hit ratio and does not change what any viewer experiences — it collapses fifty independent origin fetches for the same cold object into one, which is exactly the tail where edge caching is structurally useless. Tiering follows from treating renditions as a derived cache rather than as data: the master is the truth, so pruning a rendition costs a slow regeneration on a request almost nobody will make, in exchange for a large share of the storage bill. And a view count is a display number with no financial consequence, so paying single-row lock contention for transactional exactness is spending the system's scarcest resource on its least important guarantee; appends to a partitioned log do not contend, and one delta write per video per ten-second window turns 2,000 conflicting writes/s into one.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "viewer",
+            "label": "Players (global)",
+            "type": "client",
+            "x": 70,
+            "y": 160
+          },
+          {
+            "id": "edge",
+            "label": "CDN edge PoPs",
+            "type": "cdn",
+            "x": 320,
+            "y": 160
+          },
+          {
+            "id": "shield",
+            "label": "Regional shield",
+            "type": "cdn",
+            "x": 580,
+            "y": 160,
+            "why": {
+              "without": "Fifty edges each miss on the same long-tail video and each fetches it from origin — origin egress is several times what the headline hit ratio predicts.",
+              "with": "Those fifty misses collapse into one origin fetch, with no change to what any viewer sees.",
+              "conclusion": "The headline hit ratio hides the tail; a shield fixes the tail specifically, which is where the origin bill actually comes from."
+            }
+          },
+          {
+            "id": "origin",
+            "label": "Origin",
+            "type": "server",
+            "x": 840,
+            "y": 160
+          },
+          {
+            "id": "counts",
+            "label": "View counts store",
+            "type": "db",
+            "x": 70,
+            "y": 440
+          },
+          {
+            "id": "beacon",
+            "label": "View event stream",
+            "type": "queue",
+            "x": 320,
+            "y": 440,
+            "note": "Partitioned by video id. Appends never contend the way a single hot row does."
+          },
+          {
+            "id": "agg",
+            "label": "Counter aggregator",
+            "type": "worker",
+            "x": 580,
+            "y": 440,
+            "note": "One delta write per video per 10 s window, instead of one write per view."
+          },
+          {
+            "id": "store",
+            "label": "Object storage (tiered)",
+            "type": "storage",
+            "x": 840,
+            "y": 440
+          }
+        ],
+        "edges": [
+          {
+            "from": "viewer",
+            "to": "edge"
+          },
+          {
+            "from": "edge",
+            "to": "shield",
+            "label": "miss",
+            "dashed": true
+          },
+          {
+            "from": "shield",
+            "to": "origin",
+            "label": "miss",
+            "dashed": true
+          },
+          {
+            "from": "origin",
+            "to": "store"
+          },
+          {
+            "from": "viewer",
+            "to": "beacon",
+            "label": "view beacon",
+            "dashed": true
+          },
+          {
+            "from": "beacon",
+            "to": "agg"
+          },
+          {
+            "from": "agg",
+            "to": "counts",
+            "label": "+20,000"
+          }
+        ]
+      }
+    }
+  ],
+  "tradeoffs": [
+    {
+      "option": "Client-side adaptive bitrate (the player chooses the rendition)",
+      "pros": [
+        "Only the client can measure the client: actual throughput, buffer depth, screen size and battery state are invisible to the server",
+        "Keeps every byte identical for every viewer, which is the property that makes segments cacheable and therefore makes CDN delivery of 22.5 PB/day affordable",
+        "Degrades instead of failing — a halved connection steps down a rung rather than stalling, and a bad estimate self-corrects on the next segment"
+      ],
+      "cons": [
+        "You give up central control: you cannot force a quality, cap a bitrate for a cost-sensitive region, or roll out a fix without shipping client updates",
+        "You inherit whatever heuristics each player implementation ships with, and they differ enough that the same video behaves differently across devices",
+        "Debugging a viewer's bad experience means client-side instrumentation and telemetry, because your own logs show only a sequence of successful static-file GETs"
+      ]
+    },
+    {
+      "option": "Short segments (2 s) rather than long ones (10 s)",
+      "pros": [
+        "Faster adaptation: the player reacts to a throughput change within seconds rather than after a long stall",
+        "Lower startup latency, since the first playable unit is smaller",
+        "Finer-grained caching, so an edge holding a partial video is still useful"
+      ],
+      "cons": [
+        "Five times as many objects — at 4 s we already generate ~450M objects/day, and 2 s doubles it, with per-request costs and listing overhead to match",
+        "Worse compression, because every segment must start with a keyframe and keyframes are expensive",
+        "More HTTP requests per viewer, which is felt most on high-latency mobile connections — precisely the viewers short segments were meant to help"
+      ]
+    },
+    {
+      "option": "Transcode the full ladder eagerly on upload",
+      "pros": [
+        "Every rendition is ready the instant the video is published, so the first viewer on any device gets an immediate, correctly-sized stream",
+        "One code path and one trigger — far simpler to operate, monitor and reason about than an on-demand second path",
+        "Encoding cost is incurred in a predictable batch rather than arriving as unpredictable latency on a viewer request"
+      ],
+      "cons": [
+        "You pay compute and storage for renditions of videos nobody will ever watch, and in a long-tail catalogue that is most of them",
+        "Drives the full ~470 TB/day and ~8,300-core figures, both of which are dominated by content with near-zero lifetime views",
+        "A change to the ladder (a new codec, a new rung) means re-encoding the entire back catalogue rather than only what is actually requested"
+      ]
+    },
+    {
+      "option": "Eventually-consistent view counts via a stream",
+      "pros": [
+        "Removes single-row lock contention entirely: 2,000 conflicting writes/s on a trending video become one delta write per ten-second window",
+        "The same stream feeds watch time, trending, recommendation signals and popularity-based storage tiering at no extra write cost",
+        "Deduplication becomes possible via a view id, which a bare `views + 1` increment cannot do at all"
+      ],
+      "cons": [
+        "Counts are seconds stale, and a creator refreshing immediately after posting sees zero — a real and recurring support complaint",
+        "Substantially more moving parts: a stream, partitions, aggregators, a windowing policy and their own failure modes to monitor",
+        "If counts ever become money (payouts, ad billing), approximate is no longer acceptable and you must run a second audited reconciliation pipeline alongside the fast one"
+      ]
+    },
+    {
+      "option": "A regional shield tier between edges and origin",
+      "pros": [
+        "Collapses N independent edge misses on the same cold object into a single origin fetch, which targets the long tail where edge caching is structurally useless",
+        "Cuts origin egress and origin fleet size without changing anything a viewer experiences",
+        "Gives a natural place to enforce origin rate limits and absorb a cache-busting incident before it reaches the origin"
+      ],
+      "cons": [
+        "Adds a hop, so a full miss now traverses edge → shield → origin and first-byte latency for genuinely cold content gets worse",
+        "Another tier to provision, monitor and pay for, with its own capacity and its own failure mode",
+        "Concentrates risk: a shield outage converts back to N direct origin fetches at exactly the moment the origin is least able to absorb them"
+      ]
+    }
+  ],
+  "interviewStages": [
+    {
+      "key": "requirements",
+      "prompt": "Design a video streaming platform. What do you establish before drawing anything?",
+      "hints": [
+        "On-demand and live are different systems — do not let that stay ambiguous",
+        "Who uploads, and how big is the catalogue's tail?",
+        "Which part of this is actually a web-request problem?"
+      ],
+      "modelAnswer": [
+        "On-demand or live; user-generated or professionally produced; public or access-controlled",
+        "Catalogue shape — a few thousand premium titles caches almost perfectly, tens of millions of long-tail videos does not, and that difference is most of the delivery bill",
+        "Device and codec matrix, because it decides how many renditions you store",
+        "State the framing up front: the video bytes never pass through application servers. Uploads go straight to object storage, playback comes from a CDN",
+        "Note that cost is a first-class requirement here, which is unusual — an architecture that works but costs 4x has failed"
+      ]
+    },
+    {
+      "key": "estimation",
+      "prompt": "100,000 hours uploaded per day, 100M views per day at 10 minutes each. What are storage and egress?",
+      "hints": [
+        "Convert the rendition ladder into GB per source hour first",
+        "Egress is watch-hours times bitrate — compute watch-hours before anything else",
+        "Cross-check your bandwidth figure using concurrent viewers"
+      ],
+      "modelAnswer": [
+        "Ladder at 10.4 Mbps → 10.4 × 3,600 / 8 ≈ 4.7 GB per source hour",
+        "Storage: 100,000 × 4.7 GB ≈ 470 TB/day ≈ 171 PB/year, and it is cumulative",
+        "Watch time: 100M × 10 min ≈ 16.7M hours/day; at 3 Mbps that is 1.35 GB/hour → ~22.5 PB/day of egress",
+        "Bandwidth: 22.5 PB / 86,400 ≈ 2.1 Tbps average, ~6.3 Tbps peak. Cross-check: 16.7M / 24 ≈ 695,000 concurrent × 3 Mbps ≈ 2.1 Tbps",
+        "Origin at 95% hit ratio: ~1.1 PB/day ≈ 104 Gbps — and each point of hit ratio is worth 225 TB/day",
+        "Also worth quoting: ~450M new objects/day at 4-second segments, and ~8,300 cores of continuous transcode"
+      ]
+    },
+    {
+      "key": "upload",
+      "prompt": "A user uploads a 2 GB file. Walk me through what happens, and why it is not a POST to your API.",
+      "hints": [
+        "What is the app server doing for the duration of a multi-minute transfer?",
+        "How many times do you pay for those bytes to cross the network?",
+        "How do you actually know the upload finished?"
+      ],
+      "modelAnswer": [
+        "Client asks the API for permission; API returns time-limited pre-signed URLs and creates the row in `created`",
+        "Client PUTs directly to object storage — those bytes never touch our servers, so no worker is tied up, nothing is buffered, and we do not pay for the hop twice",
+        "Multipart: one signed URL per part, parallel uploads, retry only the failed part, which makes a large mobile upload resumable",
+        "Trust the storage-layer object-created event as the trigger, not the client's `complete` call — tabs close and clients lie",
+        "Validate in a worker: does the object exist, is the size plausible, does it decode as video? Truncated and non-video uploads are common"
+      ]
+    },
+    {
+      "key": "transcode",
+      "prompt": "Transcoding one video takes seven minutes. How does that fit into a request, and what happens when a worker dies at 80%?",
+      "hints": [
+        "What is the load balancer's idle timeout?",
+        "Queues deliver at least once — what does a duplicate do to your output bucket?",
+        "What is the unit of retry, and why is choosing it carefully worth so much?"
+      ],
+      "modelAnswer": [
+        "It does not fit: browsers give up at 60 s and balancers at 120 s. The API returns 202 and the work goes behind a queue",
+        "Idempotency is mandatory, not optional — at-least-once delivery, dying workers and operator replays all produce duplicates. Deterministic output keys mean a retry overwrites; an idempotency key means a duplicate finds the job done",
+        "Chunk at keyframe boundaries so the unit of retry is a chunk, not a video: a dead worker costs one chunk, and chunks encode in parallel so wall-clock time collapses",
+        "Write the manifest last, atomically — it is the commit point, so a half-finished ladder is invisible rather than broken",
+        "Because retries are safe, the fleet can run on preemptible instances, which is where most of the compute saving comes from"
+      ]
+    },
+    {
+      "key": "abr",
+      "prompt": "A viewer's connection drops from 10 Mbps to 2 Mbps mid-video. What happens, and who decided?",
+      "hints": [
+        "Which side of the connection can actually measure it?",
+        "What does the server know about this viewer?",
+        "What would server-side quality selection do to your CDN?"
+      ],
+      "modelAnswer": [
+        "The player notices the last segment took longer than expected and its buffer is draining, and requests the next segment from a lower rendition — a different URL, nothing more",
+        "The server decided nothing. It serves numbered static files and does not know a switch happened, or who is watching",
+        "Only the client can observe throughput, buffer depth, screen size and power state; the server knows an IP address, so any server-side choice is a worse guess",
+        "This inversion is what keeps every byte identical across viewers and therefore cacheable — server-driven adaptation would be per-viewer and uncacheable, putting 22.5 PB/day on the origin",
+        "Mid-stream switching works because segments start with keyframes and rendition boundaries are aligned — that alignment is a pipeline requirement, not luck"
+      ]
+    },
+    {
+      "key": "cdn",
+      "prompt": "Your edge hit ratio is 94% but origin egress is four times what you modelled. Explain and fix.",
+      "hints": [
+        "Is the hit ratio the same for a video with a million views and one with two?",
+        "How many edge PoPs miss on the same unpopular video independently?",
+        "Which fix helps the tail without changing what viewers experience?"
+      ],
+      "modelAnswer": [
+        "The headline ratio hides the distribution: popular content hits near 100% and dominates the request count, while the long tail misses nearly always and dominates origin bytes",
+        "Fifty edges each independently miss on the same cold video and each pulls it from origin — fifty fetches for one object",
+        "Fix: a regional shield tier, which collapses those fifty into one origin fetch. It does not change the edge hit ratio or the viewer experience at all",
+        "Also check for URL variation — a per-viewer query parameter silently fragments the cache and can destroy the hit ratio with nothing appearing broken",
+        "Quantify it: each point of hit ratio is 225 TB/day, so this is a cost argument with a number attached, not a vague optimisation"
+      ]
+    },
+    {
+      "key": "views",
+      "prompt": "A video is trending at 2,000 views/s. What does `UPDATE videos SET views = views + 1` do to your database?",
+      "hints": [
+        "Where exactly do those 2,000 transactions per second meet?",
+        "Does anyone actually need this number to be exact?",
+        "What is the write amplification of an append versus an update to one row?"
+      ],
+      "modelAnswer": [
+        "All 2,000/s contend for the same row lock and serialise: the row becomes a queue, latency climbs, the connection pool exhausts, and unrelated queries start failing",
+        "In MVCC each increment writes a new row version, so the hottest rows bloat fastest and vacuum falls furthest behind exactly where it matters most",
+        "It is also the wrong requirement — a view count is a display number rounded before it reaches the screen, with no financial or safety consequence",
+        "Treat a view as an event: beacon → partitioned append-only stream → windowed aggregation → one delta write per video per 10 s. 2,000 conflicting writes/s becomes one write of +20,000",
+        "Same stream also feeds trending, watch time and the popularity triggers for storage tiering, at no extra write cost",
+        "Caveat: if counts become payouts or ad billing, run a second audited exactly-once pipeline — do not make the display path strict"
+      ]
+    }
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "architecture",
+      "question": "In adaptive bitrate streaming, which component decides whether the next segment is fetched at 480p or 1080p?",
+      "options": [
+        "The origin server, based on the viewer's IP address and user agent",
+        "The client's player, based on measured throughput and buffer depth — the server just serves numbered static files",
+        "The CDN edge, based on its available bandwidth to that region",
+        "A load balancer that routes slow clients to low-bitrate servers"
+      ],
+      "answerIndex": 1,
+      "explanation": "The intelligence is in the player and the server is deliberately dumb. Only the client can measure its own throughput, buffer depth, screen size and power state; the server knows an IP address. This inversion is also what makes the whole delivery architecture affordable: because no byte varies by viewer, every segment is an ordinary cacheable static file and one copy at an edge serves an entire city. Server-side quality selection would be per-viewer and therefore uncacheable, putting all 22.5 PB/day on the origin."
+    },
+    {
+      "id": "q2",
+      "type": "architecture",
+      "question": "Why must the transcode pipeline be idempotent and resumable rather than simply retried from the start?",
+      "options": [
+        "To make the code easier to unit test",
+        "Because at-least-once queues, dying workers and operator replays all produce duplicate runs, which without deterministic keys create duplicated segments, an inconsistent manifest and doubled storage — and because restarting a 40-minute encode from zero wastes the work already done",
+        "Because object storage rejects repeated writes to the same key",
+        "Because transcoding must complete within the HTTP request timeout"
+      ],
+      "answerIndex": 1,
+      "explanation": "Duplicates are inevitable, not exceptional: at-least-once delivery is the norm, workers die after finishing but before acknowledging, and operators replay batches after bad deploys. Deterministic output keys mean a second run overwrites exactly what the first wrote; an idempotency key means a duplicate message finds the job already complete. Chunking at keyframe boundaries makes the unit of retry a chunk rather than a video, so a worker dying at 80% costs minutes instead of half an hour — and it is what makes it safe to run the fleet on preemptible instances."
+    },
+    {
+      "id": "q3",
+      "type": "architecture",
+      "question": "Your CDN reports a 94% edge hit ratio, yet origin egress is roughly four times what you predicted. What is the most likely cause?",
+      "options": [
+        "The CDN is misconfigured and ignoring cache headers entirely",
+        "The hit ratio is dominated by popular content, while long-tail videos miss at many edges independently — each PoP fetches the same cold object from origin separately",
+        "Viewers are seeking, which forces revalidation of already-cached segments",
+        "The origin is serving uncompressed video"
+      ],
+      "answerIndex": 1,
+      "explanation": "A single aggregate hit ratio hides a bimodal distribution. Popular videos are requested constantly at every edge and approach a 100% hit rate, and because they generate most of the requests they dominate the headline figure. Long-tail videos are watched a handful of times from scattered places and are evicted between requests, so they miss almost always — and fifty PoPs missing on the same cold object means fifty independent origin fetches. A regional shield collapses those into one, targeting the tail without changing the edge hit ratio or the viewer's experience at all."
+    },
+    {
+      "id": "q4",
+      "type": "architecture",
+      "question": "A video is trending at 2,000 views/s. What is wrong with `UPDATE videos SET views = views + 1 WHERE id = ?`",
+      "options": [
+        "Nothing — 2,000 writes/s is well within a modern database's capacity",
+        "All 2,000 transactions per second contend for one row lock and serialise, so the row becomes a queue: latency climbs, the connection pool exhausts, and unrelated queries start failing",
+        "The count will overflow a 32-bit integer",
+        "The UPDATE cannot be replicated to read replicas fast enough"
+      ],
+      "answerIndex": 1,
+      "explanation": "The aggregate rate is not the problem — the concentration is. Every one of those transactions needs the same row lock, so they serialise, and in an MVCC database each increment also writes a new row version, bloating the hottest rows fastest. One popular video degrades the whole database. And the guarantee was never needed: a view count is a display number with no financial consequence. Routing views through a partitioned append-only stream with windowed aggregation turns 2,000 conflicting writes/s into a single delta write of +20,000 every ten seconds, at the cost of a count that is a few seconds stale."
+    }
+  ],
+  "related": [
+    "cdn",
+    "object-storage",
+    "message-queue",
+    "idempotency",
+    "event-driven",
+    "scaling"
+  ]
+}

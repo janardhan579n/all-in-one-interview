@@ -33,12 +33,14 @@
   "bruteForce": {
     "idea": "Repeatedly delete adjacent matching pairs until the string stops changing; it is valid if nothing is left.",
     "code": [
-      "String prev;",
-      "do {",
-      "    prev = s;",
-      "    s = s.replace(\"()\", \"\").replace(\"[]\", \"\").replace(\"{}\", \"\");",
-      "} while (!s.equals(prev));",
-      "return s.isEmpty();"
+      "public static boolean isValid(String s) {",
+      "    String prev;",
+      "    do {",
+      "        prev = s;",
+      "        s = s.replace(\"()\", \"\").replace(\"[]\", \"\").replace(\"{}\", \"\");",
+      "    } while (!s.equals(prev));",
+      "    return s.isEmpty();",
+      "}"
     ],
     "complexity": {
       "time": "O(n^2)",

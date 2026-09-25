@@ -37,10 +37,25 @@
   "bruteForce": {
     "idea": "For each course, follow its prerequisite chains and see whether you can arrive back at the starting course.",
     "code": [
-      "for (int course = 0; course < numCourses; course++) {",
-      "    if (canReach(course, course, new HashSet<>())) return false;",
+      "public static boolean canFinish(int numCourses, int[][] prerequisites) {",
+      "    List<List<Integer>> dependents = new ArrayList<>();",
+      "    for (int i = 0; i < numCourses; i++) dependents.add(new ArrayList<>());",
+      "    for (int[] pair : prerequisites) {",
+      "        dependents.get(pair[1]).add(pair[0]);   // edge prereq -> course",
+      "    }",
+      "    for (int course = 0; course < numCourses; course++) {",
+      "        if (canReach(course, course, new HashSet<>(), dependents)) return false;",
+      "    }",
+      "    return true;",
       "}",
-      "return true;"
+      "",
+      "private static boolean canReach(int current, int target, Set<Integer> visited, List<List<Integer>> dependents) {",
+      "    for (int next : dependents.get(current)) {",
+      "        if (next == target) return true;",
+      "        if (visited.add(next) && canReach(next, target, visited, dependents)) return true;",
+      "    }",
+      "    return false;",
+      "}"
     ],
     "complexity": {
       "time": "O(V * (V + E))",

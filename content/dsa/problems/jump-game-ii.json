@@ -35,18 +35,20 @@
   "bruteForce": {
     "idea": "Dynamic programming over positions: best[i] is the fewest jumps to reach i. For each i, look at every earlier index j that can reach it and take the cheapest.",
     "code": [
-      "int n = nums.length;",
-      "int[] best = new int[n];",
-      "Arrays.fill(best, Integer.MAX_VALUE);",
-      "best[0] = 0;",
-      "for (int i = 1; i < n; i++) {",
-      "    for (int j = 0; j < i; j++) {",
-      "        if (j + nums[j] >= i && best[j] != Integer.MAX_VALUE) {",
-      "            best[i] = Math.min(best[i], best[j] + 1);",
+      "public static int jump(int[] nums) {",
+      "    int n = nums.length;",
+      "    int[] best = new int[n];",
+      "    Arrays.fill(best, Integer.MAX_VALUE);",
+      "    best[0] = 0;",
+      "    for (int i = 1; i < n; i++) {",
+      "        for (int j = 0; j < i; j++) {   // rescans every earlier index to re-derive one staircase step",
+      "            if (j + nums[j] >= i && best[j] != Integer.MAX_VALUE) {",
+      "                best[i] = Math.min(best[i], best[j] + 1);",
+      "            }",
       "        }",
       "    }",
-      "}",
-      "return best[n - 1];"
+      "    return best[n - 1];",
+      "}"
     ],
     "complexity": {
       "time": "O(n^2)",

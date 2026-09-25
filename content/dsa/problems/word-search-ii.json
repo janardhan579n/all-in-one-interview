@@ -10,7 +10,7 @@
     "matrix",
     "string"
   ],
-  "statement": "Given an m × n board of characters and a list of words, return every word from the list that can be formed on the board. A word is formed from letters of sequentially adjacent cells — horizontally or vertically neighbouring — and the same cell may not be used more than once within a single word.",
+  "statement": "Given an m × n board of characters and a list of words, return every word from the list that can be formed on the board, in any order. A word is formed from letters of sequentially adjacent cells — horizontally or vertically neighbouring — and the same cell may not be used more than once within a single word.",
   "realWorld": "The generic shape is 'match a whole dictionary against a stream or a space in one pass instead of one pattern at a time' — which is what intrusion-detection systems, content filters and `grep -F` with thousands of patterns do, using Aho–Corasick: a trie of all the patterns, plus links that let the scan continue after a partial match.",
   "examples": [
     {
@@ -41,11 +41,14 @@
   "bruteForce": {
     "idea": "Solve Word Search once per word: for each word, start a DFS from every cell and try to spell it out.",
     "code": [
-      "List<String> found = new ArrayList<>();",
-      "for (String word : words) {                       // 30,000 independent searches",
-      "    if (exists(board, word)) found.add(word);",
+      "public static List<String> findWords(char[][] board, String[] words) {",
+      "    List<String> found = new ArrayList<>();",
+      "    Set<String> seen = new LinkedHashSet<>(Arrays.asList(words));",
+      "    for (String word : seen) {                        // 30,000 independent searches",
+      "        if (exists(board, word)) found.add(word);",
+      "    }",
+      "    return found;",
       "}",
-      "return found;",
       "",
       "private static boolean exists(char[][] board, String word) {",
       "    for (int r = 0; r < board.length; r++) {",
@@ -54,6 +57,20 @@
       "        }",
       "    }",
       "    return false;",
+      "}",
+      "",
+      "private static boolean dfs(char[][] board, int r, int c, String word, int idx) {",
+      "    if (idx == word.length()) return true;",
+      "    if (r < 0 || r >= board.length || c < 0 || c >= board[0].length) return false;",
+      "    if (board[r][c] != word.charAt(idx)) return false;",
+      "    char saved = board[r][c];",
+      "    board[r][c] = '#';",
+      "    boolean result = dfs(board, r + 1, c, word, idx + 1)",
+      "                   || dfs(board, r - 1, c, word, idx + 1)",
+      "                   || dfs(board, r, c + 1, word, idx + 1)",
+      "                   || dfs(board, r, c - 1, word, idx + 1);",
+      "    board[r][c] = saved;",
+      "    return result;",
       "}"
     ],
     "complexity": {

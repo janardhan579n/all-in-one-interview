@@ -36,15 +36,17 @@
   "bruteForce": {
     "idea": "Keep a growing region of distinct values at the front; for each element, scan that region to see whether the value is already there, and append it if not.",
     "code": [
-      "int k = 0;",
-      "for (int i = 0; i < nums.length; i++) {",
-      "    boolean seen = false;",
-      "    for (int j = 0; j < k; j++) {",
-      "        if (nums[j] == nums[i]) { seen = true; break; }",
+      "public static int removeDuplicates(int[] nums) {",
+      "    int k = 0;",
+      "    for (int i = 0; i < nums.length; i++) {",
+      "        boolean seen = false;",
+      "        for (int j = 0; j < k; j++) {",
+      "            if (nums[j] == nums[i]) { seen = true; break; }",
+      "        }",
+      "        if (!seen) nums[k++] = nums[i];",
       "    }",
-      "    if (!seen) nums[k++] = nums[i];",
-      "}",
-      "return k;"
+      "    return k;",
+      "}"
     ],
     "complexity": {
       "time": "O(n^2)",

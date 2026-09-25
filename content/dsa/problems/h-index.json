@@ -36,15 +36,17 @@
   "bruteForce": {
     "idea": "Try every candidate value of h from n downwards, and for each one count how many papers clear that bar. Return the first candidate whose count reaches it.",
     "code": [
-      "int n = citations.length;",
-      "for (int h = n; h >= 0; h--) {",
-      "    int count = 0;",
-      "    for (int citation : citations) {",
-      "        if (citation >= h) count++;",
+      "public static int hIndex(int[] citations) {",
+      "    int n = citations.length;",
+      "    for (int h = n; h >= 0; h--) {",
+      "        int count = 0;",
+      "        for (int citation : citations) {   // a fresh count of every paper, for every candidate h",
+      "            if (citation >= h) count++;",
+      "        }",
+      "        if (count >= h) return h;",
       "    }",
-      "    if (count >= h) return h;",
-      "}",
-      "return 0;"
+      "    return 0;",
+      "}"
     ],
     "complexity": {
       "time": "O(n^2)",

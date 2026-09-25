@@ -23,6 +23,10 @@ DIFFERENTIAL_LABEL = {
     'NO_COMPARABLE_PAIR': 'the two blocks share no comparable method',
     'UNSUPPORTED_SIGNATURE': 'takes a shape the generator cannot build',
     'SOLUTION_DID_NOT_COMPILE': 'DID NOT COMPILE',
+    'DISAGREES_AS_DOCUMENTED': 'disagrees on purpose — the page says this brute force is wrong',
+    'FAULT_NOT_REPRODUCED': 'THE DOCUMENTED FAULT NO LONGER REPRODUCES',
+    'AGREE_BUT_VACUOUS': 'AGREES, BUT ON INPUTS THAT PROVE NOTHING',
+    'NOT_COMPARABLE_BY_DESIGN': 'not comparable — the two answer different questions',
 }
 
 EXAMPLE_LABEL = {
@@ -107,8 +111,8 @@ def main() -> int:
 
     w('## What it found')
     w('')
-    w('Two genuine defects, both in **brute-force** code — which matters more than it sounds, because')
-    w('the brute force is the part the reader is shown first and invited to reason about.')
+    w('Three genuine defects, all in **brute-force** code — which matters more than it sounds,')
+    w('because the brute force is the part the reader is shown first and invited to reason about.')
     w('')
     w('**`house-robber-ii`** — the enumeration treats house `i` as adjacent to `(i + 1) % n`. With a')
     w('single house that is the house itself, so it appeared to be its own neighbour and every plan')
@@ -124,8 +128,43 @@ def main() -> int:
     w('6 computers cannot be connected with fewer than 5 cables at all. Fixed by testing each cable')
     w('against what is left rather than against the original.')
     w('')
-    w('Both were found by the differential stage, and neither would have been found by the example')
-    w('replay — the examples on both pages passed throughout.')
+    w('**`move-zeroes`** — the page\'s "obvious" approach shifted elements down and then stepped the')
+    w('index back to re-examine the vacated slot. Once a zero reaches the final position, which is')
+    w('inevitable for any input containing one, that step-back lands on the same slot forever: an')
+    w('infinite loop on the most ordinary input the problem has. It had never been executed, only')
+    w('read, which is exactly the class of defect a reader cannot catch by reading either.')
+    w('')
+    w('Each was found by the differential stage, and none would have been found by the example')
+    w('replay — the examples on all three pages passed throughout.')
+    w('')
+
+    w('## Two ways this report could have lied')
+    w('')
+    w('A green tick is only worth what the test behind it can fail on, and two kinds of tick here')
+    w('turned out to be worth nothing until the harness was taught to notice.')
+    w('')
+    w('**Agreement on inputs that prove nothing.** Seven problems agreed on all 400 trials while')
+    w('producing a single distinct answer the whole way through, or throwing on every one. A cycle')
+    w('detector was only ever handed acyclic lists, because the list generator could not build a')
+    w('cycle; `same-tree` compared two independently random trees, which are never equal; a problem')
+    w('about digit strings was fed random letters and returned zero every time. Each was a green')
+    w('tick over a test that could not have come out any other way. The runner now counts distinct')
+    w('answers and reports **AGREE_BUT_VACUOUS** instead, and the generators for those seven were')
+    w('widened until both outcomes actually occur.')
+    w('')
+    w('**Brute forces that are wrong on purpose.** On four problems the naive approach is not merely')
+    w('slow but incorrect, and saying so is the most useful thing the page does: the reader meets the')
+    w('implementation they would have written, then meets the input that breaks it. `validate-bst`')
+    w('checks each node only against its immediate children; `same-tree` compares traversals with no')
+    w('null markers; `coin-change` takes the largest coin that fits; `add-two-numbers` packs the')
+    w('digits into a machine integer that overflows. For these the harness **inverts**: disagreement')
+    w('is the pass, and unbroken agreement is the failure, reported as **FAULT_NOT_REPRODUCED**.')
+    w('')
+    w('That inversion guards something nothing else does. If one of these brute forces were later')
+    w('tidied into a correct one, every other check in the project would stay green — the content')
+    w('validator, the unit tests, the example replay, and a differential test reporting a cheerful')
+    w('AGREE — while the page went on asserting a fault that no longer existed, with a')
+    w('counterexample that no longer broke anything.')
     w('')
 
     w('## Where the harness had to be told the rules')

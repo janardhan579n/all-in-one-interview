@@ -4,6 +4,12 @@ frontend/dist/
 frontend/tsconfig.tsbuildinfo
 backend/target/
 
+# Playwright e2e output (frontend/e2e is committed; these are run artifacts)
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
+frontend/playwright/.cache/
+
 # Generated: a copy of /content, rebuilt by `npm run sync-content` on every dev/build.
 frontend/src/content-bundle/
 
@@ -14,15 +20,12 @@ data/
 logs/
 *.log
 
-# Netlify CLI link state — machine-local, and it names the site you deployed to.
-.netlify/
-
-# Files delivered into the folder from a chat, and the sync tarballs used to get changes here.
-# Transfer artefacts, not source.
-Claude outputs/
-.claude-sync.tgz
-
 # Editors / OS
 .idea/
 .vscode/
 .DS_Store
+
+# Claude sync artifacts — a SendUserFile download lands here and must never be committed
+Claude outputs/
+*.tgz
+.claude-sync.tgz

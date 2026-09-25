@@ -1,0 +1,1037 @@
+{
+  "id": "news-feed",
+  "title": "Design a News Feed",
+  "difficulty": "advanced",
+  "estimatedMinutes": 45,
+  "summary": "Show each user a merged, ranked stream of posts from everyone they follow. The whole design turns on one question — do you build the feed when someone posts, or when someone reads? — and on the small number of accounts that make the first answer collapse.",
+  "steps": [
+    {
+      "key": "requirements",
+      "title": "1. Clarify the problem",
+      "content": "\"Design a news feed\" is three different systems depending on the answers to these:\n\n- **Chronological or ranked?** Chronological is a merge. Ranked is a merge *plus* a scoring pipeline, and the scoring pipeline changes how many posts you have to keep around.\n- **How wide can the follow graph get?** If the maximum follower count is 5,000, most of this case study is unnecessary. If a single account can have 30 million followers, that one fact dictates the architecture.\n- **How fresh must the feed be?** \"Within a few seconds\" and \"instantly, guaranteed\" are very different price tags.\n- **Is the feed the same on every device?** If a user scrolls on their phone and then opens a laptop, does page 2 continue where they left off?\n- **Read:write ratio?** Ask this early. It decides whether you optimise the write path or the read path, and you cannot optimise both.\n\nFor this walkthrough: ranked feed, follower counts up to tens of millions, freshness target of a few seconds for ordinary accounts, cursor-based pagination shared across devices, and roughly 20 feed reads for every post written."
+    },
+    {
+      "key": "functional",
+      "title": "2. Functional requirements",
+      "content": "- `POST /posts` — publish a post; it should appear in followers' feeds within a few seconds.\n- `GET /feed` — return a page of ranked posts from the accounts the caller follows, newest-or-best first.\n- Follow and unfollow another account.\n- Pagination that does not duplicate or skip posts while new ones arrive at the top.\n- A user's own posts appear in their own feed immediately (read-your-writes), even if everyone else sees them a second later.\n\nExplicitly **out of scope** here: comments, likes as first-class objects, direct messages, media transcoding. They are real work, but they do not change the fan-out decision, and naming them as out of scope is better than silently ignoring them."
+    },
+    {
+      "key": "nonfunctional",
+      "title": "3. Non-functional requirements",
+      "content": "- **Read-heavy, ~20:1.** Every post is written once and read by hundreds of people, many times each. The read path is the product.\n- **Feed read p99 under 200 ms.** Above that the scroll stutters and the session ends.\n- **Post-to-feed propagation: a few seconds is fine, a few minutes is not.** This is the number the celebrity problem eventually violates, so pin it down now.\n- **Availability over consistency.** A feed that is thirty seconds stale is a working product. A feed that returns 500 is not. There is no correctness argument for showing every post in exact global order — nobody can tell.\n- **Scale target:** 300M daily active users, 150M posts/day, 3B feed opens/day, average user follows 200 accounts, maximum follower count in the tens of millions.\n\nNotice which requirement is load-bearing: *availability and read latency*, bought with a relaxed freshness guarantee. Everything downstream is an application of that trade."
+    },
+    {
+      "key": "estimation",
+      "title": "4. Back-of-the-envelope estimation",
+      "content": "These are plausible figures for a system of this shape, not any particular company's.\n\n**Writes.** 150M posts/day ÷ 86,400 s ≈ **1,700 posts/s**. Tiny. A single well-provisioned database handles that.\n\n**Reads.** 3B feed opens/day ÷ 86,400 s ≈ **35,000 feed reads/s**, peak at 3× ≈ **105,000/s**. That is 20× the write rate, and it is the number that justifies precomputing anything at all.\n\n**The fan-out multiplier.** This is the number the whole case study exists for. 300M users × 200 follows = **60 billion follow edges**. Under pure fan-out on write, every post becomes one insert per follower:\n\n- Ordinary accounts (below the wide-fanout threshold) average ~167 followers. 150M posts/day × 167 ≈ **25 billion inserts/day ≈ 290,000/s**.\n- Wide accounts — call it ~5,000 accounts averaging 2M followers, posting ~50,000 times a day between them — produce 50,000 × 2,000,000 = **100 billion inserts/day ≈ 1.16 million/s**.\n\nSo **0.03% of posts generate 80% of all fan-out writes.** That single ratio is the argument for the hybrid model, and it is worth stating out loud before you propose the fix.\n\n**The single-post burst.** One account with 30M followers posts once. That is 30,000,000 inserts. A fan-out fleet sized for the steady 300,000 inserts/s takes 30,000,000 ÷ 300,000 = **100 seconds** at full capacity — and for those 100 seconds every other post in the queue is waiting behind it.\n\n**Feed store size.** Keep 500 entries per user; each entry is a post id, an author id and a score, ~24 bytes. 500 × 24 = 12 KB per user × 300M users = **3.6 TB**. At 64 GB per cache node that is ~56 nodes, or ~115 with a replica each. Real, but affordable — and it is the *reason* you cap at 500 rather than storing an unbounded feed.\n\n**Post storage.** 150M posts/day × ~1 KB ≈ **150 GB/day ≈ 55 TB/year**. Sharded object/row storage, not a single box.\n\n**Ranking cost.** If you display 20 posts but score 600 candidates to pick them, that is 35,000 reads/s × 600 = **21 million scorings/s**. At 2 µs of CPU each that is 42 core-seconds per second of pure scoring — 42 cores at perfect efficiency, realistically a few hundred. Scoring is not free, and this arithmetic is why ranking is two-stage rather than one."
+    },
+    {
+      "key": "api",
+      "title": "5. API design",
+      "content": "Three endpoints carry the system. The interesting one is `GET /feed`, and the interesting thing about it is the **cursor** — not an offset.\n\nA feed is a list that grows at the head while the user is reading it. `?offset=20` means \"skip the first twenty items of the list as it exists right now\". If five posts arrived since page 1 was served, items 16–20 of the old list are items 21–25 of the new one, so the user sees five posts twice and misses nothing — or, on an unfollow, the list shrinks and they skip five posts entirely and never know. Offset pagination on a shifting list is not a rough edge; it is wrong.\n\nThe cursor encodes a *position in the data*, not a count: `(created_at, post_id)` of the last item returned, base64-encoded so clients treat it as opaque. Page 2 is `WHERE (created_at, post_id) < (cursor_ts, cursor_id) ORDER BY created_at DESC, post_id DESC LIMIT 20`. New posts arriving at the head do not move that boundary. The `post_id` tiebreak matters: timestamps collide at 1,700 posts/s, and a cursor on timestamp alone drops or repeats every post that shares a millisecond with the boundary."
+    },
+    {
+      "key": "datamodel",
+      "title": "6. Data model",
+      "content": "Four stores, each shaped by exactly one access pattern.\n\n**`posts`** — the source of truth. Keyed by a time-sortable `post_id` (Snowflake-style: timestamp in the high bits, then shard, then sequence), so ordering by id *is* ordering by time and the cursor needs no extra column.\n\n**`follows`** — the graph. It needs two indexes because it is read in both directions: `(follower_id, followee_id)` answers \"who do I follow?\" on the read path, and `(followee_id, follower_id)` answers \"who must I fan out to?\" on the write path. Forgetting the second one means the fan-out worker does a full scan per post.\n\n**`feed_entries`** — the precomputed feed. Not a relational table: a per-user capped list or sorted set in Redis, holding post ids only. Storing post *bodies* here would multiply 3.6 TB by a factor of forty.\n\n**`author_stats`** — follower counts, and the derived `wide_fanout` boolean. The fan-out worker reads this on every post, so it must be a single cheap lookup, and it is what makes the push/pull decision at write time.\n\nThe feed store holds ids, never content. Hydration — turning 20 post ids into 20 rendered posts — is a separate multi-get against `posts`, which is cacheable by post id and shared across every reader of that post. One viral post is one cache entry, not a million copies."
+    },
+    {
+      "key": "fanout-write",
+      "title": "7. Fan-out on write (push)",
+      "content": "**The idea.** When a user posts, do the work immediately: look up every follower and insert the post id into each one's precomputed feed list. Reading a feed becomes a single `LRANGE feed:{user_id} 0 19` — one network round trip to Redis, sub-millisecond, no merging, no sorting, no fan-in of any kind.\n\nThis is a beautiful trade when reads outnumber writes 20:1. You are moving work from the 35,000/s path to the 1,700/s path. The asymmetry pays for itself twenty times over.\n\n**How it actually runs.** The post write is synchronous and small: write to `posts`, publish a `post_created` event, return 201. Everything else is asynchronous. Fan-out workers consume the event, page through the follower list, and pipeline batched inserts into the feed store. The user's own feed is updated inline before the response returns, so read-your-writes holds even though everyone else waits a second.\n\n**Where it breaks.** It breaks on the shape of the follower distribution, not on the average. The average is 167 followers — trivially fine. But follower counts follow a power law, and one account with 30 million followers turns a single `POST /posts` into **30 million inserts**. At 300,000 inserts/s of fleet capacity that is 100 seconds of the entire fan-out tier consumed by one post.\n\nAnd it is worse than slow, because the queue is shared. For those 100 seconds, every ordinary user's post is stuck behind the celebrity's in the same partition. A user with four followers finds their post arrives two minutes late — and they will never understand why. **One account's popularity became everyone's latency.** That is the write storm, and it is the reason the naive push design does not survive contact with a real social graph."
+    },
+    {
+      "key": "fanout-read",
+      "title": "8. Fan-out on read (pull)",
+      "content": "**The idea.** Do nothing at write time beyond storing the post. When a user opens their feed, look up the 200 accounts they follow, fetch each one's recent timeline, merge the results by timestamp, and return the top 20.\n\n**What it fixes.** The write storm disappears entirely. A 30M-follower post is now one row insert, exactly like everyone else's. There is no fan-out fleet, no queue backlog, no amplification, and no stale feed store to invalidate when someone unfollows. Freshness is perfect by construction — you are reading the live data.\n\n**What it costs.** The read path becomes a 200-way scatter-gather with a k-way merge on top, on every single feed open. At 35,000 reads/s × 200 fetches, that is **7 million timeline reads per second** hitting the post store. Each one is cheap; seven million of them are not.\n\nWorse, the p99 is governed by the slowest of 200 parallel requests. If a single timeline read has a 1-in-1,000 chance of taking 100 ms, then across 200 of them the chance that *at least one* is slow is about 1 − 0.999²⁰⁰ ≈ 18%. Nearly one feed load in five waits on a straggler. That is tail-latency amplification, and it is the reason fan-out on read feels sluggish long before the throughput numbers look alarming.\n\nAnd it scales the wrong way: the cost of your feed grows with **how many people you follow**, so your most engaged users — the ones following 2,000 accounts — get the worst experience. Push penalises popular authors; pull penalises active readers."
+    },
+    {
+      "key": "hybrid",
+      "title": "9. The hybrid, and where the threshold goes",
+      "content": "Neither model is wrong. They fail on opposite ends of the same distribution, so the answer is to apply each one where it wins.\n\n**Push for ordinary accounts. Pull for wide accounts. Merge at read time.**\n\nAt write time, the fan-out worker reads `author_stats.follower_count`. Below the threshold, it fans out as normal. Above it, it does nothing at all — the post lands only in the author's own timeline. At read time, the feed service does two things in parallel: `LRANGE` the precomputed feed (one call, covers ~99.97% of the posts a user should see), and fetch the recent timelines of the handful of wide accounts the user follows (typically 0–5 calls, not 200). Merge, rank, return.\n\nThe merge is cheap precisely because it is *bounded by the number of wide accounts a user follows*, not by their total follow count. Pull's fatal property — cost proportional to following — is removed, because the pull set is tiny and stays tiny as the user follows more ordinary accounts.\n\n**The threshold.** Set it at **100,000 followers**. By the estimation above, that separates roughly 5,000 accounts from 300 million, and removes ~100 billion of the ~125 billion daily fan-out inserts — **an 80% reduction in fan-out write volume** at the cost of, on average, a couple of extra reads per feed open.\n\n**Be honest about the number.** 100,000 is not derived from anything. It is the knob that balances two curves — fan-out write cost, which grows with how many accounts are below the line, and read-time merge cost, which grows with how many are above it. You pick a starting value, you watch fan-out queue lag and feed read p99, and you move it. Set it too low and you have reinvented pull, with millions of accounts pulled at read time and a 50-way merge on every open. Set it too high and a 90,000-follower account still produces a 90,000-insert burst. An interviewer asking \"why 100,000?\" is checking whether you will invent a false derivation. The correct answer is *\"it is tuned against those two metrics, and here is the first value I would ship and how I would move it.\"*\n\n**The edge cases that bite.** An account crossing the threshold mid-life has followers whose precomputed feeds contain its old posts and will not contain its new ones — acceptable, since the reader also pulls its timeline and the merge de-duplicates by post id. Going the other way, a demoted account needs a backfill or its recent posts vanish from view. And the threshold must be evaluated at *post* time, not cached indefinitely, or a newly viral account keeps push-fanning-out all the way up."
+    },
+    {
+      "key": "ranking",
+      "title": "10. Ranking: chronological versus scored",
+      "content": "**Chronological** is a merge by timestamp. It is honest, predictable, trivially cacheable, and users understand it. It also means whoever posts most wins: an account posting forty times a day crowds out one posting weekly, regardless of which you would rather read.\n\n**Scored** ranking replaces \"newest first\" with a function of recency, author affinity, predicted engagement and content type. It surfaces better posts. It also breaks three things people forget to mention:\n\n**1. You must keep more candidates than you display.** If the feed store holds exactly the 20 posts you show, the ranker has nothing to rank. To display 20, you retrieve on the order of 600 candidates — a few hundred from the precomputed feed, a few hundred pulled from wide accounts — score them, and discard 97% of the work. That is the 21 million scorings/s from the estimation step, and it is a cost that chronological ordering simply does not have.\n\n**2. Scoring must be two-stage, because one stage cannot afford it.** Stage one is a cheap scorer over all ~600 candidates using features already in memory (recency, author affinity, a precomputed author quality score) — microseconds each. Stage two takes the top ~100 survivors and runs the expensive model. 35,000 reads/s × 100 heavy scorings is affordable; × 600 is not. The two-stage shape is forced by arithmetic, not by ML fashion.\n\n**3. Ranking and stable pagination fight each other.** Scores change between page 1 and page 2. A post ranked 21st when you served page 1 can score 15th a minute later and appear on page 2 having already been shown — or drop to 40th and be skipped. The fix is to freeze the ranked candidate set per session: rank once, store the ordered id list against a session key with a short TTL, and have the cursor walk *that frozen list*. Pagination is then stable by construction, and the cost is that the tail of a long scroll is ranked with slightly stale scores — which nobody notices."
+    },
+    {
+      "key": "pagination",
+      "title": "11. Pagination that survives a moving list",
+      "content": "This is the detail that separates a design that works in a diagram from one that works on a phone.\n\n**Why offset is broken here.** `LIMIT 20 OFFSET 20` says \"skip 20 rows of the current result\". The feed gains ~1,700 posts/s globally and several per second for an active user, so between page 1 and page 2 the list has shifted. Five new posts at the head means the old items 16–20 are now at positions 21–25: the user sees them **twice**. An unfollow between pages shrinks the list and the user **silently skips** whatever slid past the boundary. Offset also gets slower as you scroll, because the store must walk and discard everything it skips.\n\n**The cursor.** Return an opaque cursor encoding `(created_at, post_id)` of the last item on the page. Page 2 asks for everything strictly before that tuple:\n\n```\nWHERE (created_at, post_id) < (:cursor_ts, :cursor_id)\nORDER BY created_at DESC, post_id DESC\nLIMIT 20\n```\n\nThe boundary is a point in the data, so posts arriving above it are simply not in the next page — which is the correct behaviour. They appear on refresh, which is what the pull-to-refresh gesture is for.\n\n**Why the tiebreak is not optional.** At 1,700 posts/s, many posts share a millisecond. A cursor on `created_at` alone must choose between `<` (dropping every post that ties with the boundary) and `<=` (repeating them). The `post_id` tiebreak makes the sort key a total order, so exactly one row can be the boundary. Because `post_id` is time-sortable, `(created_at, post_id)` collapses to a single comparison on `post_id` in practice — one column, one index, no ambiguity.\n\n**With ranking on, the cursor moves.** It no longer points at a timestamp but at an offset into the frozen ranked list for this session. Same principle: the cursor names a position in an immutable snapshot rather than a count into a list that is still changing."
+    },
+    {
+      "key": "architecture",
+      "title": "12. Architecture, and where it bends under load",
+      "content": "The assembled system: clients → gateway → feed service, which reads the precomputed feed store and, in parallel, pulls wide-account timelines; a ranking service scores the merged candidates; a hydration step turns ids into posts. On the write side, `POST /posts` writes the post, publishes an event, and returns; fan-out workers consume the event, check the wide-fanout flag, and either push to followers or stop.\n\nThe Evolution tab walks this out stage by stage — do not skip to the final picture, because the argument *is* the sequence.\n\n**The pressure points, in the order they appear:**\n\n- **Feed store memory (3.6 TB).** Capped lists, ids not bodies, and a cap of 500 entries. If a user scrolls past 500, fall back to a pull-and-merge for the deep tail; almost nobody does, so the rare slow path is the right place to put the cost.\n- **Fan-out queue lag.** This is your most important metric, more than CPU or memory. Partition the queue by author so one hot author's backlog cannot block another's, and keep a separate lower-priority queue for large-but-not-wide accounts so a 90,000-follower burst does not delay ordinary posts.\n- **Hydration fan-in.** 20 ids per feed open × 35,000/s = 700,000 post lookups/s. This is a pure cache workload with enormous sharing: one viral post is one cache entry read a million times.\n- **Sharding.** Feed entries shard by `user_id` — every feed read is single-shard. Posts shard by `post_id`. Follows shard by `follower_id` for the read path, with the reverse index maintained separately for fan-out, which is the one place you accept denormalisation."
+    },
+    {
+      "key": "failure",
+      "title": "13. Failure handling",
+      "content": "- **Feed store (Redis) down for a user's shard.** Fail over to pull: fetch the timelines of the accounts they follow and merge live. Slower and more expensive, but the feed still loads. This is only survivable if the post store has the headroom to absorb it — otherwise you have converted a cache outage into a product outage. Budget for a partial fallback, not a full one.\n- **Fan-out workers backed up.** Feeds go stale rather than wrong. Shed load in a defined order: delay wide-account work first (it is pulled anyway), then low-engagement followers, and always keep the author's own feed inline. Alert on queue lag, not on worker CPU — CPU looks fine while lag climbs.\n- **A post fails to fan out to some followers.** Do not retry into inconsistency. Fan-out inserts must be idempotent (the feed entry is keyed by post id, so a duplicate insert is a no-op), which makes at-least-once delivery from the queue safe and turns partial failure into \"retry the batch\".\n- **Ranking service down.** Serve chronological. Degraded, obviously correct, and infinitely better than a 500. Every ranked system needs this switch, and it should be exercised, not theoretical.\n- **A celebrity posts during a fan-out backlog.** With the hybrid in place this is a non-event — the post is not fanned out at all. That is the clearest evidence the hybrid was the right call: the worst-case write no longer exists.\n- **Unfollow.** Do not scrub the unfollowed author's posts out of 200 precomputed feeds. Filter at read time against the follow set, which you already loaded. The alternative is a second write storm triggered by a click."
+    },
+    {
+      "key": "tradeoffs",
+      "title": "14. Trade-offs to state explicitly",
+      "content": "- **Push vs pull vs hybrid** — the central one. Push optimises the read path and punishes popular authors; pull optimises the write path and punishes active readers; hybrid pays a small read-time merge to avoid both cliffs, at the cost of two code paths and a tuned threshold that can be set wrong.\n- **The threshold value.** Lower means less fan-out write volume and a heavier read-time merge; higher means the reverse. There is no analytically correct value, and saying so is a strength, not a gap.\n- **Chronological vs ranked.** Ranking improves what people see and costs you ~30× the candidate retrieval, a two-stage scoring tier, and the loss of naturally stable pagination.\n- **Feed entry size.** Ids only keeps the feed store at 3.6 TB and forces a hydration round trip. Denormalising post bodies into the feed makes reads a single call and multiplies storage by ~40× — and means editing a post requires rewriting it in every follower's feed.\n- **Freshness vs cost.** A few seconds of propagation delay is what buys you the entire asynchronous fan-out design. Insisting on instant delivery forces synchronous fan-out and reintroduces every problem the queue solved.\n- **Cursor vs offset.** Cursors are correct on a shifting list and cheap at depth, but they cannot jump to \"page 47\" — a limitation nobody has ever complained about in a feed."
+    },
+    {
+      "key": "final",
+      "title": "15. Final architecture",
+      "content": "Clients → API gateway → feed service. On read, the feed service issues one `LRANGE` against the precomputed feed store (sharded by `user_id`) and, in parallel, pulls the recent timelines of the handful of wide accounts the user follows. Those candidates go to a two-stage ranker; the top 20 are hydrated from the post cache and returned with a cursor. On write, `POST /posts` persists the post and publishes an event; fan-out workers check the wide-fanout flag and push to followers' feeds — or, for accounts above 100,000 followers, deliberately do nothing.\n\nEvery component is there because a number put pressure on something: 35,000 reads/s justified precomputing the feed; 100 billion daily inserts from 0.03% of posts justified the hybrid; 1,700 posts/s sharing a millisecond justified the `post_id` tiebreak in the cursor; 21 million scorings/s justified two-stage ranking.\n\nThe sentence to be able to say at the end: *\"Push, because reads outnumber writes twenty to one — except for the few thousand accounts where push would cost a hundred million writes for one post, which we pull instead and merge at read time.\"* That is the whole design in one line, and it is the line the interview is listening for."
+    }
+  ],
+  "estimation": {
+    "assumptions": [
+      "300M daily active users",
+      "0.5 posts per user per day → 150M posts/day",
+      "10 feed opens per user per day → 3B feed reads/day (≈20:1 read:write)",
+      "Average user follows 200 accounts; ordinary accounts average ~167 followers",
+      "~5,000 accounts above the 100,000-follower threshold, averaging 2M followers",
+      "~1 KB stored per post; 500 feed entries kept per user at ~24 bytes each",
+      "3× peak factor"
+    ],
+    "calculations": [
+      {
+        "label": "Posts/s (average)",
+        "value": "~1,700/s",
+        "working": "150,000,000 / 86,400 = 1,736"
+      },
+      {
+        "label": "Feed reads/s (average / peak)",
+        "value": "~35,000/s, peak ~105,000/s",
+        "working": "3,000,000,000 / 86,400 = 34,722; × 3 = 104,166"
+      },
+      {
+        "label": "Follow edges in the graph",
+        "value": "~60 billion",
+        "working": "300,000,000 users × 200 follows"
+      },
+      {
+        "label": "Fan-out inserts/day — ordinary accounts",
+        "value": "~25 billion/day (~290,000/s)",
+        "working": "150,000,000 posts × 167 followers = 2.5e10; / 86,400 = 289,000/s"
+      },
+      {
+        "label": "Fan-out inserts/day — wide accounts",
+        "value": "~100 billion/day (~1.16M/s)",
+        "working": "50,000 posts × 2,000,000 followers = 1.0e11; / 86,400 = 1,157,000/s"
+      },
+      {
+        "label": "Share of fan-out from 0.03% of posts",
+        "value": "~80%",
+        "working": "1.0e11 / (1.0e11 + 2.5e10) = 0.80 — the case for the hybrid"
+      },
+      {
+        "label": "One 30M-follower post, pure push",
+        "value": "~100 seconds of the whole fan-out fleet",
+        "working": "30,000,000 inserts / 300,000 inserts per second"
+      },
+      {
+        "label": "Feed store size",
+        "value": "~3.6 TB",
+        "working": "500 entries × 24 B = 12 KB/user × 300,000,000 = 3.6e12 B (~56 nodes at 64 GB, ~115 with replicas)"
+      },
+      {
+        "label": "Post storage",
+        "value": "~150 GB/day, ~55 TB/year",
+        "working": "150,000,000 × 1 KB = 150 GB; × 365 = 54,750 GB"
+      },
+      {
+        "label": "Candidate scorings/s for ranking",
+        "value": "~21 million/s",
+        "working": "35,000 feed reads/s × 600 candidates = 2.1e7; at 2 µs each = 42 core-seconds per second"
+      }
+    ]
+  },
+  "api": [
+    {
+      "method": "POST",
+      "path": "/api/v1/posts",
+      "request": "{ \"body\": \"…\", \"mediaIds\": [], \"replyTo\": null }",
+      "response": "201 { \"postId\": \"1729…\", \"createdAt\": \"…\" }",
+      "notes": "Returns as soon as the post is durable and the author's own feed is updated. Fan-out to followers happens asynchronously. Accepts an Idempotency-Key so a retried publish does not double-post."
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/feed?limit=20&cursor=…",
+      "request": "—",
+      "response": "200 { \"items\": [ { \"postId\": \"…\", \"author\": {…}, \"body\": \"…\" } ], \"nextCursor\": \"eyJ0cyI6…\" }",
+      "notes": "The hot path. Cursor is an opaque base64 of (created_at, post_id), or of a position in the frozen ranked list when ranking is on. Never an offset. Omitting the cursor returns the head of the feed."
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/users/{userId}/posts?limit=50&cursor=…",
+      "request": "—",
+      "response": "200 { \"items\": [ … ], \"nextCursor\": \"…\" }",
+      "notes": "An author's own timeline. This is the endpoint the feed service calls internally to pull wide accounts at read time, so it must be fast and heavily cached — a celebrity's first page is read by millions and is a single cache entry."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/users/{userId}/follow",
+      "request": "—",
+      "response": "202 { \"status\": \"accepted\" }",
+      "notes": "202, not 201: the follow edge is written synchronously but backfilling the follower's feed with the new author's recent posts is queued. Following a wide account queues nothing at all — it will be pulled at read time."
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/v1/users/{userId}/follow",
+      "request": "—",
+      "response": "204",
+      "notes": "Removes the edge only. Does NOT scrub the author's posts from the follower's precomputed feed — those are filtered at read time against the follow set. Scrubbing would be a write storm triggered by a single click."
+    }
+  ],
+  "dataModel": [
+    {
+      "name": "posts",
+      "fields": [
+        {
+          "name": "post_id",
+          "type": "BIGINT PRIMARY KEY",
+          "notes": "Snowflake-style: timestamp high bits, then shard, then sequence. Sorting by id is sorting by time, which is what makes the cursor a single comparison."
+        },
+        {
+          "name": "author_id",
+          "type": "BIGINT NOT NULL",
+          "notes": "Shard key for the author-timeline read path"
+        },
+        {
+          "name": "body",
+          "type": "TEXT",
+          "notes": "~1 KB typical including metadata"
+        },
+        {
+          "name": "media_ids",
+          "type": "BIGINT[]",
+          "notes": "Pointers into object storage; never inlined"
+        },
+        {
+          "name": "created_at",
+          "type": "TIMESTAMP NOT NULL",
+          "notes": "Redundant with post_id, kept for human queries and analytics"
+        }
+      ],
+      "indexes": [
+        "PRIMARY KEY (post_id)",
+        "INDEX (author_id, post_id DESC) — the author timeline, and the pull path for wide accounts"
+      ]
+    },
+    {
+      "name": "follows",
+      "fields": [
+        {
+          "name": "follower_id",
+          "type": "BIGINT",
+          "notes": "The person doing the following"
+        },
+        {
+          "name": "followee_id",
+          "type": "BIGINT",
+          "notes": "The person being followed"
+        },
+        {
+          "name": "created_at",
+          "type": "TIMESTAMP",
+          "notes": "Used to decide how far back to backfill on a new follow"
+        }
+      ],
+      "indexes": [
+        "PRIMARY KEY (follower_id, followee_id) — 'who do I follow?', the read path",
+        "INDEX (followee_id, follower_id) — 'who must I fan out to?', the write path. Without this the fan-out worker scans."
+      ]
+    },
+    {
+      "name": "feed_entries (Redis, one capped list per user)",
+      "fields": [
+        {
+          "name": "key",
+          "type": "feed:{user_id}",
+          "notes": "Shard key is user_id, so every feed read is single-shard"
+        },
+        {
+          "name": "post_id",
+          "type": "BIGINT",
+          "notes": "Ids only. Bodies here would turn 3.6 TB into ~140 TB."
+        },
+        {
+          "name": "author_id",
+          "type": "BIGINT",
+          "notes": "Lets read-time filtering drop unfollowed authors without a second lookup"
+        },
+        {
+          "name": "score",
+          "type": "FLOAT",
+          "notes": "Precomputed cheap score; the sorted-set rank when ranking is on"
+        }
+      ],
+      "indexes": [
+        "Capped at 500 entries per user — LTRIM on every insert",
+        "Entry keyed by post_id so a duplicate fan-out insert is a no-op (makes at-least-once queue delivery safe)"
+      ]
+    },
+    {
+      "name": "author_stats",
+      "fields": [
+        {
+          "name": "user_id",
+          "type": "BIGINT PRIMARY KEY",
+          "notes": ""
+        },
+        {
+          "name": "follower_count",
+          "type": "BIGINT",
+          "notes": "Maintained asynchronously; approximate is fine"
+        },
+        {
+          "name": "wide_fanout",
+          "type": "BOOLEAN",
+          "notes": "follower_count > 100,000. Read by the fan-out worker on every post and by the feed service on every read — must be a single cheap lookup, so it is cached in-process with a short TTL."
+        },
+        {
+          "name": "quality_score",
+          "type": "FLOAT",
+          "notes": "Precomputed offline; a stage-one ranking feature that costs nothing at read time"
+        }
+      ],
+      "indexes": [
+        "PRIMARY KEY (user_id)",
+        "INDEX (wide_fanout) WHERE wide_fanout — the small set the read path may need to pull"
+      ]
+    }
+  ],
+  "evolution": [
+    {
+      "stage": "Stage 1 — 10,000 users",
+      "problem": "Nothing is broken. One server and one database, and the feed is a single SQL query. Building anything more at this size is a mistake you pay for every day.",
+      "change": "One app server, one database. The feed is computed on read: SELECT … WHERE author_id IN (followees) ORDER BY post_id DESC LIMIT 20.",
+      "why": "With 10,000 users and 200 follows each, that IN-list query over an indexed (author_id, post_id) is a few milliseconds. Fan-out on read is not a compromise here — it is the correct design, it is always fresh, and there is nothing to invalidate. Start here and let the numbers force each change.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "client",
+            "label": "Clients",
+            "type": "client",
+            "x": 120,
+            "y": 300
+          },
+          {
+            "id": "app",
+            "label": "App server",
+            "type": "server",
+            "x": 500,
+            "y": 300,
+            "note": "Posts, follows and the feed query all in one process."
+          },
+          {
+            "id": "db",
+            "label": "Database",
+            "type": "db",
+            "x": 880,
+            "y": 180,
+            "note": "posts + follows. The feed is one IN-list query with an ORDER BY."
+          },
+          {
+            "id": "media",
+            "label": "Media storage",
+            "type": "storage",
+            "x": 880,
+            "y": 420,
+            "note": "Images and video live here from day one — the database stores pointers, never bytes."
+          }
+        ],
+        "edges": [
+          {
+            "from": "client",
+            "to": "app"
+          },
+          {
+            "from": "app",
+            "to": "db"
+          },
+          {
+            "from": "app",
+            "to": "media",
+            "label": "media pointers",
+            "dashed": true
+          }
+        ]
+      }
+    },
+    {
+      "stage": "Stage 2 — 500,000 users",
+      "problem": "The single app server is the capacity ceiling and a single point of failure — every deploy drops live connections. Meanwhile the feed query has become the database's dominant cost: at ~600 feed opens/s it is sorting posts from 200 authors on every one, and the primary sits at 85% CPU with almost all of it in sort buffers.",
+      "change": "Load balancer with stateless app instances, and a read replica that absorbs the feed query while the primary handles writes.",
+      "why": "Availability is the first driver: two instances behind a balancer give rolling deploys and survive a crash. The replica is the cheap half of the fix — feed reads tolerate a second of replication lag without anyone noticing, and moving them off the primary drops write latency immediately. Note what this does NOT fix: the feed is still a 200-way sort per read, so the cost per read is unchanged. We have bought headroom, not a better algorithm.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "client",
+            "label": "Clients",
+            "type": "client",
+            "x": 100,
+            "y": 300
+          },
+          {
+            "id": "lb",
+            "label": "Load balancer",
+            "type": "lb",
+            "x": 360,
+            "y": 300,
+            "note": "Health checks pull a dead instance in seconds."
+          },
+          {
+            "id": "app1",
+            "label": "App 1",
+            "type": "server",
+            "x": 620,
+            "y": 180
+          },
+          {
+            "id": "app2",
+            "label": "App 2",
+            "type": "server",
+            "x": 620,
+            "y": 420
+          },
+          {
+            "id": "primary",
+            "label": "DB primary",
+            "type": "db",
+            "x": 880,
+            "y": 180,
+            "note": "Writes only: posts and follow edges."
+          },
+          {
+            "id": "replica",
+            "label": "Read replica",
+            "type": "replica",
+            "x": 880,
+            "y": 420,
+            "note": "Serves the feed query. A second of lag is invisible in a feed."
+          }
+        ],
+        "edges": [
+          {
+            "from": "client",
+            "to": "lb"
+          },
+          {
+            "from": "lb",
+            "to": "app1"
+          },
+          {
+            "from": "lb",
+            "to": "app2"
+          },
+          {
+            "from": "app1",
+            "to": "primary",
+            "label": "writes"
+          },
+          {
+            "from": "app2",
+            "to": "primary",
+            "label": "writes"
+          },
+          {
+            "from": "app1",
+            "to": "replica",
+            "label": "feed reads"
+          },
+          {
+            "from": "app2",
+            "to": "replica",
+            "label": "feed reads"
+          },
+          {
+            "from": "primary",
+            "to": "replica",
+            "label": "replication"
+          }
+        ]
+      }
+    },
+    {
+      "stage": "Stage 3 — 10M users, ~1,200 feed reads/s",
+      "problem": "Replicas stopped helping. Every feed open still scatters across 200 author timelines and merges them, so read cost scales with following — and average following grew from 80 to 200, making each read 2.5× more expensive while traffic also grew. Feed p99 is 900 ms, and adding replicas no longer moves it because the p99 is set by the slowest of 200 parallel fetches, not by aggregate capacity.",
+      "change": "Fan-out on write. A queue and a worker fleet precompute each user's feed as a capped Redis list; reading a feed becomes a single LRANGE.",
+      "why": "Reads outnumber writes 20:1, so move the work to the write side. One post costs ~167 inserts; one feed read costs one round trip instead of 200. p99 falls from 900 ms to single-digit milliseconds, and it stops depending on how many accounts a user follows. The price is a new failure mode — feeds can now be stale — and a 3.6 TB cache tier to operate. That is the right trade at a 20:1 ratio, and it would be the wrong trade at 1:1.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "client",
+            "label": "Clients",
+            "type": "client",
+            "x": 90,
+            "y": 300
+          },
+          {
+            "id": "lb",
+            "label": "Load balancer",
+            "type": "lb",
+            "x": 350,
+            "y": 300
+          },
+          {
+            "id": "app",
+            "label": "Feed service",
+            "type": "server",
+            "x": 610,
+            "y": 300,
+            "note": "Read path is now one LRANGE plus hydration."
+          },
+          {
+            "id": "feedstore",
+            "label": "Feed store (Redis)",
+            "type": "cache",
+            "x": 870,
+            "y": 140,
+            "note": "One capped list of post ids per user, sharded by user_id.",
+            "why": {
+              "without": "Every feed open scatters to 200 author timelines and merges them; p99 is set by the slowest of 200 parallel fetches and grows as users follow more accounts.",
+              "with": "The feed is already assembled. A read is one round trip whose cost is independent of how many accounts the user follows.",
+              "conclusion": "At a 20:1 read:write ratio, precomputing on the write side is 20× leverage — you pay ~167 inserts once to make millions of reads trivial."
+            }
+          },
+          {
+            "id": "db",
+            "label": "Posts + follows DB",
+            "type": "db",
+            "x": 870,
+            "y": 300
+          },
+          {
+            "id": "queue",
+            "label": "post_created queue",
+            "type": "queue",
+            "x": 610,
+            "y": 480,
+            "note": "Partitioned by author so one busy author cannot block another."
+          },
+          {
+            "id": "worker",
+            "label": "Fan-out workers",
+            "type": "worker",
+            "x": 870,
+            "y": 480,
+            "note": "Read the follower list, pipeline batched inserts into the feed store."
+          }
+        ],
+        "edges": [
+          {
+            "from": "client",
+            "to": "lb"
+          },
+          {
+            "from": "lb",
+            "to": "app"
+          },
+          {
+            "from": "app",
+            "to": "feedstore",
+            "label": "LRANGE"
+          },
+          {
+            "from": "app",
+            "to": "db",
+            "label": "write post + hydrate"
+          },
+          {
+            "from": "app",
+            "to": "queue",
+            "label": "post_created",
+            "dashed": true
+          },
+          {
+            "from": "queue",
+            "to": "worker"
+          },
+          {
+            "from": "worker",
+            "to": "db",
+            "label": "follower list",
+            "dashed": true
+          },
+          {
+            "from": "worker",
+            "to": "feedstore",
+            "label": "fan-out inserts"
+          }
+        ]
+      }
+    },
+    {
+      "stage": "Stage 4 — 100M users, and one account with 30M followers",
+      "problem": "An account with 30 million followers posted. That single POST became 30,000,000 inserts, and the fan-out fleet — sized for the steady ~300,000 inserts/s — spent 100 seconds doing nothing else. Every ordinary user's post sat behind it in the same queue, so people with four followers watched their posts arrive two minutes late. The p99 that broke was not the celebrity's; it was everyone else's.",
+      "change": "Hybrid fan-out. Accounts above 100,000 followers are excluded from push entirely; the feed service pulls their timelines at read time and merges them with the precomputed feed.",
+      "why": "Follower counts are power-law distributed, so the average (167) tells you nothing about the tail (30M). ~5,000 accounts generate ~100 billion of the ~125 billion daily fan-out inserts — an 80% cut for a rule that touches 0.002% of accounts. The read-time merge is cheap because it is bounded by the number of WIDE accounts a user follows (typically 0–5), not by their total following, so it does not reintroduce pull's scaling problem. The 100,000 threshold is tuned against fan-out queue lag and feed read p99, not derived — set it too low and you have rebuilt pull; too high and a 90,000-follower burst still stalls the fleet.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "client",
+            "label": "Clients",
+            "type": "client",
+            "x": 80,
+            "y": 300
+          },
+          {
+            "id": "lb",
+            "label": "Gateway / LB",
+            "type": "lb",
+            "x": 330,
+            "y": 300
+          },
+          {
+            "id": "app",
+            "label": "Feed service",
+            "type": "server",
+            "x": 580,
+            "y": 300,
+            "note": "Reads the pushed feed and pulls wide accounts in parallel, then merges.",
+            "why": {
+              "without": "Pure push: a 30M-follower post is 30M inserts and occupies the entire fan-out fleet for ~100 seconds, delaying every other user's post. Pure pull: every read scatters to 200 timelines and the tail latency is set by the slowest of them.",
+              "with": "Push covers 99.97% of posts and keeps the read to one lookup; the few wide accounts are pulled at read time, adding 0–5 extra fetches bounded by wide-accounts-followed rather than total following.",
+              "conclusion": "Apply each strategy where it wins. The cost is two code paths and a threshold you must tune against real metrics."
+            }
+          },
+          {
+            "id": "feedstore",
+            "label": "Pushed feed store",
+            "type": "cache",
+            "x": 830,
+            "y": 140
+          },
+          {
+            "id": "celeb",
+            "label": "Wide-account timelines",
+            "type": "cache",
+            "x": 830,
+            "y": 300,
+            "note": "A celebrity's first page is one cache entry read by millions — the cheapest object in the system."
+          },
+          {
+            "id": "db",
+            "label": "Posts + follows DB",
+            "type": "db",
+            "x": 330,
+            "y": 480
+          },
+          {
+            "id": "queue",
+            "label": "post_created queue",
+            "type": "queue",
+            "x": 580,
+            "y": 480
+          },
+          {
+            "id": "worker",
+            "label": "Fan-out workers",
+            "type": "worker",
+            "x": 830,
+            "y": 480,
+            "note": "Checks author_stats.wide_fanout first. Above the threshold it writes nothing at all."
+          }
+        ],
+        "edges": [
+          {
+            "from": "client",
+            "to": "lb"
+          },
+          {
+            "from": "lb",
+            "to": "app"
+          },
+          {
+            "from": "app",
+            "to": "feedstore",
+            "label": "pushed feed"
+          },
+          {
+            "from": "app",
+            "to": "celeb",
+            "label": "pull + merge"
+          },
+          {
+            "from": "app",
+            "to": "db",
+            "label": "write post"
+          },
+          {
+            "from": "app",
+            "to": "queue",
+            "label": "post_created",
+            "dashed": true
+          },
+          {
+            "from": "queue",
+            "to": "worker"
+          },
+          {
+            "from": "worker",
+            "to": "db",
+            "label": "followers + wide flag",
+            "dashed": true
+          },
+          {
+            "from": "worker",
+            "to": "feedstore",
+            "label": "push (ordinary only)"
+          }
+        ]
+      }
+    },
+    {
+      "stage": "Stage 5 — 300M users, ranked and global",
+      "problem": "Two things gave way at once. Average following grew from 80 to 200, and a strictly chronological merge is dominated by whoever posts most — the accounts users actually opened the app for were falling off page one, and session length fell with it. Separately, the feed store lives in one region, so users on other continents pay 150 ms of network round trip on a 200 ms budget before the service has done anything.",
+      "change": "A two-stage ranking service in front of the merge, and region-local replicas of the feed store with the ranking tier deployed alongside them.",
+      "why": "Ranking forces you to retrieve far more candidates than you display — ~600 to show 20 — which is 21 million scorings/s. That is affordable only in two stages: a cheap scorer over all candidates using in-memory features, then the expensive model over the surviving ~100. It also breaks naive pagination, because scores move between pages, so the ranked list is frozen per session and the cursor walks that snapshot. Regionally, the feed store is a cache of derived data, so replicating it per region costs consistency you were never relying on — a feed already tolerates seconds of staleness, and 150 ms of round trip is the largest single number left in the budget.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "client",
+            "label": "Clients (global)",
+            "type": "client",
+            "x": 80,
+            "y": 300
+          },
+          {
+            "id": "gw",
+            "label": "Regional gateway",
+            "type": "cdn",
+            "x": 340,
+            "y": 300,
+            "note": "GeoDNS routes each user to the nearest region."
+          },
+          {
+            "id": "app",
+            "label": "Feed service",
+            "type": "server",
+            "x": 600,
+            "y": 300
+          },
+          {
+            "id": "ranker",
+            "label": "Ranking service",
+            "type": "server",
+            "x": 600,
+            "y": 120,
+            "note": "Stage 1 scores ~600 candidates cheaply; stage 2 re-ranks the top ~100.",
+            "why": {
+              "without": "Chronological order gives the feed to whoever posts most often, and the ranked list cannot be frozen, so page 2 duplicates and skips as scores move.",
+              "with": "Candidates are scored and the ordered id list is pinned to the session, so pagination walks an immutable snapshot.",
+              "conclusion": "Ranking buys relevance and costs ~30× the candidate retrieval plus a two-stage scoring tier — the two-stage shape is forced by arithmetic, not fashion."
+            }
+          },
+          {
+            "id": "feedstore",
+            "label": "Feed store (regional)",
+            "type": "cache",
+            "x": 860,
+            "y": 180
+          },
+          {
+            "id": "celeb",
+            "label": "Wide-account timelines",
+            "type": "cache",
+            "x": 860,
+            "y": 420
+          },
+          {
+            "id": "queue",
+            "label": "post_created queue",
+            "type": "queue",
+            "x": 80,
+            "y": 480
+          },
+          {
+            "id": "worker",
+            "label": "Fan-out workers",
+            "type": "worker",
+            "x": 340,
+            "y": 480,
+            "note": "Write once, replicate the feed store outward to each region."
+          }
+        ],
+        "edges": [
+          {
+            "from": "client",
+            "to": "gw"
+          },
+          {
+            "from": "gw",
+            "to": "app"
+          },
+          {
+            "from": "app",
+            "to": "ranker",
+            "label": "candidates"
+          },
+          {
+            "from": "ranker",
+            "to": "feedstore",
+            "label": "pushed candidates"
+          },
+          {
+            "from": "ranker",
+            "to": "celeb",
+            "label": "pulled candidates"
+          },
+          {
+            "from": "app",
+            "to": "queue",
+            "label": "post_created",
+            "dashed": true
+          },
+          {
+            "from": "queue",
+            "to": "worker"
+          },
+          {
+            "from": "worker",
+            "to": "feedstore",
+            "label": "fan-out + regional replication"
+          }
+        ]
+      }
+    }
+  ],
+  "tradeoffs": [
+    {
+      "option": "Fan-out on write (push)",
+      "pros": [
+        "A feed read is one lookup — cost is independent of how many accounts the user follows",
+        "Read p99 in single-digit milliseconds, with no merge and no tail-latency amplification",
+        "Ranking features can be precomputed into the feed entry at write time"
+      ],
+      "cons": [
+        "One post by a 30M-follower account is 30M inserts — ~100 seconds of the whole fan-out fleet, during which everyone else's posts are late",
+        "A 3.6 TB feed store to size, shard and operate, with a new class of staleness bugs",
+        "Wasted work: you write into the feeds of inactive users who will never read them"
+      ]
+    },
+    {
+      "option": "Fan-out on read (pull)",
+      "pros": [
+        "Writes are trivial — one row insert regardless of follower count, so no write storm is possible",
+        "Always fresh by construction; no feed store to invalidate on unfollow or delete",
+        "No precomputed storage at all, and no wasted work for users who never open the app"
+      ],
+      "cons": [
+        "Every feed open is a 200-way scatter-gather: ~7 million timeline reads/s at this scale",
+        "p99 is set by the slowest of 200 parallel fetches — a 1-in-1,000 slow read makes ~18% of feed loads slow",
+        "Cost grows with how many accounts you follow, so your most engaged users get the worst experience"
+      ]
+    },
+    {
+      "option": "Hybrid (push below the threshold, pull above it)",
+      "pros": [
+        "Removes ~80% of fan-out write volume with a rule affecting ~0.002% of accounts",
+        "Read-time merge is bounded by wide-accounts-followed (0–5), not total following, so pull's scaling problem does not return",
+        "The worst-case write — a celebrity post — simply stops existing"
+      ],
+      "cons": [
+        "Two code paths for the same feature, and every future change must be reasoned about twice",
+        "The threshold is tuned, not derived; set wrong in either direction it degrades into one of the pure designs",
+        "Accounts crossing the threshold need de-duplication on the way up and a backfill on the way down"
+      ]
+    },
+    {
+      "option": "Chronological ordering",
+      "pros": [
+        "Predictable and explainable — users can reason about why they saw something",
+        "Pagination is naturally stable, because the sort key never changes",
+        "No candidate over-retrieval and no scoring tier: retrieve 20, return 20"
+      ],
+      "cons": [
+        "Whoever posts most often wins, so high-volume accounts crowd out the ones the user actually follows for",
+        "No way to surface a good post from a low-frequency account",
+        "Engagement falls as average following grows, which is exactly when the product is succeeding"
+      ]
+    },
+    {
+      "option": "Scored ranking",
+      "pros": [
+        "Surfaces relevant posts regardless of posting frequency",
+        "Degrades gracefully — if the ranker fails you fall back to chronological",
+        "Lets you trade freshness for quality deliberately rather than by accident"
+      ],
+      "cons": [
+        "Forces you to retrieve ~600 candidates to display 20 — 21 million scorings/s, and 97% of that work is discarded",
+        "Requires two-stage scoring plus a frozen per-session list, or pagination duplicates and skips as scores move",
+        "The feed becomes hard to debug: 'why did I see this?' has no short answer"
+      ]
+    }
+  ],
+  "interviewStages": [
+    {
+      "key": "requirements",
+      "prompt": "Before you draw anything: what do you need to know about this feed?",
+      "hints": [
+        "One property of the follow graph changes the architecture more than anything else",
+        "Ranked versus chronological is not a UI question — it changes what you have to store"
+      ],
+      "modelAnswer": [
+        "Maximum follower count — if it is capped at a few thousand, most of this design is unnecessary",
+        "Ranked or chronological, because ranking forces you to keep far more candidates than you display",
+        "Freshness target: 'a few seconds' buys the entire asynchronous design; 'instant' destroys it",
+        "Read:write ratio — 20:1 here, which is the justification for doing work on the write side",
+        "Out of scope: comments, likes, DMs, media transcoding — name them rather than ignore them"
+      ]
+    },
+    {
+      "key": "estimation",
+      "prompt": "300M DAU, 0.5 posts/user/day, 10 feed opens/user/day, average 200 follows. Work out the traffic and the fan-out cost.",
+      "hints": [
+        "86,400 seconds in a day",
+        "The interesting number is not posts/s — it is posts/s multiplied by followers",
+        "Ask yourself what the follower distribution looks like, not just its average"
+      ],
+      "modelAnswer": [
+        "~1,700 posts/s, ~35,000 feed reads/s, peak ~105,000/s — a 20:1 ratio",
+        "60 billion follow edges: 300M × 200",
+        "Pure push: ~25 billion inserts/day from ordinary accounts (~290,000/s) plus ~100 billion/day from wide accounts (~1.16M/s)",
+        "So ~80% of all fan-out comes from ~0.03% of posts — state this before proposing a fix",
+        "Feed store: 500 entries × 24 B × 300M ≈ 3.6 TB, which is why you cap the list and store ids only"
+      ]
+    },
+    {
+      "key": "fanout",
+      "prompt": "Walk me through fan-out on write versus fan-out on read. Which do you pick?",
+      "hints": [
+        "Which side of the 20:1 ratio do you want to pay on?",
+        "What does each one's cost scale with — and whose experience does each one ruin?"
+      ],
+      "modelAnswer": [
+        "Push: work at write time, read is one lookup, cost per read independent of following — right for 20:1",
+        "Pull: work at read time, 200-way scatter-gather, p99 set by the slowest of 200 parallel fetches",
+        "Push scales badly with follower count; pull scales badly with following count",
+        "Pick push as the default, because reads outnumber writes 20:1 and that is where the leverage is",
+        "Then immediately name the case that breaks it, rather than waiting to be asked"
+      ]
+    },
+    {
+      "key": "celebrity",
+      "prompt": "An account with 30 million followers posts. What happens, and how do you fix it?",
+      "hints": [
+        "Do the multiplication out loud before proposing anything",
+        "Whose latency actually degrades — the celebrity's, or everyone else's?",
+        "You do not have to use the same strategy for every account"
+      ],
+      "modelAnswer": [
+        "30M inserts from one POST; at ~300,000 inserts/s of fleet capacity that is ~100 seconds of the entire fan-out tier",
+        "The damage is to everyone else — ordinary posts queue behind it and arrive minutes late",
+        "Fix: hybrid. Above a threshold, skip fan-out entirely and pull that author's timeline at read time",
+        "The merge stays cheap because it is bounded by wide-accounts-followed (0–5), not total following",
+        "~80% of fan-out volume disappears for a rule touching a few thousand accounts"
+      ]
+    },
+    {
+      "key": "threshold",
+      "prompt": "You said the threshold is 100,000 followers. Where does that number come from?",
+      "hints": [
+        "There are two costs moving in opposite directions as you slide it",
+        "It is fine — better, even — to say a number is empirical"
+      ],
+      "modelAnswer": [
+        "It is tuned, not derived — say so plainly rather than inventing a formula",
+        "Lower the threshold and fan-out write volume drops but the read-time merge widens toward pull",
+        "Raise it and reads stay cheap but a 90,000-follower burst still stalls the fan-out fleet",
+        "Tune against two metrics: fan-out queue lag (p99 post-to-feed delay) and feed read p99",
+        "100,000 is a defensible starting point: it separates ~5,000 accounts from 300M and cuts ~80% of fan-out",
+        "Handle crossings: de-duplicate by post id on promotion, backfill on demotion, re-evaluate at post time"
+      ]
+    },
+    {
+      "key": "pagination",
+      "prompt": "The user scrolls to page 2 while new posts are arriving. How do you paginate?",
+      "hints": [
+        "What does OFFSET 20 actually mean on a list that just grew at the head?",
+        "What happens at 1,700 posts/s when two posts share a timestamp?"
+      ],
+      "modelAnswer": [
+        "Not offset: the list shifts, so offset duplicates posts when items are added and skips them when items are removed",
+        "Cursor on (created_at, post_id), opaque to the client, with a strict < comparison",
+        "The post_id tiebreak is required — at 1,700 posts/s timestamps collide, and a timestamp-only cursor must either drop or repeat every tie",
+        "A time-sortable post_id collapses the comparison to one column",
+        "With ranking on, freeze the ranked id list per session and let the cursor index into that snapshot, because scores move between pages"
+      ]
+    },
+    {
+      "key": "failure",
+      "prompt": "The feed store loses a shard at peak. What does the user see?",
+      "hints": [
+        "Is there a slower path that is still correct?",
+        "Can the store behind it actually absorb the redirected load?"
+      ],
+      "modelAnswer": [
+        "Fall back to pull for the affected users: fetch followed timelines and merge live",
+        "Only viable if the post store has headroom — otherwise a cache outage becomes a product outage",
+        "Budget for a partial fallback: degrade to fewer candidates and chronological order rather than failing",
+        "Fan-out inserts are idempotent (keyed by post id), so rebuilding the shard from the queue is safe",
+        "Shed load in a defined order: wide-account work first, then low-engagement followers; never the author's own feed"
+      ]
+    }
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "architecture",
+      "question": "Under pure fan-out on write, an account with 30M followers posts once. With a fan-out fleet sustaining 300,000 inserts/s, how long does that single post occupy the fleet, and who is harmed?",
+      "options": [
+        "About 1 second, and only the celebrity's own followers are affected",
+        "About 100 seconds, and every other user's post queued behind it arrives minutes late",
+        "No time at all — fan-out is asynchronous, so it is free",
+        "About 100 seconds, but only the celebrity's feed is delayed"
+      ],
+      "answerIndex": 1,
+      "explanation": "30,000,000 ÷ 300,000 = 100 seconds of the entire fleet for one post. The important part is the second half: the queue is shared, so the latency hit lands on ordinary users whose posts sit behind it. Asynchronous does not mean free — it means the cost shows up as queue lag instead of request latency."
+    },
+    {
+      "id": "q2",
+      "type": "architecture",
+      "question": "Why does the hybrid model's read-time merge not simply reintroduce the cost of fan-out on read?",
+      "options": [
+        "Because celebrity timelines are cached, so the reads are free",
+        "Because the pull set is bounded by how many WIDE accounts a user follows (typically 0–5), not by their total following of 200",
+        "Because the merge happens on the client",
+        "Because wide accounts post less often than ordinary ones"
+      ],
+      "answerIndex": 1,
+      "explanation": "Pure pull is expensive because its cost grows with total following. The hybrid pulls only accounts above the threshold, and a user following 2,000 accounts still follows only a handful of celebrities — so the merge width stays flat as following grows. Caching those timelines helps too, but the bound on the pull set is the structural reason."
+    },
+    {
+      "id": "q3",
+      "type": "architecture",
+      "question": "Where does the 100,000-follower threshold come from?",
+      "options": [
+        "It is derived from the read:write ratio: 20 × 5,000",
+        "It is the point where the square root of the follower count equals the average following",
+        "It is empirical — a knob tuned against fan-out queue lag and feed read p99, since lowering it shifts cost to reads and raising it shifts cost to writes",
+        "It is fixed by Redis's maximum list length"
+      ],
+      "answerIndex": 2,
+      "explanation": "There is no clean derivation, and claiming one is worse than admitting there isn't. Two costs move in opposite directions as you slide the threshold: fan-out write volume and read-time merge width. You ship a plausible value, watch both metrics, and move it. Saying that clearly reads as experience, not as a gap in the answer."
+    },
+    {
+      "id": "q4",
+      "type": "architecture",
+      "question": "A client requests page 2 with ?offset=20 while five new posts have arrived at the top of the feed. What does the user see?",
+      "options": [
+        "Nothing unusual — offset pagination is stable",
+        "Five posts they already saw on page 1, repeated; and on a shrinking list they would silently skip posts instead",
+        "An error, because the offset is now out of range",
+        "The five new posts, correctly inserted at the top of page 2"
+      ],
+      "answerIndex": 1,
+      "explanation": "Offset counts positions in the list as it exists at request time. Five insertions at the head push the old items 16–20 down to 21–25, so they are served twice; a deletion or unfollow shifts the other way and posts vanish unseen. A cursor on (timestamp, post_id) names a point in the data instead of a count, so head insertions cannot move the boundary. The post_id tiebreak matters because at 1,700 posts/s timestamps collide."
+    }
+  ],
+  "related": [
+    "cache",
+    "sharding",
+    "message-queue",
+    "replication",
+    "consistent-hashing",
+    "cap-theorem"
+  ]
+}

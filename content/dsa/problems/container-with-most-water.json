@@ -29,14 +29,16 @@
   "bruteForce": {
     "idea": "Compute the area for every pair of lines.",
     "code": [
-      "int best = 0;",
-      "for (int i = 0; i < height.length; i++) {",
-      "    for (int j = i + 1; j < height.length; j++) {",
-      "        int area = (j - i) * Math.min(height[i], height[j]);",
-      "        best = Math.max(best, area);",
+      "public static int maxArea(int[] height) {",
+      "    int best = 0;",
+      "    for (int i = 0; i < height.length; i++) {",
+      "        for (int j = i + 1; j < height.length; j++) {   // every pair, including the hopeless ones",
+      "            int area = (j - i) * Math.min(height[i], height[j]);",
+      "            best = Math.max(best, area);",
+      "        }",
       "    }",
-      "}",
-      "return best;"
+      "    return best;",
+      "}"
     ],
     "complexity": {
       "time": "O(n^2)",

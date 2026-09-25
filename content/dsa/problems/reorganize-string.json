@@ -37,7 +37,14 @@
   "bruteForce": {
     "idea": "Backtrack over positions: at each position try every character that still has a count left and differs from the one just placed, recurse, and undo on failure.",
     "code": [
-      "boolean build(int[] counts, StringBuilder out, int n) {",
+      "public static String reorganizeString(String s) {",
+      "    int[] counts = new int[26];",
+      "    for (char c : s.toCharArray()) counts[c - 'a']++;",
+      "    StringBuilder out = new StringBuilder();",
+      "    return build(counts, out, s.length()) ? out.toString() : \"\";",
+      "}",
+      "",
+      "private static boolean build(int[] counts, StringBuilder out, int n) {",
       "    if (out.length() == n) return true;",
       "    char previous = out.length() == 0 ? 0 : out.charAt(out.length() - 1);",
       "    for (int c = 0; c < 26; c++) {",

@@ -1,0 +1,1075 @@
+{
+  "id": "ride-sharing",
+  "title": "Design a Ride-Hailing Service",
+  "difficulty": "advanced",
+  "estimatedMinutes": 45,
+  "summary": "Match passengers to nearby drivers in seconds, while every online driver reports its position every few seconds. The hard parts are indexing a two-dimensional space with a one-dimensional index, and keeping a firehose of location writes out of the database that owns the money.",
+  "steps": [
+    {
+      "key": "requirements",
+      "title": "1. Clarify the problem",
+      "content": "\"Design Uber\" is three systems in a trench coat. Narrow it before you draw anything:\n\n- Are we designing the **matching** problem (passenger ↔ driver), the **pricing** problem (surge), or the **navigation** problem (routing and ETAs)?\n- Is this one city or many? Does a trip ever cross a city boundary?\n- Are there ride types (pool, premium, XL), or one kind of car?\n- How fresh must a driver's position be on the passenger's map — one second, five seconds?\n- What happens when nobody accepts? Do we broadcast to several drivers at once, or offer sequentially?\n\nFor this walkthrough: **matching is the system**. Many cities, trips stay within one city, one ride type, positions refreshed every few seconds, and offers go to drivers sequentially with a short timeout. Pricing and turn-by-turn navigation are treated as services we call, not services we build.\n\nSay this out loud in an interview. Scoping to matching is not dodging the question — it is naming the part that actually has the interesting engineering in it."
+    },
+    {
+      "key": "functional",
+      "title": "2. Functional requirements",
+      "content": "- A driver goes online and streams their position while available.\n- A passenger requests a ride from a pickup point to a destination.\n- The system finds candidate drivers near the pickup point and offers the trip to one.\n- A driver accepts or declines; on decline or timeout, the offer moves to the next candidate.\n- Both sides see the other's live position while the trip is active.\n- The trip moves through a defined lifecycle: `requested → matched → accepted → in_progress → completed` (with `cancelled` reachable from several states).\n- On completion, the fare is computed and the trip is recorded permanently.\n\nExplicitly out of scope: surge pricing, driver payouts, in-app chat, scheduled rides."
+    },
+    {
+      "key": "nonfunctional",
+      "title": "3. Non-functional requirements",
+      "content": "- **Matching latency**: a passenger should see \"driver found\" within about 5 seconds. Beyond ten they assume the app is broken and request again, which doubles your load at exactly the wrong moment.\n- **Location freshness**: driver markers on the map should be no more than ~5 seconds stale. Stale positions make cars appear to teleport.\n- **Write volume**: location updates dominate everything else by roughly three orders of magnitude. This is the number that shapes the storage decisions.\n- **Durability of trips, not of positions**: losing one location ping is invisible. Losing the fact that a trip happened is a billing incident and possibly a legal one. These two kinds of data get two different stores.\n- **Consistency**: a driver must never be assigned two trips at once. That is a real mutual-exclusion requirement, not an eventual-consistency one.\n- **Availability**: matching being down in one city must not take matching down in another. Cities are naturally independent, which is a gift — take it.\n\nNotice the shape: extremely high write throughput on data we are allowed to lose, and modest write throughput on data we must never lose. Almost every decision below follows from that split."
+    },
+    {
+      "key": "estimation",
+      "title": "4. Back-of-the-envelope estimation",
+      "content": "**Rides.** 5M completed rides per day ÷ 86,400 s ≈ **58 rides/s** average. With a 3x evening peak, ≈ **175/s**. That is a small number. A single well-tuned database handles it without complaint.\n\n**Location updates.** 200,000 drivers online at peak, each reporting every 4 seconds: 200,000 ÷ 4 = **50,000 writes/s**. Compare with 58 bookings/s — the location stream is roughly **860x** the transactional load. That ratio is the whole design.\n\n**Location footprint.** A position is driver id (8 B) + lat (8 B) + lng (8 B) + bearing (4 B) + speed (4 B) + timestamp (8 B) ≈ 40 bytes, call it **~100 bytes** with key and structure overhead. We only keep the *latest* position per driver, so the working set is 200,000 × 100 B = **~20 MB**. Twenty megabytes. It fits in a fraction of one machine's RAM.\n\n**What persisting the stream would cost.** 50,000/s × 86,400 s = 4.32 billion pings/day × 100 B = **~432 GB/day**, ≈ **158 TB/year** — for data whose value expires in four seconds. This calculation is the argument. Say it out loud.\n\n**Trip storage.** 5M trips/day × ~1 KB per row = **~5 GB/day**, ≈ **1.8 TB/year**. Route polylines are larger and go to object storage, referenced by key. 1.8 TB/year of transactional data is comfortable for a sharded relational cluster and does not need anything exotic.\n\n**Candidates per search.** At geohash precision 6 a cell is roughly 1.2 km × 0.61 km ≈ 0.73 km². A dense city with a 400 km² service area therefore has ≈ 548 cells. With 8,000 drivers online in that city, that is **~15 drivers per cell**; searching the cell plus its eight neighbours gives **~130 candidates** — small enough to rank in memory in single-digit milliseconds.\n\n**Connections.** 200,000 drivers plus ~300,000 passengers with the app open ≈ **500,000 concurrent long-lived connections**. At a conservative 50,000 per gateway node that is **10 nodes**, and you would run 15 for headroom and rolling deploys."
+    },
+    {
+      "key": "api",
+      "title": "5. API design",
+      "content": "Two very different kinds of endpoint live here, and conflating them is a common mistake.\n\nThe **transactional** endpoints — request a ride, accept an offer, advance the trip state — are ordinary request/response calls. They are low-volume, they must be idempotent (a phone on a flaky connection will retry `accept`, and two accepts must not produce two trips), and they write to the durable store.\n\nThe **streaming** endpoints — driver position in, passenger map updates out — are not really a REST problem at all. A driver sending an HTTP POST every four seconds means a TCP handshake, a TLS handshake and a fresh set of headers for 40 bytes of payload; the overhead is an order of magnitude larger than the data. These go over the same long-lived socket the driver already holds open for receiving offers.\n\nSo: REST for the state machine, a persistent connection for the stream. The table below shows the REST surface; the socket protocol is described in step 12."
+    },
+    {
+      "key": "datamodel",
+      "title": "6. Data model",
+      "content": "The split from step 3 shows up here as two physically different stores.\n\n**Durable (relational, sharded by city).** `trips` is the system of record: who, whom, when, where, how much. `trip_events` is an append-only log of every state transition, which is what lets you reconstruct a disputed trip and what lets a crashed matcher figure out where it left off. `drivers` holds profile and vehicle data that changes rarely.\n\n**Ephemeral (in-memory, per region).** Driver positions and the geospatial index. No schema migration, no durability guarantee, no backup. If this store is wiped, every driver's next ping (within four seconds) rebuilds it. That is a property worth stating explicitly, because it is what makes it safe to treat this tier as disposable.\n\nThe one subtlety: `driver_status` (online / offering / on_trip) is *not* purely ephemeral. It participates in the mutual-exclusion requirement — a driver must not be offered two trips — so the authoritative version of \"this driver is committed to trip X\" lives in the durable store, with the in-memory copy as a fast filter."
+    },
+    {
+      "key": "geospatial",
+      "title": "7. Why \"find drivers near me\" is not a query a B-tree can answer",
+      "content": "Start with the naive query:\n\n```sql\nSELECT driver_id FROM drivers\nWHERE lat BETWEEN 37.76 AND 37.79\n  AND lng BETWEEN -122.43 AND -122.39\n  AND status = 'online';\n```\n\nPut an index on `lat` and an index on `lng`. Watch it not help.\n\nA B-tree is a **one-dimensional** structure: it sorts keys along a single line, and that is precisely why range scans are cheap. The index on `lat` can hand you every driver in a horizontal band across the entire planet — in a large city, tens of thousands of rows. The index on `lng` can hand you every driver in a vertical band, likewise tens of thousands. The database then has to intersect two huge sets to find the few dozen in the small rectangle where the bands cross. A composite index on `(lat, lng)` is no better: it sorts by latitude first, so the second column only narrows *within* one exact latitude, and floating-point latitudes are never equal.\n\n**Proximity is two-dimensional and an index is one-dimensional.** That is the actual problem, stated in one sentence, and stating it that way is what an interviewer is listening for.\n\nThe resolution is to stop trying to index two numbers and instead **reduce the two dimensions to one** before indexing. Two families of technique do this:\n\n- **Space-filling curves.** A Z-order (Morton) curve interleaves the bits of latitude and longitude — lat₀ lng₀ lat₁ lng₁ lat₂ lng₂ … — producing a single integer that threads through the plane so that points close on the curve are usually close in space. **Geohash** is exactly this, base-32 encoded into a string. S2 uses a Hilbert curve, which has better locality, projected onto a cube.\n- **Fixed cell decompositions.** H3 tiles the globe with hexagons at several resolutions and gives each one an id. Same effect: a 2-D position becomes a 1-D label.\n\nOnce a position is a string or an integer, the query changes character completely. \"Near this point\" becomes **\"shares this prefix\"**, and a prefix match on a sorted key is the single thing a B-tree is best at:\n\n```sql\nSELECT driver_id FROM drivers WHERE geohash LIKE '9q8yyz%';\n```\n\nThe longer the prefix, the smaller the cell. Precision 5 is about 4.9 km across, precision 6 about 1.2 km × 0.61 km, precision 7 about 153 m, precision 8 about 38 m × 19 m. Choosing the precision is choosing how many candidates a single lookup returns, and it is a tuning knob you should expect to be asked about: too coarse and you rank thousands of drivers, too fine and the nine-cell search below often comes back empty."
+    },
+    {
+      "key": "neighbours",
+      "title": "8. The edge case that makes it interesting: cell boundaries",
+      "content": "Here is where the elegant story breaks, and being the candidate who raises it unprompted is worth more than the rest of the step.\n\nA space-filling curve preserves locality **most** of the time. It cannot preserve it always — no continuous mapping from a plane to a line can. Concretely: two drivers standing on opposite pavements of the same street, **twelve metres apart**, can sit either side of a cell boundary and share **no prefix at all**. Their geohashes differ in the first character. The prefix query for one returns nothing about the other.\n\nWorse, it fails in exactly the situation you care about. Cell boundaries are uniformly distributed, so a random pickup point has a good chance of sitting near one; and for a pickup right on a boundary, roughly half the genuinely nearest drivers are invisible to a single-cell lookup.\n\n**The fix is to search the cell plus its eight neighbours.** Compute the geohash of the pickup point at your chosen precision, compute the eight adjacent cell ids (every geohash library has a `neighbours` function; the arithmetic is fiddly around the poles and the ±180° meridian, which is a good reason not to write it yourself), and union the results:\n\n```\ncells = [geohash(pickup, 6)] + neighbours(geohash(pickup, 6))   # 9 cells\ncandidates = union(redis.zrange(f\"geo:{c}\") for c in cells)\n```\n\nThis guarantees that any driver within the *inradius* of one cell is found, because a point at most one cell-width away cannot be more than one cell away in either axis. It costs nine key lookups instead of one — nine cheap in-memory reads instead of one, which is not a cost worth optimising away.\n\nTwo honest consequences to acknowledge:\n\n1. **The nine-cell region is a square, not a circle.** A driver in the far corner of a diagonal neighbour is farther away than one just outside the region on the axis. So the nine-cell search is a *candidate generator*, not an answer: you still compute the real distance for each candidate and filter. Never return geohash-cell membership to the user as \"nearby\".\n2. **Sparse areas return nothing.** At 4 a.m. in a suburb, nine precision-6 cells may contain zero drivers. The standard answer is to widen: retry at precision 5, then 4, expanding the radius until you have enough candidates or hit a maximum you are willing to make the passenger wait for.\n\nRedis's `GEOADD`/`GEOSEARCH` commands do all of this for you — they store a 52-bit geohash in a sorted set and handle the neighbour expansion internally. Using them is the right engineering answer. Being able to explain what they are doing underneath is the right interview answer."
+    },
+    {
+      "key": "firehose",
+      "title": "9. The location firehose, and why it must not touch the transactional database",
+      "content": "Look at the two numbers from the estimation step side by side:\n\n| | rate |\n|---|---|\n| Ride bookings | ~58/s (peak ~175/s) |\n| Driver location updates | ~50,000/s |\n\nThe location stream is roughly **860 times** the booking rate. Every active driver writes every four seconds whether or not anything is happening; the volume is a function of how many drivers are online, not of how much business you are doing.\n\n**Why this cannot live in the trips database.** Suppose `drivers` has `lat`, `lng`, `updated_at` and you run `UPDATE drivers SET lat=…, lng=… WHERE id=…` 50,000 times a second.\n\n- In an MVCC database like Postgres, an `UPDATE` does not modify a row in place — it writes a **new row version** and marks the old one dead. Fifty thousand dead tuples per second is 4.3 billion per day for the vacuum process to reclaim. Autovacuum falls behind, the table and its indexes bloat, and index scans that used to touch three pages start touching thirty.\n- Every one of those updates is **journalled**. 50,000/s of WAL for data that is worthless four seconds later, replicated to every read replica, eating the same replication bandwidth your trip writes need.\n- Every update takes a **row lock** and contends for buffer pool, checkpoints and I/O with the transactions that actually matter. The symptom in production is not \"locations are slow\" — it is that trip commits start timing out. The unimportant workload starves the important one.\n\n**Where it goes instead.** An in-memory store — Redis is the usual choice — holding exactly one entry per driver: the latest position, overwritten in place, with a TTL slightly longer than the ping interval so a driver who disappears ages out automatically.\n\nThis works because of a property worth naming: **we only ever need the most recent value.** The stream is not a log we replay, it is a set of cells we overwrite. That collapses 4.32 billion writes per day into a steady-state footprint of ~20 MB, and it is what makes the whole thing tractable.\n\n**Durability, honestly.** This store is not durable and should not be. If the node dies, every driver's next ping rebuilds the index within four seconds. Compare that with the alternative — persisting 158 TB/year of positions — and the trade is obvious. Two caveats a good candidate adds: (a) the *trip* still needs a route trace for billing and disputes, so during an active trip the positions are also appended to a stream and batched into object storage, which is a few hundred writes per second, not fifty thousand; (b) losing the index does briefly make drivers unmatched, so run it replicated and shard it per region so one failure is one city.\n\nIngest itself is worth separating too. Run a dedicated ingest service that terminates the driver sockets and writes to the location store, with no dependency on the trips database at all. Then a database incident does not stop the map from working, and a flood of drivers coming online cannot exhaust the connection pool the booking path needs."
+    },
+    {
+      "key": "matching",
+      "title": "10. Matching is a decision, not a lookup",
+      "content": "The nine-cell search gives you ~130 candidates. Choosing among them is a product decision with real, competing costs, and \"pick the closest one\" is the answer that scores worst.\n\n**Nearest by straight-line distance.** Trivial to compute from the data you already have. But straight-line distance is a poor proxy for how long the car takes to arrive: a driver 300 m away on the far side of a river, a motorway with no exit, or a one-way system may be eight minutes out, while one 900 m away on the same street is two. Passengers experience the ETA, not the metres.\n\n**Shortest ETA.** Route each candidate to the pickup point through the road graph and pick the smallest travel time. This is what the passenger actually wants. It costs a routing call per candidate — 130 of them per request, which at 175 requests/s peak is ~23,000 routing calls/s. That is a real service to build and pay for. The standard compromise: filter to the nearest ~10 by straight-line distance first, then route only those. You lose the occasional better match for a large reduction in cost.\n\n**Highest acceptance probability.** The subtle one. An offer that is declined costs the passenger the whole timeout — typically 10–15 seconds — before the next driver even hears about it. A driver with a 90% acceptance rate and a 5-minute ETA often produces a *faster actual pickup* than one with a 40% acceptance rate and a 3-minute ETA, because the expected number of rounds is lower. Modelling this means predicting acceptance from features like trip length, destination, time of day and the driver's recent behaviour, which means a model, a feature store and a feedback loop — a large amount of machinery.\n\n**Fleet-level objectives.** Everything above optimises a single request greedily. Assigning the nearest driver to each request as it arrives can strand a region: you hand the only car in a sparse area to a passenger who had three nearby options, and the next request there waits eight minutes. Batching requests over a short window (say two seconds) and solving an assignment problem over the batch measurably improves the system-wide average — at the cost of adding that window to every passenger's wait, and of a far harder system to reason about during an incident.\n\n**A defensible answer:** start with nearest-by-distance as a candidate filter, rank the top ten by ETA, and tie-break with acceptance rate. Say that batch assignment is where you would go next and name the two-second window as the cost. Showing you know the greedy choice is greedy — and choosing it anyway, with a reason — is the point.\n\nOne hard constraint sits underneath all of this: **a driver may hold exactly one offer at a time.** The matcher must atomically claim the driver before sending the offer (a conditional write: set `offering:{driver}` only if absent, with a TTL equal to the offer timeout) and release the claim on decline, timeout or cancel. Without that claim, two matchers working on two nearby requests in the same second will offer the same car to both passengers, and one of them gets a driver who is already on their way elsewhere."
+    },
+    {
+      "key": "tripstate",
+      "title": "11. The trip state machine, and why the state must survive",
+      "content": "A trip is not a row you insert once. It is a **state machine** that moves through:\n\n```\nrequested ──► matched ──► accepted ──► in_progress ──► completed\n    │            │            │             │\n    └────────────┴────────────┴─────────────┴──► cancelled\n```\n\n- **requested** — the passenger has asked; no driver is committed. Cancelling here is free.\n- **matched** — a specific driver has been selected and the offer is out. The driver is claimed but has not agreed.\n- **accepted** — the driver agreed and is en route to the pickup. Cancelling now has a fee and affects both parties' metrics.\n- **in_progress** — passenger is in the car. This is the state where a lost trip becomes a real incident.\n- **completed** — fare calculated, trip closed, payment initiated.\n\n**Why the transitions must be durable and ordered.** Each edge has a consequence outside the system: money moves, a cancellation fee is charged or not, a driver's acceptance rate changes, and in the worst case somebody is in a stranger's car with no record that the ride exists. So:\n\n- Every transition is written to the durable store **before** it is acknowledged to either client. The append-only `trip_events` log is the record; the `state` column on `trips` is a materialised convenience.\n- Transitions are **guarded**: `UPDATE trips SET state='accepted' WHERE id=? AND state='matched'`. If zero rows are affected, somebody else already moved it, and you must not proceed. This is how you survive a duplicate `accept` from a retrying phone and a racing timeout from the matcher trying to move on to the next driver — a genuine race that happens thousands of times a day at this scale.\n- Transitions are **idempotent**, keyed by a client-supplied token, so a retry over a flaky mobile connection replays the same result instead of creating a second effect.\n\n**Why in-memory state is not enough.** The tempting shortcut is to keep the in-flight trip in the matcher's memory and only write to the database on completion — in-flight trips are few, and it is fast. Then a matcher process is deployed, OOM-killed or loses its node, and every trip it was holding vanishes: passengers sit on a spinner forever, drivers arrive at pickups for trips the system has never heard of, and completed rides are never billed. Losing a location ping is invisible; losing a trip is a support case and a refund.\n\n**The reconciler.** Because processes die between a state change and the side effect it was supposed to cause, run a sweeper over trips that have sat in a non-terminal state too long: `matched` for longer than the offer timeout (release the driver claim, move to the next candidate), `accepted` with no driver movement for fifteen minutes (contact both parties), `in_progress` for six hours (almost certainly a missed completion event; close it out for manual review). The state machine is what makes this sweeper possible to write — you cannot reconcile a state you never defined."
+    },
+    {
+      "key": "connections",
+      "title": "12. Why the passenger's connection is long-lived",
+      "content": "Consider what the passenger's phone needs between tapping *Request* and the car arriving: the moment a driver accepts, the driver's name and plate, and then the car's position refreshed every few seconds on a moving map. Between two and five minutes of continuous, server-initiated updates.\n\nWith polling at 3-second intervals, a five-minute wait is 100 HTTP requests per passenger. At 175 new rides/s with ~300,000 passengers holding an open map, that is roughly **100,000 requests/s** — most returning \"nothing has changed\" — plus TLS setup, headers and load-balancer accounting for each. The system spends the overwhelming majority of its request budget saying nothing happened. And it is still worse for the user: a 3-second poll means the car's position is on average 1.5 seconds stale and the \"driver found\" notification arrives up to 3 seconds late, in the moment the user is staring hardest at the screen.\n\nInverting it fixes both problems at once. The client opens **one** connection and the server pushes when something occurs: an offer to a driver, an acceptance to a passenger, a position update while the trip runs. Nothing is sent when nothing happens, and events arrive in single-digit milliseconds rather than on the next poll tick. See the `websockets` concept for the handshake and the framing; the parts specific to this system are:\n\n- **The connection is the driver's uplink too.** The driver holds one socket for both directions: positions up, offers down. This is the connection that carries the 50,000 writes/s from step 9, which is why the gateway that terminates it must be a dedicated tier that can be scaled on connection count alone.\n- **Gateways are stateful, so the load balancer must be too.** A connection is pinned to one gateway process for its lifetime. To push an event to user X, some component must know which gateway holds X — a registry (`user → gateway`) in the shared in-memory store, written on connect and removed on disconnect, or a pub/sub channel per user that every gateway subscribes to. This registry is the piece people forget, and it is what makes a deploy interesting: draining a gateway disconnects tens of thousands of clients at once, so roll slowly and stagger it.\n- **Mobile networks drop connections constantly.** Tunnels, lifts, handovers between cells. The client must reconnect with backoff and jitter — without jitter, a flapping cell tower reconnects thirty thousand phones in the same 50 ms window and your gateway tier falls over — and must resume by **fetching current state**, not by replaying missed messages. \"Give me the current state of trip 8412\" is a simple, cheap, always-correct recovery. A replay buffer is neither.\n- **Always keep an HTTP fallback.** Corporate proxies and some captive portals break WebSocket upgrades. A slow-polling fallback that fires every 5 seconds is a degraded experience, but it is not a broken app, and it costs you one endpoint you have to build anyway for the reconnect path."
+    },
+    {
+      "key": "architecture",
+      "title": "13. Architecture and how it scales",
+      "content": "Assembling the pieces:\n\n**Edge.** GeoDNS routes each client to its nearest region. A connection gateway tier terminates the long-lived sockets; it is scaled on connection count (≈50,000 per node), not on request rate.\n\n**Location plane.** Ingest workers read positions off the driver sockets and write them to the in-memory geospatial index — `GEOADD` into a per-city key, TTL slightly longer than the ping interval. Nothing on this path touches the relational database.\n\n**Matching plane.** The matching service reads candidates from the index (nine cells, widening if sparse), ranks them, claims a driver atomically, and drives the offer loop. It writes trip state transitions through to the durable store.\n\n**Transactional plane.** Trips, trip events and drivers live in a relational store sharded by city.\n\n**How each axis scales:**\n\n- **Connections** — add gateway nodes. Linear, stateless apart from the connection registry.\n- **Location writes** — shard the in-memory store by city. This is the natural partition key and it is nearly perfect: a matching query for a pickup in city A never needs a driver in city B, so every query is single-shard. The only wrinkle is a pickup within a cell-width of a city boundary, which is rare enough to handle by querying both cities' shards when the pickup is near the boundary polygon.\n- **Matching throughput** — the matching service is stateless per request (all shared state is the driver claim in the in-memory store), so add instances. A city's matching load is bounded by its ride rate, which is tiny; the fleet is sized for redundancy and isolation, not throughput.\n- **Trip writes** — 175/s at peak, sharded by city. This never becomes the bottleneck at the stated scale, and saying so is better than sharding it for show.\n- **Reads of trip history** — a passenger's trip list, a driver's earnings — go to read replicas. Replication lag is acceptable because these views are not on any latency-sensitive path.\n\nThe important structural point: **the location plane and the transactional plane scale independently and fail independently.** They share no database, no connection pool and no deploy. That separation is the design."
+    },
+    {
+      "key": "failure",
+      "title": "14. Failure handling",
+      "content": "- **The location store loses a shard.** Drivers in that city become invisible and matching in that city fails. Recovery is automatic and fast — every driver's next ping (≤4 s) repopulates the index — but for those seconds matching should return \"searching\" rather than \"no drivers available\", because the two messages produce very different user behaviour. Run the store replicated so the normal case is a failover of a second or two rather than a rebuild.\n- **A matching service instance dies mid-offer.** The driver claim has a TTL equal to the offer timeout, so it expires on its own and the driver is released without any cleanup code running. The trip sits in `matched`; the reconciler from step 11 picks it up and re-offers. This is why the TTL on the claim is not an optimisation — it is the failure handling.\n- **A gateway node dies.** Tens of thousands of clients reconnect at once. Jittered backoff on the client and connection-count-aware balancing on the server keep this from cascading into the remaining nodes. On reconnect, clients fetch current trip state rather than expecting replay.\n- **The trips database primary fails over.** New bookings pause for the duration of the promotion. Trips already `in_progress` keep working, because the driver and passenger are talking over their sockets through the location plane, which does not depend on the database. Completions queue and flush on recovery — this is exactly the case the append-only event log makes safe.\n- **A driver's phone loses signal mid-trip.** Positions stop, but the trip does not. The passenger's map should show the last known position with a visible staleness indicator rather than freezing silently or clearing the marker. The driver app buffers positions locally and uploads them on reconnect for the billing trace.\n- **Nobody accepts.** After N candidates or a total timeout, widen the search radius, then tell the passenger honestly. A long spinner is worse than \"no cars nearby right now\".\n- **A thundering herd after an outage.** When matching comes back, every waiting passenger retries simultaneously. Rate-limit at the gateway and admit the backlog gradually; the alternative is that recovery immediately re-breaks the thing that just recovered."
+    },
+    {
+      "key": "final",
+      "title": "15. Trade-offs and the final architecture",
+      "content": "**The trade-offs to state explicitly:**\n\n- **Geohash precision.** Coarse cells mean more candidates per lookup and more distance computations; fine cells mean faster lookups but frequent empty results that force a widening retry. The right precision depends on driver density and differs between a dense downtown and a suburb — which is an argument for making it configurable per city rather than a global constant.\n- **Geohash vs S2/H3.** Geohash is a string, debuggable by eye, supported everywhere. Hilbert-curve cells (S2) have better locality, so fewer nearby points land in distant cells; hexagons (H3) have uniform neighbour distance, which makes \"one ring out\" mean the same thing in every direction. All three need neighbour expansion; none removes the boundary problem.\n- **Location durability.** Ephemeral in-memory storage costs ~20 MB and loses nothing that matters. Persisting the stream would cost ~158 TB/year and buy you a history almost nobody queries.\n- **Matching objective.** Distance is free and wrong at the margins; ETA is right and expensive; acceptance probability is righter still and needs a model. Batch assignment beats all of them on fleet-wide averages and adds latency to every individual request.\n- **Push vs poll.** Long-lived connections give sub-second updates and remove ~100,000 requests/s of polling, at the cost of a stateful gateway tier, a connection registry and much more interesting deploys.\n\n**Final shape:** clients → GeoDNS → connection gateways → {ingest → in-memory geospatial index (sharded by city)} and {matching service → guarded state transitions → trips database (sharded by city, replicated)}, with a reconciler sweeping stuck trips and route traces batched to object storage.\n\nEvery component is there because a number from step 4 put pressure on something: 50,000 writes/s forced the location plane out of the database, 130 candidates per search forced the geospatial index, 500,000 concurrent connections forced the gateway tier, and the fact that a lost trip is a refund forced the durable state machine."
+    }
+  ],
+  "estimation": {
+    "assumptions": [
+      "5M completed rides per day",
+      "200,000 drivers online at peak",
+      "Each online driver reports its position every 4 seconds",
+      "~100 bytes per location record (latest only), ~1 KB per durable trip row",
+      "8,000 drivers online across a 400 km² city at peak",
+      "3x peak factor over the daily average"
+    ],
+    "calculations": [
+      {
+        "label": "Ride requests/s (average)",
+        "value": "~58/s",
+        "working": "5,000,000 / 86,400 = 57.9"
+      },
+      {
+        "label": "Ride requests/s (peak)",
+        "value": "~175/s",
+        "working": "58 × 3 — small enough for a single database tier"
+      },
+      {
+        "label": "Location updates/s (peak)",
+        "value": "~50,000/s",
+        "working": "200,000 drivers / 4 s"
+      },
+      {
+        "label": "Location writes vs bookings",
+        "value": "~860:1",
+        "working": "50,000 / 58 — the ratio that shapes the whole design"
+      },
+      {
+        "label": "Live location footprint",
+        "value": "~20 MB",
+        "working": "200,000 × 100 bytes — latest value only, overwritten in place"
+      },
+      {
+        "label": "Cost of persisting every ping",
+        "value": "~432 GB/day, ~158 TB/year",
+        "working": "50,000 × 86,400 = 4.32e9 pings/day × 100 B = 432 GB; × 365 ≈ 158 TB"
+      },
+      {
+        "label": "Trip storage",
+        "value": "~5 GB/day, ~1.8 TB/year",
+        "working": "5,000,000 × 1 KB = 5 GB/day; × 365 ≈ 1,825 GB"
+      },
+      {
+        "label": "Candidates per nine-cell search",
+        "value": "~130 drivers",
+        "working": "geohash-6 cell ≈ 1.2 × 0.61 km ≈ 0.73 km²; 400 km² / 0.73 ≈ 548 cells; 8,000 / 548 ≈ 15 per cell × 9 cells"
+      },
+      {
+        "label": "Concurrent long-lived connections",
+        "value": "~500,000 → ~10 gateway nodes",
+        "working": "200,000 drivers + ~300,000 active passengers; / 50,000 per node (run ~15 for headroom)"
+      }
+    ]
+  },
+  "api": [
+    {
+      "method": "POST",
+      "path": "/api/v1/rides",
+      "request": "{ \"pickup\": { \"lat\": 37.7749, \"lng\": -122.4194 }, \"dropoff\": { \"lat\": 37.8044, \"lng\": -122.2712 }, \"rideType\": \"standard\" }",
+      "response": "202 { \"tripId\": \"t_8f21c\", \"state\": \"requested\", \"streamChannel\": \"trip:t_8f21c\" }",
+      "notes": "Returns immediately in `requested`; matching happens asynchronously and the result is pushed over the client's socket. Requires an Idempotency-Key so a retry from a flaky phone does not create a second trip."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/trips/{tripId}/accept",
+      "request": "{ \"driverId\": \"d_4417\", \"offerToken\": \"o_9be1\" }",
+      "response": "200 { \"state\": \"accepted\", \"pickup\": {…}, \"passenger\": { \"name\": \"…\", \"phoneProxy\": \"…\" } }",
+      "notes": "Guarded transition: succeeds only if the trip is still `matched` and the offer token is the live one. 409 if the offer already timed out and moved to the next driver — the common race, not an edge case."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/trips/{tripId}/state",
+      "request": "{ \"to\": \"in_progress\", \"at\": \"2026-03-04T18:22:10Z\", \"idempotencyKey\": \"…\" }",
+      "response": "200 { \"state\": \"in_progress\" }",
+      "notes": "The only way the state machine advances. Rejects any transition not allowed from the current state, and appends to trip_events before acknowledging."
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/drivers/{driverId}/availability",
+      "request": "{ \"online\": true, \"location\": { \"lat\": 37.77, \"lng\": -122.41 } }",
+      "response": "200 { \"online\": true, \"socketUrl\": \"wss://gw-eu-3.example/…\" }",
+      "notes": "Going online registers the driver in the geospatial index and hands back the gateway to connect to. Going offline removes the index entry immediately rather than waiting for the TTL."
+    },
+    {
+      "method": "WS",
+      "path": "/ws/v1/stream",
+      "request": "→ { \"t\": \"loc\", \"lat\": 37.771, \"lng\": -122.409, \"bearing\": 84, \"ts\": 1772900530 }",
+      "response": "← { \"t\": \"offer\", \"tripId\": \"t_8f21c\", \"expiresInMs\": 12000, … } | { \"t\": \"driver_loc\", … }",
+      "notes": "One socket per client, both directions. Carries the 50,000 location writes/s from drivers and every server-initiated event to both sides. Reconnect fetches current state rather than replaying missed frames."
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/trips/{tripId}",
+      "request": "—",
+      "response": "200 { \"tripId\": \"t_8f21c\", \"state\": \"in_progress\", \"driver\": {…}, \"eta\": 240 }",
+      "notes": "The reconnect and fallback path. Deliberately cheap and always correct, which is what lets the socket protocol get away with having no replay buffer."
+    }
+  ],
+  "dataModel": [
+    {
+      "name": "trips (durable, sharded by city_id)",
+      "fields": [
+        {
+          "name": "trip_id",
+          "type": "UUID PRIMARY KEY",
+          "notes": "generated client-side or by the API, so retries are idempotent"
+        },
+        {
+          "name": "city_id",
+          "type": "INT NOT NULL",
+          "notes": "the shard key; a trip never crosses cities in this design"
+        },
+        {
+          "name": "passenger_id",
+          "type": "BIGINT NOT NULL",
+          "notes": ""
+        },
+        {
+          "name": "driver_id",
+          "type": "BIGINT",
+          "notes": "null until the trip reaches `matched`"
+        },
+        {
+          "name": "state",
+          "type": "ENUM NOT NULL",
+          "notes": "requested | matched | accepted | in_progress | completed | cancelled — materialised from trip_events"
+        },
+        {
+          "name": "pickup_lat, pickup_lng, dropoff_lat, dropoff_lng",
+          "type": "DOUBLE PRECISION",
+          "notes": ""
+        },
+        {
+          "name": "requested_at, accepted_at, started_at, completed_at",
+          "type": "TIMESTAMP",
+          "notes": "nullable until the corresponding transition"
+        },
+        {
+          "name": "fare_cents, distance_m, duration_s",
+          "type": "INT",
+          "notes": "written once on completion"
+        },
+        {
+          "name": "route_key",
+          "type": "TEXT",
+          "notes": "object-storage key for the polyline trace; too large to keep inline"
+        }
+      ],
+      "indexes": [
+        "PRIMARY KEY (city_id, trip_id)",
+        "INDEX (driver_id, requested_at DESC) for the driver's earnings view",
+        "INDEX (passenger_id, requested_at DESC) for trip history",
+        "PARTIAL INDEX (state, requested_at) WHERE state NOT IN ('completed','cancelled') — the reconciler's sweep"
+      ]
+    },
+    {
+      "name": "trip_events (durable, append-only)",
+      "fields": [
+        {
+          "name": "trip_id",
+          "type": "UUID NOT NULL",
+          "notes": ""
+        },
+        {
+          "name": "seq",
+          "type": "INT NOT NULL",
+          "notes": "monotonic per trip; makes ordering explicit rather than inferred from timestamps"
+        },
+        {
+          "name": "from_state, to_state",
+          "type": "ENUM",
+          "notes": "the transition, so an invalid one is visible in the data"
+        },
+        {
+          "name": "actor",
+          "type": "TEXT",
+          "notes": "passenger | driver | matcher | reconciler — invaluable during a dispute"
+        },
+        {
+          "name": "idempotency_key",
+          "type": "TEXT",
+          "notes": "unique with trip_id; a replayed request returns the original outcome"
+        },
+        {
+          "name": "occurred_at",
+          "type": "TIMESTAMP NOT NULL",
+          "notes": ""
+        }
+      ],
+      "indexes": [
+        "PRIMARY KEY (trip_id, seq)",
+        "UNIQUE (trip_id, idempotency_key)",
+        "Partitioned by month; the system of record for anything disputed"
+      ]
+    },
+    {
+      "name": "driver_locations (in-memory, per city, NOT durable)",
+      "fields": [
+        {
+          "name": "geo:{city_id}",
+          "type": "Redis GEO / sorted set",
+          "notes": "member = driver_id, score = 52-bit geohash. GEOADD on every ping; GEOSEARCH for candidates"
+        },
+        {
+          "name": "drv:{driver_id}",
+          "type": "Hash, TTL 15 s",
+          "notes": "lat, lng, bearing, speed, updated_at. ~100 bytes. Expires on its own if the driver vanishes"
+        },
+        {
+          "name": "offering:{driver_id}",
+          "type": "String, SET NX, TTL = offer timeout",
+          "notes": "the atomic claim that stops two matchers offering the same car"
+        },
+        {
+          "name": "conn:{user_id}",
+          "type": "String",
+          "notes": "which gateway node holds this user's socket, so an event can be routed to it"
+        }
+      ],
+      "indexes": [
+        "No secondary indexes and no backups — by design",
+        "Rebuilt automatically within one ping interval (~4 s) after a total loss",
+        "Sharded by city_id; a matching query is single-shard except near a city boundary"
+      ]
+    },
+    {
+      "name": "drivers (durable, low write rate)",
+      "fields": [
+        {
+          "name": "driver_id",
+          "type": "BIGINT PRIMARY KEY",
+          "notes": ""
+        },
+        {
+          "name": "city_id",
+          "type": "INT NOT NULL",
+          "notes": "home city; determines the location shard"
+        },
+        {
+          "name": "vehicle",
+          "type": "JSONB",
+          "notes": "plate, model, colour — shown to the passenger on match"
+        },
+        {
+          "name": "acceptance_rate_30d, rating",
+          "type": "NUMERIC",
+          "notes": "recomputed in batch; feeds the ranking in step 10"
+        },
+        {
+          "name": "committed_trip_id",
+          "type": "UUID",
+          "notes": "the authoritative 'this driver is busy' flag; the in-memory claim is only a fast filter"
+        }
+      ],
+      "indexes": [
+        "PRIMARY KEY (driver_id)",
+        "INDEX (city_id) WHERE committed_trip_id IS NULL"
+      ]
+    }
+  ],
+  "evolution": [
+    {
+      "stage": "Stage 1 — one city, ~500 rides/day",
+      "problem": "Nothing is wrong. Twenty drivers and a bounding-box scan over a few hundred rows is genuinely the correct design, and building anything more would be guessing at requirements you do not have yet.",
+      "change": "One app server, one relational database with lat/lng columns on the drivers table. Matching is a full scan.",
+      "why": "At 20 online drivers a sequential scan touches 20 rows and returns in under a millisecond. Every geospatial index you could add here would be slower than the scan and would be one more thing to get wrong while the product is still being defined. Write the scan, and write down the number at which it stops working.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "passenger",
+            "label": "Passenger app",
+            "type": "client",
+            "x": 120,
+            "y": 200
+          },
+          {
+            "id": "driver",
+            "label": "Driver app",
+            "type": "client",
+            "x": 120,
+            "y": 400
+          },
+          {
+            "id": "app",
+            "label": "App server",
+            "type": "server",
+            "x": 480,
+            "y": 300,
+            "note": "Bookings, location writes and matching all in one process."
+          },
+          {
+            "id": "db",
+            "label": "Postgres",
+            "type": "db",
+            "x": 830,
+            "y": 300,
+            "note": "drivers table holds lat/lng. Matching is SELECT … WHERE lat BETWEEN … AND lng BETWEEN …"
+          }
+        ],
+        "edges": [
+          {
+            "from": "passenger",
+            "to": "app"
+          },
+          {
+            "from": "driver",
+            "to": "app",
+            "label": "location every 4 s"
+          },
+          {
+            "from": "app",
+            "to": "db"
+          }
+        ]
+      }
+    },
+    {
+      "stage": "Stage 2 — 5 cities, ~50,000 rides/day",
+      "problem": "The single app server is both the ceiling and a single point of failure. Every deploy drops in-flight ride requests, and the 3am crash last week left five cities with no service for eleven minutes. The trip-history page has also started timing out because reporting queries and booking writes contend on the same instance.",
+      "change": "Load balancer, two or more stateless app servers, and a read replica for history and reporting queries.",
+      "why": "Availability is the driver here, not throughput — one box could still carry ~600 rides/hour. Two instances behind a balancer give rolling deploys and survive a single crash, which forces the app to become stateless now rather than after it has grown state worth migrating. The replica separates the two access patterns that were fighting: point writes on the booking path and range scans on the reporting path.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "passenger",
+            "label": "Passenger app",
+            "type": "client",
+            "x": 90,
+            "y": 180
+          },
+          {
+            "id": "driver",
+            "label": "Driver app",
+            "type": "client",
+            "x": 90,
+            "y": 420
+          },
+          {
+            "id": "lb",
+            "label": "Load balancer",
+            "type": "lb",
+            "x": 340,
+            "y": 300
+          },
+          {
+            "id": "app1",
+            "label": "App 1",
+            "type": "server",
+            "x": 600,
+            "y": 180
+          },
+          {
+            "id": "app2",
+            "label": "App 2",
+            "type": "server",
+            "x": 600,
+            "y": 420
+          },
+          {
+            "id": "db",
+            "label": "Postgres primary",
+            "type": "db",
+            "x": 870,
+            "y": 180
+          },
+          {
+            "id": "replica",
+            "label": "Read replica",
+            "type": "replica",
+            "x": 870,
+            "y": 420,
+            "note": "History and reporting only, so range scans stop competing with booking writes."
+          }
+        ],
+        "edges": [
+          {
+            "from": "passenger",
+            "to": "lb"
+          },
+          {
+            "from": "driver",
+            "to": "lb"
+          },
+          {
+            "from": "lb",
+            "to": "app1"
+          },
+          {
+            "from": "lb",
+            "to": "app2"
+          },
+          {
+            "from": "app1",
+            "to": "db"
+          },
+          {
+            "from": "app2",
+            "to": "db"
+          },
+          {
+            "from": "app1",
+            "to": "replica",
+            "label": "history",
+            "dashed": true
+          },
+          {
+            "from": "db",
+            "to": "replica",
+            "label": "replication"
+          }
+        ]
+      }
+    },
+    {
+      "stage": "Stage 3 — 20,000 drivers online, ~5,000 location writes/s",
+      "problem": "Location UPDATEs have become the dominant write load and they are killing the database that owns the money. Every ping writes a new row version, autovacuum is permanently behind, the drivers table has bloated to four times its live size, and WAL volume has saturated the replication link. The visible symptom is not slow maps — it is that trip commits now take 900 ms and bookings have started timing out.",
+      "change": "Move driver positions out of Postgres entirely into an in-memory store, and split location ingest into its own service with no database dependency.",
+      "why": "The two workloads have nothing in common: positions are 5,000 writes/s of data worth nothing after four seconds, trips are ~60 writes/s of data that must never be lost. Putting them in one MVCC table means the worthless workload generates dead tuples, WAL and lock contention for the valuable one. In memory we keep only the latest value per driver, so 432 GB/day of writes collapses into a ~20 MB working set that rebuilds itself within one ping interval if the node dies. Separating ingest means a database incident no longer stops the map from updating.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "passenger",
+            "label": "Passenger app",
+            "type": "client",
+            "x": 80,
+            "y": 160
+          },
+          {
+            "id": "driver",
+            "label": "Driver app",
+            "type": "client",
+            "x": 80,
+            "y": 440
+          },
+          {
+            "id": "lb",
+            "label": "Load balancer",
+            "type": "lb",
+            "x": 330,
+            "y": 300
+          },
+          {
+            "id": "api",
+            "label": "Ride API",
+            "type": "server",
+            "x": 580,
+            "y": 180
+          },
+          {
+            "id": "ingest",
+            "label": "Location ingest",
+            "type": "server",
+            "x": 580,
+            "y": 430,
+            "note": "No database connection at all. Scaled on connection count, not query rate."
+          },
+          {
+            "id": "db",
+            "label": "Trips DB",
+            "type": "db",
+            "x": 860,
+            "y": 180,
+            "note": "Trips and drivers only. Write rate back down to ~60/s."
+          },
+          {
+            "id": "redis",
+            "label": "Driver locations",
+            "type": "cache",
+            "x": 860,
+            "y": 430,
+            "why": {
+              "without": "5,000 location UPDATEs/s generate 5,000 dead row versions/s in Postgres, bloating the table, starving autovacuum and pushing trip commit latency to 900 ms.",
+              "with": "Positions are overwritten in place in ~20 MB of RAM with a TTL. The trips database sees only the ~60 writes/s that actually matter.",
+              "conclusion": "Data you are allowed to lose does not belong in the store you cannot afford to lose."
+            }
+          }
+        ],
+        "edges": [
+          {
+            "from": "passenger",
+            "to": "lb"
+          },
+          {
+            "from": "driver",
+            "to": "lb"
+          },
+          {
+            "from": "lb",
+            "to": "api"
+          },
+          {
+            "from": "lb",
+            "to": "ingest"
+          },
+          {
+            "from": "ingest",
+            "to": "redis",
+            "label": "5,000 writes/s"
+          },
+          {
+            "from": "api",
+            "to": "redis",
+            "label": "read candidates",
+            "dashed": true
+          },
+          {
+            "from": "api",
+            "to": "db",
+            "label": "trips only"
+          }
+        ]
+      }
+    },
+    {
+      "stage": "Stage 4 — 1M rides/day, 80,000 drivers online",
+      "problem": "Matching reads every online driver in the city and filters in application code. In the largest city that is 15,000 members scanned per request, 300 times a second — 4.5M member reads/s — and matching p99 has reached 4.2 seconds. Passengers time out and re-request, which doubles the load. Meanwhile 3-second polling for trip status is generating ~100,000 requests/s that almost always return 'nothing changed'.",
+      "change": "Index positions by geohash cell, search the pickup cell plus its eight neighbours, extract a dedicated matching service, and replace polling with server-push over the connection the clients already hold.",
+      "why": "Proximity is two-dimensional and a sorted index is one-dimensional; a space-filling curve reduces the former to the latter, which turns 'nearby' into 'shares a prefix' and a 15,000-member scan into nine key lookups returning ~130 candidates. Nine cells rather than one is not padding: two points metres apart can straddle a boundary and share no prefix, and for a pickup on a boundary roughly half the genuinely nearest drivers are invisible to a single-cell lookup. Extracting matching gives it its own failure domain and lets the offer loop, with its atomic driver claim, live in one place instead of being duplicated across API instances. Push removes the polling load and cuts 'driver found' latency from up to 3 seconds to milliseconds.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "passenger",
+            "label": "Passenger app",
+            "type": "client",
+            "x": 70,
+            "y": 140
+          },
+          {
+            "id": "driver",
+            "label": "Driver app",
+            "type": "client",
+            "x": 70,
+            "y": 460
+          },
+          {
+            "id": "gw",
+            "label": "WS gateway",
+            "type": "lb",
+            "x": 320,
+            "y": 300,
+            "note": "Terminates one long-lived socket per client; ~50,000 connections per node."
+          },
+          {
+            "id": "ride",
+            "label": "Ride service",
+            "type": "server",
+            "x": 570,
+            "y": 120
+          },
+          {
+            "id": "match",
+            "label": "Matching service",
+            "type": "worker",
+            "x": 570,
+            "y": 300,
+            "why": {
+              "without": "Every API instance scans all 15,000 online drivers in the city per request — 4.5M member reads/s and a 4.2 s p99 — and two instances can offer the same car to two passengers.",
+              "with": "Nine geohash cell lookups return ~130 candidates, ranked in memory in single-digit milliseconds, with an atomic claim per driver so an offer is exclusive.",
+              "conclusion": "Reduce the 2-D problem to 1-D before you index it, and expand to the eight neighbours because cell boundaries cut through real streets."
+            }
+          },
+          {
+            "id": "ingest",
+            "label": "Location ingest",
+            "type": "server",
+            "x": 570,
+            "y": 480
+          },
+          {
+            "id": "db",
+            "label": "Trips DB",
+            "type": "db",
+            "x": 850,
+            "y": 120
+          },
+          {
+            "id": "geo",
+            "label": "Geohash index",
+            "type": "cache",
+            "x": 850,
+            "y": 400,
+            "note": "GEO sorted set keyed by city; member = driver, score = 52-bit geohash."
+          }
+        ],
+        "edges": [
+          {
+            "from": "passenger",
+            "to": "gw"
+          },
+          {
+            "from": "driver",
+            "to": "gw"
+          },
+          {
+            "from": "gw",
+            "to": "ride"
+          },
+          {
+            "from": "gw",
+            "to": "ingest",
+            "label": "positions"
+          },
+          {
+            "from": "ride",
+            "to": "match",
+            "label": "find a driver"
+          },
+          {
+            "from": "ingest",
+            "to": "geo",
+            "label": "GEOADD"
+          },
+          {
+            "from": "match",
+            "to": "geo",
+            "label": "cell + 8 neighbours",
+            "dashed": true
+          },
+          {
+            "from": "ride",
+            "to": "db"
+          },
+          {
+            "from": "match",
+            "to": "db",
+            "label": "trip state"
+          }
+        ]
+      }
+    },
+    {
+      "stage": "Stage 5 — 5M rides/day, 200,000 drivers, multi-region",
+      "problem": "Two failures, both from last quarter. A single matching deployment meant an OOM in the matcher took out every city simultaneously, and the trips it was holding in memory were lost: passengers waited on a spinner forever and eighty completed rides were never billed. Separately, passengers on the far side of the world see their driver's marker jump because every position now crosses 200 ms of ocean twice.",
+      "change": "Shard the whole location and matching plane by region and city, run gateways and the in-memory index regionally, persist every state transition to an append-only event log before acknowledging, and add a reconciler that sweeps trips stuck in non-terminal states.",
+      "why": "Cities are naturally independent — a pickup in one city never needs a driver in another — so city is an almost perfect shard key and gives blast-radius isolation for free: one region's failure is one region's outage. Keeping the socket and the location index close to the user removes the ocean crossing from the update path, which is the only way to fix a latency floor set by the speed of light. And in-flight state moves out of process memory because a matcher dying must cost a retry, not a trip: the event log makes every transition recoverable and the reconciler is what actually recovers it. The trips database stays sharded by city at only ~175 writes/s — a rate that never justified sharding for throughput, only for isolation.",
+      "architecture": {
+        "nodes": [
+          {
+            "id": "passenger",
+            "label": "Passengers",
+            "type": "client",
+            "x": 70,
+            "y": 120
+          },
+          {
+            "id": "driver",
+            "label": "Drivers",
+            "type": "client",
+            "x": 70,
+            "y": 480
+          },
+          {
+            "id": "dns",
+            "label": "GeoDNS",
+            "type": "dns",
+            "x": 320,
+            "y": 300,
+            "note": "Routes each client to its nearest region; a city never spans two."
+          },
+          {
+            "id": "r1",
+            "label": "Region A: gateway + match + geo index",
+            "type": "server",
+            "x": 570,
+            "y": 120
+          },
+          {
+            "id": "queue",
+            "label": "Trip event log",
+            "type": "queue",
+            "x": 570,
+            "y": 300,
+            "why": {
+              "without": "In-flight trips live only in a matcher's memory, so an OOM kill loses them: passengers wait forever and completed rides are never billed.",
+              "with": "Every transition is appended before it is acknowledged, so a crashed matcher's trips are still on disk and can be resumed or swept.",
+              "conclusion": "Losing a location ping is invisible; losing a trip is a refund. Only one of them gets durability."
+            }
+          },
+          {
+            "id": "r2",
+            "label": "Region B: gateway + match + geo index",
+            "type": "server",
+            "x": 570,
+            "y": 480
+          },
+          {
+            "id": "db",
+            "label": "Trips DB (sharded by city)",
+            "type": "db",
+            "x": 850,
+            "y": 300
+          },
+          {
+            "id": "recon",
+            "label": "State reconciler",
+            "type": "worker",
+            "x": 850,
+            "y": 530,
+            "note": "Sweeps trips stuck in matched / accepted / in_progress past their deadline."
+          }
+        ],
+        "edges": [
+          {
+            "from": "passenger",
+            "to": "dns"
+          },
+          {
+            "from": "driver",
+            "to": "dns"
+          },
+          {
+            "from": "dns",
+            "to": "r1"
+          },
+          {
+            "from": "dns",
+            "to": "r2"
+          },
+          {
+            "from": "r1",
+            "to": "queue",
+            "label": "state transitions"
+          },
+          {
+            "from": "r2",
+            "to": "queue",
+            "label": "state transitions"
+          },
+          {
+            "from": "queue",
+            "to": "db"
+          },
+          {
+            "from": "queue",
+            "to": "recon",
+            "dashed": true
+          },
+          {
+            "from": "recon",
+            "to": "db",
+            "label": "resume or close"
+          }
+        ]
+      }
+    }
+  ],
+  "tradeoffs": [
+    {
+      "option": "Geohash (Z-order curve, base-32 string)",
+      "pros": [
+        "A prefix match is a plain sorted-index range scan, so any B-tree or sorted set can serve it",
+        "Human-readable and debuggable: you can eyeball two geohashes and see how close they are",
+        "Supported natively by Redis, Elasticsearch and most databases, so there is no library to own"
+      ],
+      "cons": [
+        "The Z-order curve has poor locality at boundaries — two points twelve metres apart can differ in the first character, which is why every query is nine lookups instead of one",
+        "Cells are rectangular and their physical width shrinks toward the poles, so a fixed precision means different real-world areas in Singapore and Reykjavik"
+      ]
+    },
+    {
+      "option": "S2 (Hilbert curve) or H3 (hexagons)",
+      "pros": [
+        "A Hilbert curve preserves locality better than Z-order, so fewer nearby points land in distant cells",
+        "H3 hexagons have a single uniform neighbour distance, so 'one ring out' means the same thing in all six directions — much easier to reason about for coverage and supply analysis",
+        "Cell areas are far more consistent across latitudes than geohash rectangles"
+      ],
+      "cons": [
+        "Cell ids are opaque 64-bit integers, so debugging needs tooling rather than eyes",
+        "You take on a library dependency in every language that touches positions, and version skew between services changes which cell a point lands in",
+        "Boundary expansion is still required — better locality reduces the problem, it does not remove it"
+      ]
+    },
+    {
+      "option": "Driver locations in memory, not persisted",
+      "pros": [
+        "Collapses ~4.3 billion writes/day into a ~20 MB working set by keeping only the latest value",
+        "Keeps 50,000 writes/s of dead tuples, WAL and lock contention out of the database that owns billing",
+        "Rebuilds itself within one ping interval (~4 s) after total loss, so recovery needs no restore procedure"
+      ],
+      "cons": [
+        "A node failure makes drivers in that shard invisible until they ping again, so matching genuinely fails for a few seconds",
+        "There is no location history to query, so billing disputes and incident investigations need a separate trace written during active trips",
+        "Memory is expensive per byte, and you now operate a second stateful system with its own failover story"
+      ]
+    },
+    {
+      "option": "Match on shortest ETA rather than straight-line distance",
+      "pros": [
+        "Optimises the number the passenger actually experiences — rivers, one-way systems and motorway access make metres a poor proxy for minutes",
+        "Avoids the recurring support complaint where the 'nearest' car takes eight minutes to reach a pickup 300 m away"
+      ],
+      "cons": [
+        "Costs a routing call per candidate: ~130 per request, ~23,000 routing calls/s at peak, which is a substantial service to build and pay for",
+        "Adds a hard dependency on the routing service to the matching path — if routing degrades, matching degrades with it",
+        "Forces a compromise in practice (filter by distance first, route only the top ten), which quietly reintroduces the distance-based error you were removing"
+      ]
+    },
+    {
+      "option": "Batch assignment over a short window instead of greedy per-request matching",
+      "pros": [
+        "Measurably better fleet-wide outcomes: solving an assignment problem over a batch avoids stranding a sparse area by handing its only car to a passenger who had three options",
+        "Naturally smooths bursts, because arrivals within the window are considered together rather than racing each other for the same driver"
+      ],
+      "cons": [
+        "Adds the full window (say two seconds) to every passenger's wait, including the ones who would have matched instantly",
+        "Much harder to reason about during an incident — a bad batch affects a cohort at once rather than one request",
+        "Requires holding requests in a coordinated buffer, which reintroduces exactly the in-memory in-flight state that stage 5 moved to durable storage"
+      ]
+    }
+  ],
+  "interviewStages": [
+    {
+      "key": "requirements",
+      "prompt": "Design a ride-hailing service. What do you need to know before you draw anything?",
+      "hints": [
+        "\"Design Uber\" contains at least three separable systems — which one are we building?",
+        "Ask about scope in space: one city or many, and can a trip cross a boundary?",
+        "Ask what happens when nobody accepts — it changes the matching design completely"
+      ],
+      "modelAnswer": [
+        "Scope it: matching, pricing or navigation? Pick matching and say why — it is where the engineering is",
+        "One city or many; whether trips cross city boundaries (this decides your shard key)",
+        "How fresh must driver positions be on the map, and how long may matching take?",
+        "Sequential offers with a timeout, or broadcast to several drivers at once?",
+        "Name the asymmetry early: enormous write volume on data we may lose, modest write volume on data we must not"
+      ]
+    },
+    {
+      "key": "estimation",
+      "prompt": "5M rides/day, 200,000 drivers online at peak, each pinging every 4 seconds. Work out the numbers that matter.",
+      "hints": [
+        "Compare the two write rates against each other, not just against zero",
+        "You only ever need a driver's latest position — what does that do to the storage figure?",
+        "Work out what it would cost to keep every ping, as the argument for not keeping them"
+      ],
+      "modelAnswer": [
+        "Rides: 5M / 86,400 ≈ 58/s, peak ~175/s — small",
+        "Locations: 200,000 / 4 = 50,000 writes/s — about 860x the booking rate",
+        "Latest-only footprint: 200,000 × 100 B ≈ 20 MB, which fits trivially in RAM",
+        "Persisting every ping: 4.32e9/day × 100 B ≈ 432 GB/day ≈ 158 TB/year, for data worthless after 4 s",
+        "Trips: 5M × 1 KB = 5 GB/day ≈ 1.8 TB/year",
+        "Connections: ~500,000 concurrent at ~50,000/node ≈ 10 gateway nodes"
+      ]
+    },
+    {
+      "key": "geospatial",
+      "prompt": "A passenger requests a ride. How do you find the drivers near them?",
+      "hints": [
+        "Start by explaining why an index on lat and an index on lng does not solve it",
+        "How many dimensions does a B-tree sort on?",
+        "What has to happen to a position before a sorted index can help you?"
+      ],
+      "modelAnswer": [
+        "State the core problem: proximity is two-dimensional, a B-tree index is one-dimensional. Separate lat and lng indexes each return a planet-spanning band and force an intersection of two huge sets",
+        "Reduce 2-D to 1-D first: a space-filling curve (geohash = Z-order, S2 = Hilbert) or a fixed cell decomposition (H3 hexagons)",
+        "Now 'nearby' means 'shares a prefix', which is exactly what a sorted index serves well",
+        "Choose the precision deliberately — precision 6 is ~1.2 km × 0.61 km, which gives ~15 drivers per cell in a dense city",
+        "Say that in practice you use Redis GEOSEARCH or an equivalent, but be able to describe the geohash underneath"
+      ]
+    },
+    {
+      "key": "boundaries",
+      "prompt": "Two drivers are standing twelve metres apart on opposite sides of a street, and a prefix query finds one and not the other. Why, and what do you do about it?",
+      "hints": [
+        "No continuous mapping from a plane onto a line can preserve all locality",
+        "Where do the failures cluster, and is that a rare place or a common one?",
+        "How far outside one cell can a point be and still be within a cell-width?"
+      ],
+      "modelAnswer": [
+        "They straddle a cell boundary, so their geohashes differ in an early character and share no usable prefix — an unavoidable property of flattening 2-D to 1-D",
+        "It fails exactly where you care: for a pickup near a boundary, roughly half the genuinely nearest drivers are invisible to a single-cell lookup",
+        "Fix: query the pickup's cell plus its eight neighbours and union the results — nine cheap in-memory reads",
+        "The nine-cell region is a square, not a circle, so it is a candidate generator — still compute real distances and filter",
+        "In sparse areas nine cells may be empty; widen to a coarser precision and retry until you have enough candidates or hit a deadline"
+      ]
+    },
+    {
+      "key": "firehose",
+      "prompt": "Where do you store driver locations, and what happens if you put them in your main database?",
+      "hints": [
+        "What does an UPDATE actually do in an MVCC database?",
+        "Which workload suffers first, and is it the one you would expect?",
+        "What property of the data makes it cheap to hold in memory?"
+      ],
+      "modelAnswer": [
+        "In memory, one entry per driver, overwritten in place, with a TTL slightly longer than the ping interval",
+        "In Postgres, 50,000 UPDATEs/s means 50,000 dead row versions/s: table and index bloat, autovacuum permanently behind, WAL saturating replication",
+        "The visible symptom is not slow locations — it is that trip commits start timing out. The worthless workload starves the valuable one",
+        "It fits in memory because we only ever need the latest value: 200,000 × 100 B ≈ 20 MB instead of 158 TB/year",
+        "Not durable, and that is fine: every driver's next ping rebuilds the index within ~4 s. Active-trip route traces are written separately for billing",
+        "Run ingest as its own service with no database connection so a database incident cannot stop the map"
+      ]
+    },
+    {
+      "key": "matching",
+      "prompt": "You have 130 candidate drivers. Which one gets the offer?",
+      "hints": [
+        "Is the closest driver the one who arrives soonest?",
+        "What does a declined offer cost the passenger?",
+        "What stops two matchers offering the same driver to two passengers?"
+      ],
+      "modelAnswer": [
+        "Nearest by distance is free but wrong at the margins — rivers, one-way systems and motorway access make metres a poor proxy for minutes",
+        "Shortest ETA is what the passenger experiences but costs a routing call per candidate; compromise by filtering to ~10 by distance and routing only those",
+        "Acceptance probability matters because a decline costs a full offer timeout: a reliable driver 5 minutes out can beat an unreliable one 3 minutes out",
+        "Batch assignment over a ~2 s window beats greedy on fleet-wide averages, at the cost of that window on every request",
+        "Regardless of objective: claim the driver atomically before offering (SET NX with a TTL equal to the offer timeout) or you will double-offer the same car"
+      ]
+    },
+    {
+      "key": "state",
+      "prompt": "Your matching service is OOM-killed while holding 400 in-flight trips. What did you lose, and what did you design so that you did not lose it?",
+      "hints": [
+        "Which of those trips has a passenger already sitting in a car?",
+        "What is the difference in consequence between losing a ping and losing a trip?",
+        "How does a trip stuck in 'matched' ever get unstuck if the process that owned it is gone?"
+      ],
+      "modelAnswer": [
+        "Nothing, if in-flight state was never only in memory: every transition is appended to a durable event log before it is acknowledged to either client",
+        "Transitions are guarded (UPDATE … WHERE state = expected) so a duplicate accept and a racing timeout cannot both win, and idempotent by client token so retries replay rather than duplicate",
+        "The driver claim carries a TTL equal to the offer timeout, so a dead matcher releases its drivers with no cleanup code running",
+        "A reconciler sweeps non-terminal trips past their deadline: re-offer a stale 'matched', escalate a stuck 'accepted', close an 'in_progress' that has run six hours",
+        "State the asymmetry: a lost ping is invisible in four seconds, a lost trip is an unbilled ride and a support case"
+      ]
+    }
+  ],
+  "quiz": [
+    {
+      "id": "q1",
+      "type": "architecture",
+      "question": "Why does adding a B-tree index on `lat` and another on `lng` fail to make \"find drivers within 2 km\" fast?",
+      "options": [
+        "B-tree indexes do not work on floating-point columns",
+        "Proximity is two-dimensional but a B-tree sorts on one dimension, so each index returns a planet-spanning band and the database must intersect two enormous sets",
+        "The indexes are too large to fit in memory",
+        "Latitude and longitude change too often to be indexed"
+      ],
+      "answerIndex": 1,
+      "explanation": "The index on `lat` gives every driver in a horizontal band across the whole globe; the index on `lng` gives a vertical band. The answer is the tiny intersection, but getting there means materialising two huge sets. A composite `(lat, lng)` index is no better, because it sorts by latitude first and the second column only narrows within one exact latitude — which floating-point coordinates never share. The fix is to collapse the two dimensions into one *before* indexing, with a space-filling curve or a cell id."
+    },
+    {
+      "id": "q2",
+      "type": "architecture",
+      "question": "Two drivers are 12 metres apart but their geohashes share no common prefix. Why, and what is the standard fix?",
+      "options": [
+        "One of the geohashes is computed incorrectly — recompute and they will match",
+        "They straddle a cell boundary; no mapping from 2-D to 1-D can preserve all locality, so you query the cell plus its eight neighbours",
+        "Geohash only works at precision 8 or finer",
+        "You must switch to H3, which has no boundary problem"
+      ],
+      "answerIndex": 1,
+      "explanation": "This is inherent, not a bug: flattening a plane onto a line must break locality somewhere, and geohash breaks it at cell boundaries — two adjacent points can differ in the first character. Since boundaries are everywhere, a pickup near one loses roughly half its genuinely nearest drivers to a single-cell lookup. Searching the cell plus its eight neighbours guarantees you find anything within a cell-width, for nine cheap reads instead of one. H3 and S2 have better locality but still require neighbour expansion."
+    },
+    {
+      "id": "q3",
+      "type": "architecture",
+      "question": "At 200,000 drivers pinging every 4 seconds, what actually breaks first if you store positions as UPDATEs in your trips database?",
+      "options": [
+        "Nothing — 50,000 writes/s is within a modern database's capability",
+        "Trip commits start timing out: 50,000 dead row versions/s bloat the table, starve autovacuum and saturate WAL replication, so the worthless workload starves the valuable one",
+        "The disk fills up within a day",
+        "The application runs out of database connections"
+      ],
+      "answerIndex": 1,
+      "explanation": "The failure is indirect, which is what makes it worth knowing. In an MVCC database an UPDATE writes a new row version rather than modifying in place, so 50,000 pings/s produce 4.3 billion dead tuples a day, index bloat, and a WAL stream that eats the replication bandwidth trip writes need. You notice it as bookings timing out, not as slow locations. Keeping only the latest position in memory turns 432 GB/day of writes into a ~20 MB working set."
+    },
+    {
+      "id": "q4",
+      "type": "architecture",
+      "question": "A matching service instance is OOM-killed while it is holding 400 trips in the `matched` state. What keeps the system correct?",
+      "options": [
+        "Nothing is needed — the passengers' apps will retry automatically",
+        "Every transition was appended to a durable log before being acknowledged, driver claims carry a TTL so they self-release, and a reconciler re-offers trips stuck past their deadline",
+        "A synchronous replica of the matching service takes over its in-memory state",
+        "The load balancer replays the original requests to another instance"
+      ],
+      "answerIndex": 1,
+      "explanation": "In-flight trip state must not live only in a process's memory: a lost location ping is invisible within four seconds, but a lost trip means a passenger on an endless spinner and a completed ride that is never billed. Durable, guarded, idempotent transitions make the state recoverable; the TTL on the driver claim releases drivers with no cleanup code running; and the reconciler is the component that actually notices a trip has been sitting in a non-terminal state too long and does something about it."
+    }
+  ],
+  "related": [
+    "websockets",
+    "indexing",
+    "sharding",
+    "cache",
+    "message-queue",
+    "idempotency"
+  ]
+}

@@ -47,6 +47,39 @@ final class Compare {
         if (a instanceof Runner.Thrown || b instanceof Runner.Thrown) return false;
         if (a == null || b == null) return a == b;
 
+        // Two trees are the same answer when they have the same shape and the same values —
+        // not when they are the same object, which they never are after a deep copy.
+        if (a instanceof Support.TreeNode || b instanceof Support.TreeNode) {
+            return sameTree(a instanceof Support.TreeNode t ? t : null,
+                            b instanceof Support.TreeNode t ? t : null);
+        }
+        if (a instanceof Support.ListNode || b instanceof Support.ListNode) {
+            return sameList(a instanceof Support.ListNode l ? l : null,
+                            b instanceof Support.ListNode l ? l : null);
+        }
+        if (a instanceof Support.Node || b instanceof Support.Node) {
+            return sameNodeList(a instanceof Support.Node n ? n : null,
+                                b instanceof Support.Node n ? n : null);
+        }
+
+        if (a instanceof double[] da && b instanceof double[] db) {
+            if (da.length != db.length) return false;
+            for (int i = 0; i < da.length; i++) {
+                double scale = Math.max(1.0, Math.max(Math.abs(da[i]), Math.abs(db[i])));
+                if (Math.abs(da[i] - db[i]) > 1e-9 * scale) return false;
+            }
+            return true;
+        }
+        if (a instanceof Support.ListNode[] la && b instanceof Support.ListNode[] lb) {
+            if (la.length != lb.length) return false;
+            for (int i = 0; i < la.length; i++) if (!sameList(la[i], lb[i])) return false;
+            return true;
+        }
+        if (a instanceof Support.Node[] na && b instanceof Support.Node[] nb) {
+            if (na.length != nb.length) return false;
+            for (int i = 0; i < na.length; i++) if (!sameNodeList(na[i], nb[i])) return false;
+            return true;
+        }
         if (a instanceof Double da && b instanceof Double db) {
             if (da.isNaN() && db.isNaN()) return true;
             double scale = Math.max(1.0, Math.max(Math.abs(da), Math.abs(db)));
@@ -92,6 +125,35 @@ final class Compare {
         return Objects.deepEquals(a, b);
     }
 
+    private static boolean sameTree(Support.TreeNode a, Support.TreeNode b) {
+        if (a == null || b == null) return a == b;
+        return a.val == b.val && sameTree(a.left, b.left) && sameTree(a.right, b.right);
+    }
+
+    private static boolean sameList(Support.ListNode a, Support.ListNode b) {
+        // Bounded: a solution that accidentally builds a cycle would otherwise hang the harness
+        // rather than report a disagreement, which is the least useful way to fail.
+        int guard = 0;
+        while (a != null && b != null) {
+            if (a.val != b.val) return false;
+            a = a.next;
+            b = b.next;
+            if (++guard > 10_000) return false;
+        }
+        return a == null && b == null;
+    }
+
+    private static boolean sameNodeList(Support.Node a, Support.Node b) {
+        int guard = 0;
+        while (a != null && b != null) {
+            if (a.val != b.val) return false;
+            a = a.next;
+            b = b.next;
+            if (++guard > 10_000) return false;
+        }
+        return a == null && b == null;
+    }
+
     /** Canonical form so nested collections compare without caring about order. */
     private static Map<String, Integer> multiset(Collection<?> items) {
         Map<String, Integer> counts = new HashMap<>();
@@ -125,17 +187,59 @@ final class Compare {
 
     static String show(Object value) {
         if (value instanceof Runner.Thrown thrown) return "threw " + thrown.cause().getClass().getSimpleName();
+        if (value instanceof Support.TreeNode tree) return "tree" + levelOrder(tree);
+        if (value instanceof Support.ListNode list) {
+            StringBuilder out = new StringBuilder("[");
+            int guard = 0;
+            for (Support.ListNode at = list; at != null && guard < 40; at = at.next, guard++) {
+                if (guard > 0) out.append(" -> ");
+                out.append(at.val);
+            }
+            return out.append(guard >= 40 ? " -> ...(cycle?)]" : "]").toString();
+        }
+        if (value instanceof Support.Node node) {
+            StringBuilder out = new StringBuilder("[");
+            int guard = 0;
+            for (Support.Node at = node; at != null && guard < 40; at = at.next, guard++) {
+                if (guard > 0) out.append(" -> ");
+                out.append(at.val);
+            }
+            return out.append(guard >= 40 ? " -> ...(cycle?)]" : "]").toString();
+        }
         if (value instanceof Object[] array) {
             List<String> parts = new ArrayList<>();
             for (Object item : array) parts.add(show(item));
             return "(" + String.join(", ", parts) + ")";
         }
+        if (value instanceof double[] array) return Arrays.toString(array);
         if (value instanceof int[] array) return Arrays.toString(array);
         if (value instanceof char[] array) return new String(array);
         if (value instanceof int[][] grid) return Arrays.deepToString(grid);
         if (value instanceof char[][] grid) return Arrays.deepToString(grid);
         String text = String.valueOf(value);
         return text.length() > 120 ? text.substring(0, 117) + "..." : text;
+    }
+
+    /** Level order with explicit nulls, which is how the problem pages write trees. */
+    private static String levelOrder(Support.TreeNode root) {
+        if (root == null) return "[]";
+        List<String> out = new ArrayList<>();
+        // LinkedList, not ArrayDeque: the null children ARE the information here — they are what
+        // makes a level-order rendering unambiguous — and ArrayDeque refuses to hold null.
+        Queue<Support.TreeNode> queue = new LinkedList<>();
+        queue.add(root);
+        while (!queue.isEmpty() && out.size() < 40) {
+            Support.TreeNode node = queue.poll();
+            if (node == null) {
+                out.add("null");
+                continue;
+            }
+            out.add(String.valueOf(node.val));
+            queue.add(node.left);
+            queue.add(node.right);
+        }
+        while (!out.isEmpty() && out.get(out.size() - 1).equals("null")) out.remove(out.size() - 1);
+        return "[" + String.join(",", out) + "]";
     }
 
     private Compare() {}

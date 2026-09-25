@@ -36,12 +36,14 @@
   "bruteForce": {
     "idea": "Square every element, then sort the result.",
     "code": [
-      "int[] result = new int[nums.length];",
-      "for (int i = 0; i < nums.length; i++) {",
-      "    result[i] = nums[i] * nums[i];",
-      "}",
-      "Arrays.sort(result);",
-      "return result;"
+      "public static int[] sortedSquares(int[] nums) {",
+      "    int[] result = new int[nums.length];",
+      "    for (int i = 0; i < nums.length; i++) {",
+      "        result[i] = nums[i] * nums[i];",
+      "    }",
+      "    Arrays.sort(result);",
+      "    return result;",
+      "}"
     ],
     "complexity": {
       "time": "O(n log n)",

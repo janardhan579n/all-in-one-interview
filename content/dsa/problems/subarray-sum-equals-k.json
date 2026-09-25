@@ -35,15 +35,17 @@
   "bruteForce": {
     "idea": "Try every start and every end, summing as you extend the end.",
     "code": [
-      "int count = 0;",
-      "for (int start = 0; start < nums.length; start++) {",
-      "    int sum = 0;",
-      "    for (int end = start; end < nums.length; end++) {",
-      "        sum += nums[end];",
-      "        if (sum == k) count++;",
+      "public static int subarraySum(int[] nums, int k) {",
+      "    int count = 0;",
+      "    for (int start = 0; start < nums.length; start++) {",
+      "        int sum = 0;",
+      "        for (int end = start; end < nums.length; end++) {",
+      "            sum += nums[end];",
+      "            if (sum == k) count++;",
+      "        }",
       "    }",
-      "}",
-      "return count;"
+      "    return count;",
+      "}"
     ],
     "complexity": {
       "time": "O(n^2)",

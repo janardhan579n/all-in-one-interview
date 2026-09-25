@@ -36,6 +36,10 @@
   "bruteForce": {
     "idea": "Generate every string of the right length over the whole alphabet, then keep only those whose i-th character belongs to the i-th digit's letter set.",
     "code": [
+      "private static final String[] LETTERS = {",
+      "    \"\", \"\", \"abc\", \"def\", \"ghi\", \"jkl\", \"mno\", \"pqrs\", \"tuv\", \"wxyz\"",
+      "};",
+      "",
       "public static List<String> letterCombinations(String digits) {",
       "    List<String> result = new ArrayList<>();",
       "    if (digits.isEmpty()) return result;",

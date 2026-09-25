@@ -36,16 +36,18 @@
   "bruteForce": {
     "idea": "Fix a start index, extend the end one step at a time keeping a running minimum, and add that minimum to the total for each subarray.",
     "code": [
-      "long total = 0;",
-      "final int MOD = 1_000_000_007;",
-      "for (int i = 0; i < nums.length; i++) {",
-      "    int min = Integer.MAX_VALUE;",
-      "    for (int j = i; j < nums.length; j++) {",
-      "        min = Math.min(min, nums[j]);",
-      "        total = (total + min) % MOD;",
+      "public static int sumSubarrayMins(int[] nums) {",
+      "    long total = 0;",
+      "    final int MOD = 1_000_000_007;",
+      "    for (int i = 0; i < nums.length; i++) {",
+      "        int min = Integer.MAX_VALUE;",
+      "        for (int j = i; j < nums.length; j++) {",
+      "            min = Math.min(min, nums[j]);",
+      "            total = (total + min) % MOD;",
+      "        }",
       "    }",
-      "}",
-      "return (int) total;"
+      "    return (int) total;",
+      "}"
     ],
     "complexity": {
       "time": "O(n^2)",

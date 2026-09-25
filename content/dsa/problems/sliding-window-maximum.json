@@ -35,16 +35,18 @@
   "bruteForce": {
     "idea": "For every window position, scan its k elements and take the largest.",
     "code": [
-      "int n = nums.length;",
-      "int[] result = new int[n - k + 1];",
-      "for (int i = 0; i + k <= n; i++) {",
-      "    int best = nums[i];",
-      "    for (int j = i + 1; j < i + k; j++) {",
-      "        if (nums[j] > best) best = nums[j];",
+      "public static int[] maxSlidingWindow(int[] nums, int k) {",
+      "    int n = nums.length;",
+      "    int[] result = new int[n - k + 1];",
+      "    for (int i = 0; i + k <= n; i++) {",
+      "        int best = nums[i];",
+      "        for (int j = i + 1; j < i + k; j++) {",
+      "            if (nums[j] > best) best = nums[j];",
+      "        }",
+      "        result[i] = best;",
       "    }",
-      "    result[i] = best;",
-      "}",
-      "return result;"
+      "    return result;",
+      "}"
     ],
     "complexity": {
       "time": "O(n * k)",

@@ -35,7 +35,11 @@
   "bruteForce": {
     "idea": "Search over arrow placements. Only endpoints are worth trying, so for the first unburst balloon try shooting at each of its candidate coordinates, remove everything that bursts, and recurse on the rest, keeping the best total.",
     "code": [
-      "int best(boolean[] burst, int[][] points) {",
+      "public static int findMinArrowShots(int[][] points) {",
+      "    return best(new boolean[points.length], points);",
+      "}",
+      "",
+      "private static int best(boolean[] burst, int[][] points) {",
       "    int first = -1;",
       "    for (int i = 0; i < points.length; i++) if (!burst[i]) { first = i; break; }",
       "    if (first == -1) return 0;",

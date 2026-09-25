@@ -35,16 +35,18 @@
   "bruteForce": {
     "idea": "Try every start index, walk right while the running count of zeros stays within k, and keep the longest run.",
     "code": [
-      "int best = 0;",
-      "for (int i = 0; i < nums.length; i++) {",
-      "    int zeros = 0;",
-      "    for (int j = i; j < nums.length; j++) {",
-      "        if (nums[j] == 0) zeros++;",
-      "        if (zeros > k) break;",
-      "        best = Math.max(best, j - i + 1);",
+      "public static int longestOnes(int[] nums, int k) {",
+      "    int best = 0;",
+      "    for (int i = 0; i < nums.length; i++) {",
+      "        int zeros = 0;",
+      "        for (int j = i; j < nums.length; j++) {",
+      "            if (nums[j] == 0) zeros++;",
+      "            if (zeros > k) break;",
+      "            best = Math.max(best, j - i + 1);",
+      "        }",
       "    }",
-      "}",
-      "return best;"
+      "    return best;",
+      "}"
     ],
     "complexity": {
       "time": "O(n^2)",

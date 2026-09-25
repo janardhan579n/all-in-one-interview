@@ -30,8 +30,21 @@
   "bruteForce": {
     "idea": "Try every speed from 1 upwards until one finishes in time.",
     "code": [
-      "for (int speed = 1; speed <= max(piles); speed++) {",
-      "    if (hoursNeeded(piles, speed) <= h) return speed;",
+      "public static int minEatingSpeed(int[] piles, int h) {",
+      "    int fastest = 0;",
+      "    for (int pile : piles) fastest = Math.max(fastest, pile);",
+      "    for (int speed = 1; speed < fastest; speed++) {   // one speed at a time, from the slowest up",
+      "        if (hoursNeeded(piles, speed) <= h) return speed;",
+      "    }",
+      "    return fastest;   // eating the largest pile per hour takes piles.length hours, and h >= that",
+      "}",
+      "",
+      "private static long hoursNeeded(int[] piles, int speed) {",
+      "    long hours = 0;",
+      "    for (int pile : piles) {",
+      "        hours += (pile + speed - 1) / speed;   // ceiling division, no floating point",
+      "    }",
+      "    return hours;",
       "}"
     ],
     "complexity": {

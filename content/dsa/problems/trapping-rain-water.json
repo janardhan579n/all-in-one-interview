@@ -36,14 +36,16 @@
   "bruteForce": {
     "idea": "For each bar, scan left for the tallest bar on that side and right for the tallest on the other; the water above this bar is min(maxLeft, maxRight) - height[i], clamped at zero.",
     "code": [
-      "int water = 0;",
-      "for (int i = 0; i < height.length; i++) {",
-      "    int maxLeft = 0, maxRight = 0;",
-      "    for (int l = 0; l <= i; l++) maxLeft = Math.max(maxLeft, height[l]);",
-      "    for (int r = i; r < height.length; r++) maxRight = Math.max(maxRight, height[r]);",
-      "    water += Math.min(maxLeft, maxRight) - height[i];",
-      "}",
-      "return water;"
+      "public static int trap(int[] height) {",
+      "    int water = 0;",
+      "    for (int i = 0; i < height.length; i++) {",
+      "        int maxLeft = 0, maxRight = 0;",
+      "        for (int l = 0; l <= i; l++) maxLeft = Math.max(maxLeft, height[l]);",
+      "        for (int r = i; r < height.length; r++) maxRight = Math.max(maxRight, height[r]);",
+      "        water += Math.min(maxLeft, maxRight) - height[i];",
+      "    }",
+      "    return water;",
+      "}"
     ],
     "complexity": {
       "time": "O(n^2)",

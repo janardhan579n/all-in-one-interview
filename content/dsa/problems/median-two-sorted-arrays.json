@@ -37,16 +37,18 @@
   "bruteForce": {
     "idea": "Merge the two arrays the way merge sort's merge step does, then index the middle.",
     "code": [
-      "int[] all = new int[a.length + b.length];",
-      "int i = 0, j = 0, w = 0;",
-      "while (i < a.length && j < b.length) {",
-      "    all[w++] = (a[i] <= b[j]) ? a[i++] : b[j++];",
-      "}",
-      "while (i < a.length) all[w++] = a[i++];",
-      "while (j < b.length) all[w++] = b[j++];",
-      "int total = all.length;",
-      "if (total % 2 == 1) return all[total / 2];",
-      "return (all[total / 2 - 1] + all[total / 2]) / 2.0;"
+      "public static double findMedianSortedArrays(int[] a, int[] b) {",
+      "    int[] all = new int[a.length + b.length];",
+      "    int i = 0, j = 0, w = 0;",
+      "    while (i < a.length && j < b.length) {",
+      "        all[w++] = (a[i] <= b[j]) ? a[i++] : b[j++];",
+      "    }",
+      "    while (i < a.length) all[w++] = a[i++];",
+      "    while (j < b.length) all[w++] = b[j++];",
+      "    int total = all.length;",
+      "    if (total % 2 == 1) return all[total / 2];",
+      "    return (all[total / 2 - 1] + all[total / 2]) / 2.0;",
+      "}"
     ],
     "complexity": {
       "time": "O(m + n)",
